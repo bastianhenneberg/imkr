@@ -1,4 +1,4 @@
-//! `hivemux update`: the server replaces itself with a new binary and the
+//! `imkr update`: the server replaces itself with a new binary and the
 //! session goes on. It execs the new binary in its own process, which keeps
 //! every pane's pty, the socket and the attached client's connection open,
 //! and hands over the rest in a file. The shells and agents never notice,
@@ -25,7 +25,7 @@ use crate::persist::Saved;
 use crate::protocol::Caps;
 
 /// Set for the new binary: the path of the handover file.
-const ENV: &str = "HIVEMUX_UPGRADE";
+const ENV: &str = "IMKR_UPGRADE";
 
 /// Everything the new server needs besides the open file descriptors.
 #[derive(Serialize, Deserialize)]
@@ -109,7 +109,7 @@ pub fn exec(exe: &Path, socket: &Path, handover: &Handover) -> anyhow::Error {
                 .arg("server")
                 .env(ENV, &path)
                 // It may have been renamed since it started.
-                .env("HIVEMUX_SESSION", crate::protocol::session_name())
+                .env("IMKR_SESSION", crate::protocol::session_name())
                 .exec(),
         )
         .context(format!("cannot run {}", exe.display())),

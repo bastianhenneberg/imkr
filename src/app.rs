@@ -267,7 +267,7 @@ pub struct App {
     /// Every open connection, attached or not, to answer requests on.
     conns: HashMap<ClientId, UnixStream>,
     next_client_id: ClientId,
-    /// The server socket, handed to every pane as `HIVEMUX_SOCKET`.
+    /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
     /// The last agent state seen per pane, and since when it holds.
     agents: HashMap<PaneId, (AgentState, Instant)>,
@@ -278,9 +278,9 @@ pub struct App {
     sidebar: Option<Rect>,
     /// Focus mode: no bars, no sidebar, no borders, only the focused pane.
     focus_mode: bool,
-    /// The server socket's listener, handed on by `hivemux update`.
+    /// The server socket's listener, handed on by `imkr update`.
     listener: RawFd,
-    /// The binary `hivemux update` asked to become, once the reply is out.
+    /// The binary `imkr update` asked to become, once the reply is out.
     upgrade_to: Option<PathBuf>,
     /// Links from the session's old socket names to its socket, so panes
     /// started before a rename still reach it. Removed at the end.
@@ -417,7 +417,7 @@ impl App {
             let _ = std::fs::remove_file(link);
         }
         // Ended on purpose: kept in the save file `last` instead, from where
-        // `hivemux restore` brings it back. A session whose last shell
+        // `imkr restore` brings it back. A session whose last shell
         // exited has nothing to keep.
         // Stopped with the machine: the saved layout stays as it was before
         // the shells died, and the next server brings it back.
@@ -535,7 +535,7 @@ impl App {
         true
     }
 
-    /// Takes over from the server before `hivemux update`: its panes with
+    /// Takes over from the server before `imkr update`: its panes with
     /// their processes and screens, its layout and its attached client.
     fn adopt(&mut self, handover: Handover) {
         self.screen = Rect::new(0, 0, handover.screen.0, handover.screen.1);
@@ -589,7 +589,7 @@ impl App {
             }
         }
         self.flash = Some(format!(
-            "updated to hivemux {}, {} panes kept",
+            "updated to imkr {}, {} panes kept",
             env!("CARGO_PKG_VERSION"),
             self.panes.len()
         ));
@@ -860,7 +860,7 @@ impl App {
         }
     }
 
-    /// Answers a request from `hivemux status`, `list`, `send` or `new`.
+    /// Answers a request from `imkr status`, `list`, `send` or `new`.
     fn request(&mut self, request: Request) -> Reply {
         match request {
             Request::Status {
@@ -878,8 +878,8 @@ impl App {
             Request::Notify { text, title, pane } => {
                 let title = match (title, pane) {
                     (Some(title), _) => title,
-                    (None, Some(id)) => self.pane_who(id).unwrap_or_else(|| "hivemux".into()),
-                    (None, None) => "hivemux".into(),
+                    (None, Some(id)) => self.pane_who(id).unwrap_or_else(|| "imkr".into()),
+                    (None, None) => "imkr".into(),
                 };
                 self.flash = Some(format!("{title}: {text}"));
                 self.send_notification(&title, &text);
@@ -1070,7 +1070,7 @@ impl App {
         self.agents = seen;
     }
 
-    /// Tells the user outside hivemux that the agent in pane `id` `what`,
+    /// Tells the user outside imkr that the agent in pane `id` `what`,
     /// e.g. "needs you", the way the settings say.
     fn notify(&mut self, id: PaneId, what: &str) {
         let Some(who) = self.pane_who(id) else {
@@ -1105,8 +1105,8 @@ impl App {
             Notifications::Terminal => {
                 if let Some(client) = &mut self.client {
                     let text = match body {
-                        "" => format!("hivemux: {title}"),
-                        body => format!("hivemux: {title} · {body}"),
+                        "" => format!("imkr: {title}"),
+                        body => format!("imkr: {title} · {body}"),
                     };
                     let text: String = text.chars().filter(|c| !c.is_control()).collect();
                     let _ = client.send(&ServerMsg::Output(
@@ -1116,7 +1116,7 @@ impl App {
             }
             Notifications::System => {
                 let spawned = std::process::Command::new("notify-send")
-                    .args(["--app-name=hivemux", title, body])
+                    .args(["--app-name=imkr", title, body])
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
@@ -2294,7 +2294,7 @@ impl App {
         items.push(menu::MenuItem {
             key: 'n',
             title: "new session…".into(),
-            hint: "`hivemux -s NAME` does the same".into(),
+            hint: "`imkr -s NAME` does the same".into(),
             danger: false,
         });
         (names, items)
@@ -2522,8 +2522,8 @@ impl App {
         if name == protocol::session_name() {
             return Ok(());
         }
-        if std::env::var_os("HIVEMUX_SOCKET").is_some() {
-            return Err("a session on a socket from HIVEMUX_SOCKET has no name to change".into());
+        if std::env::var_os("IMKR_SOCKET").is_some() {
+            return Err("a session on a socket from IMKR_SOCKET has no name to change".into());
         }
         let socket = protocol::session_socket(name).map_err(|e| e.to_string())?;
         if UnixStream::connect(&socket).is_ok() {
@@ -3022,7 +3022,7 @@ impl App {
         out
     }
 
-    /// `hivemux · 2 api · claude`: the workspace, then the focused pane.
+    /// `imkr · 2 api · claude`: the workspace, then the focused pane.
     fn window_title_text(&self) -> String {
         let ws = match &self.ws.name {
             Some(name) => format!("{} {name}", self.workspace),
@@ -3033,7 +3033,7 @@ impl App {
             .get(&self.ws.focus)
             .and_then(|p| p.name.clone().or_else(|| p.program()))
             .unwrap_or_default();
-        format!("hivemux · {ws} · {pane}")
+        format!("imkr · {ws} · {pane}")
     }
 
     /// Draws with the configured theme from now on. When it follows
@@ -3249,7 +3249,7 @@ impl App {
 
     /// Removes pane `id`, killing its process if it still runs. A workspace
     /// without panes disappears. When the active one does, another one is
-    /// shown, and when none is left, hivemux quits.
+    /// shown, and when none is left, imkr quits.
     /// Esc on a new window's name: it was not wanted after all. Back to the
     /// window it was opened from, then its shell goes.
     fn cancel_new_window(&mut self, pane: PaneId, back: u8) {
@@ -3587,7 +3587,7 @@ impl App {
                 MenuEntry::Detach => menu::MenuItem {
                     key,
                     title: "Detach".into(),
-                    hint: "shells keep running, `hivemux` brings you back".into(),
+                    hint: "shells keep running, `imkr` brings you back".into(),
                     danger: false,
                 },
                 MenuEntry::ClosePane => menu::MenuItem {
@@ -3677,7 +3677,7 @@ impl App {
                 ))],
             ),
             Action::KillServer => (
-                " Quit hivemux ",
+                " Quit imkr ",
                 vec![
                     Line::from(format!(
                         "End the session and all {shells} {} in it?",
@@ -4083,11 +4083,11 @@ fn screen_layout(screen: Rect, bars: &Bars, spacing: &Spacing) -> ScreenLayout {
     }
 }
 
-/// ` ⬢ hivemux `, or the session's name for a named one.
+/// ` ⬢ imkr `, or the session's name for a named one.
 fn badge_text() -> String {
     let name = protocol::session_name();
     if name == protocol::DEFAULT_SESSION {
-        " ⬢ hivemux ".to_owned()
+        " ⬢ imkr ".to_owned()
     } else {
         format!(" ⬢ {name} ")
     }
@@ -4344,7 +4344,7 @@ fn badge_style() -> Style {
 }
 
 /// `path` cut down to `room` characters, keeping its end, e.g.
-/// `…/hivemux/src`.
+/// `…/imkr/src`.
 fn shorten(path: &str, room: usize) -> String {
     let len = path.chars().count();
     if len <= room {
@@ -4501,10 +4501,10 @@ mod tests {
     #[test]
     fn long_paths_keep_their_end() {
         assert_eq!(
-            shorten("~/Development/hivemux", 40),
-            "~/Development/hivemux"
+            shorten("~/Development/beehive", 40),
+            "~/Development/beehive"
         );
-        assert_eq!(shorten("~/Development/hivemux", 8), "…hivemux");
+        assert_eq!(shorten("~/Development/beehive", 8), "…beehive");
         assert_eq!(shorten("~/x", 1), "");
     }
 }

@@ -127,7 +127,7 @@ mod tests {
     /// A small project in a folder of its own per test, as tests run at
     /// the same time.
     fn tree(test: &str) -> (PathBuf, FileTree) {
-        let root = std::env::temp_dir().join(format!("hivemux-{test}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("imkr-{test}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("src/inner")).unwrap();
         fs::create_dir_all(root.join(".git")).unwrap();

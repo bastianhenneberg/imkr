@@ -41,7 +41,7 @@ fn catch_stop_signals() {
 pub fn run() -> Result<()> {
     catch_stop_signals();
     let path = socket_path()?;
-    // After `hivemux update` the socket is open already.
+    // After `imkr update` the socket is open already.
     let handover = upgrade::take();
     let listener = match &handover {
         Some(handover) => {
@@ -51,7 +51,7 @@ pub fn run() -> Result<()> {
         }
         None => {
             if UnixStream::connect(&path).is_ok() {
-                bail!("a hivemux server is already running on {}", path.display());
+                bail!("a imkr server is already running on {}", path.display());
             }
             let _ = fs::remove_file(&path);
             let listener = UnixListener::bind(&path)

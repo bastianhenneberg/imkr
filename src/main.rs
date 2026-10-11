@@ -24,9 +24,9 @@ mod workspace;
 use anyhow::{Result, bail};
 
 const USAGE: &str = "\
-Usage: hivemux [-s NAME] [command]
+Usage: imkr [-s NAME] [command]
 
--s NAME picks a session other than `default`, e.g. `hivemux -s work`.
+-s NAME picks a session other than `default`, e.g. `imkr -s work`.
 
 Commands:
   (none)        attach to the session, or start it
@@ -66,7 +66,7 @@ For scripts and agents:
   hooks                                 print the Claude Code hooks for status
   help          show this help
 
-Inside hivemux, Ctrl+B then q opens the quit menu: detach, close the pane or end the
+Inside imkr, Ctrl+B then q opens the quit menu: detach, close the pane or end the
 session. Ctrl+B then d detaches right away, the shells keep running.";
 
 fn main() -> Result<()> {
@@ -87,8 +87,8 @@ fn main() -> Result<()> {
         // SAFETY: nothing else runs yet, no thread can read the
         // environment while it changes.
         unsafe {
-            std::env::set_var("HIVEMUX_SESSION", &name);
-            std::env::remove_var("HIVEMUX_SOCKET");
+            std::env::set_var("IMKR_SESSION", &name);
+            std::env::remove_var("IMKR_SOCKET");
         }
     }
     match args

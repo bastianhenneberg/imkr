@@ -1,8 +1,8 @@
 //! What the program in a pane is doing, for coding agents: working, waiting
 //! for the user, or done.
 //!
-//! Agents can report it themselves through `hivemux status` (from their
-//! hooks). Without that, hivemux guesses from the foreground program, how
+//! Agents can report it themselves through `imkr status` (from their
+//! hooks). Without that, imkr guesses from the foreground program, how
 //! recently it wrote output, and questions on the screen.
 
 use std::time::Duration;
@@ -102,7 +102,7 @@ pub fn asks_question(screen: &vt100::Screen) -> bool {
 }
 
 /// The state to show, from what is known about a pane. `reported` comes
-/// from `hivemux status`, `since_output` is the time since the last output,
+/// from `imkr status`, `since_output` is the time since the last output,
 /// `asking` whether an unanswered question is on the screen.
 pub fn state(
     argv: &[String],

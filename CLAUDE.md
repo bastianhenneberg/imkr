@@ -1,11 +1,11 @@
-# hivemux
+# imkr
 
 Terminal-Multiplexer und Fenster-Manager in Rust. Ideen aus TUIOS (Floating, BSP-Tiling,
 Workspaces) und herdr (Agent-Status, Server/Client, Socket-API), aber eigener Code.
 
 ## AI Brain
 
-Projekt-Slug: `hivemux`
+Projekt-Slug: `imkr`
 
 ## Stack
 
@@ -17,7 +17,7 @@ Projekt-Slug: `hivemux`
 
 ## Architektur
 
-- `hivemux server` (vom ersten Client im Hintergrund per `setsid` gestartet) besitzt PTYs,
+- `imkr server` (vom ersten Client im Hintergrund per `setsid` gestartet) besitzt PTYs,
   Layout und rendert. Der Client ist dünn: Raw-Mode, schickt crossterm-Events, schreibt die
   ANSI-Ausgabe des Servers auf stdout. Protokoll: `src/protocol.rs` (Tag + Länge + Payload).
 - Der Server rendert mit `Viewport::Fixed` in einen Socket-Writer. **Nie** `terminal.clear()`
@@ -43,15 +43,15 @@ Projekt-Slug: `hivemux`
 - Verbindungen attachen erst nach `ClientMsg::Attach`; alle anderen (CLI, Agents) schicken
   `ClientMsg::Request` und bekommen `ServerMsg::Reply`. Befehle: `src/cli.rs`.
 - Agent-Tests ohne echten Agent: Skript namens `claude` im Scratchpad, das arbeitet und dann eine
-  Frage stellt, per `hivemux new --window 2 -- <skript>` starten.
-- Live-Update: `hivemux update` (`src/upgrade.rs`): Server execs das neue Binary im selben Prozess,
+  Frage stellt, per `imkr new --window 2 -- <skript>` starten.
+- Live-Update: `imkr update` (`src/upgrade.rs`): Server execs das neue Binary im selben Prozess,
   PTY-Master-FDs, Listener und Client-Verbindung ohne `FD_CLOEXEC` weiter, Rest (Layout, Screens
-  als `state_formatted`, History als Text) in `<socket>.upgrade.json`, Env `HIVEMUX_UPGRADE`.
+  als `state_formatted`, History als Text) in `<socket>.upgrade.json`, Env `IMKR_UPGRADE`.
   portable-pty kann keinen Master aus einem FD bauen → `AdoptedMaster`/`AdoptedChild` implementieren
   dessen Traits. Protokoll kompatibel halten: der alte Client bleibt nach dem Update verbunden.
   Test: Binary zweimal ins Scratchpad kopieren (hm1/hm2), mit hm1 starten, `hm2 update`, PIDs vergleichen.
-- Persistenz: `src/persist.rs`, Datei `~/.local/state/hivemux/session.json` (mit `HIVEMUX_SOCKET`
-  daneben als `<socket>.state.json`, mit `HIVEMUX_STATE` frei wählbar). Gespeichert höchstens 1×/s
+- Persistenz: `src/persist.rs`, Datei `~/.local/state/imkr/session.json` (mit `IMKR_SOCKET`
+  daneben als `<socket>.state.json`, mit `IMKR_STATE` frei wählbar). Gespeichert höchstens 1×/s
   bei Änderung, gelöscht am Ende von `App::run` (nur bewusstes Beenden kommt dort an). Test: Server
   mit `kill -9` töten und neu starten.
 - Farben nie fest verdrahten: `theme::current()` (accent, on_accent, subtle, danger, success,
@@ -60,13 +60,13 @@ Projekt-Slug: `hivemux`
   `HOME` samt nachgebautem `.local/state/omarchy/current`.
 - Bilder (kitty graphics): `src/graphics.rs` (Scanner, Command, PaneGraphics), im Pane-Reader
   vor vt100 abgefangen, `App::image_output` platziert nach jedem Frame. Test ohne Grafik-Terminal:
-  Client unter `script -qfc 'env HIVEMUX_GRAPHICS=1 hivemux' raw.txt` in tmux starten und die
+  Client unter `script -qfc 'env IMKR_GRAPHICS=1 imkr' raw.txt` in tmux starten und die
   APC-Sequenzen in `raw.txt` prüfen; Testprogramm mit echter PNG über Python (zlib/struct).
 - Tastenbelegung nach dem Prefix steht **nur** in `src/bindings.rs` (`BINDINGS`). Which-Key-Menü,
-  Hilfe-Overlay und `hivemux keys` lesen daraus, neue Befehle dort eintragen, nicht in `app.rs`.
+  Hilfe-Overlay und `imkr keys` lesen daraus, neue Befehle dort eintragen, nicht in `app.rs`.
 - Einstellungen: `src/config.rs` (serde/TOML, `SETTINGS`-Tabelle fürs Settings-Menü). Neue
   Einstellung = Feld in `Config` + Eintrag in `SETTINGS`, das Menü liest nur die Tabelle.
-- Manuell testen ohne die eigene Session zu stören: `HIVEMUX_SOCKET=/tmp/x.sock` und `HIVEMUX_CONFIG=/tmp/x.toml`
+- Manuell testen ohne die eigene Session zu stören: `IMKR_SOCKET=/tmp/x.sock` und `IMKR_CONFIG=/tmp/x.toml`
   setzen (sonst wird die echte Config überschrieben), headless in tmux starten (`tmux new-session -d ...`, `send-keys`, `capture-pane -p`).
 
 ## Befehle

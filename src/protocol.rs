@@ -44,7 +44,7 @@ pub struct Caps {
     pub cell_height: u16,
 }
 
-/// Commands for scripts and agents, sent by `hivemux status`, `list`,
+/// Commands for scripts and agents, sent by `imkr status`, `list`,
 /// `send` and `new`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "kebab-case")]
@@ -210,13 +210,13 @@ fn invalid(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg)
 }
 
-/// The session this process belongs to: `$HIVEMUX_SESSION`, set by
-/// `hivemux -s NAME`, or `default`.
+/// The session this process belongs to: `$IMKR_SESSION`, set by
+/// `imkr -s NAME`, or `default`.
 pub fn session_name() -> String {
     if let Some(name) = RENAMED.lock().unwrap().clone() {
         return name;
     }
-    std::env::var("HIVEMUX_SESSION")
+    std::env::var("IMKR_SESSION")
         .ok()
         .filter(|name| valid_session_name(name))
         .unwrap_or_else(|| DEFAULT_SESSION.to_owned())
@@ -242,13 +242,13 @@ pub fn valid_session_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Where the sockets live: `$XDG_RUNTIME_DIR/hivemux`, falling back to
-/// `/tmp/hivemux-<uid>`. Created readable only by the current user.
+/// Where the sockets live: `$XDG_RUNTIME_DIR/imkr`, falling back to
+/// `/tmp/imkr-<uid>`. Created readable only by the current user.
 pub fn runtime_dir() -> Result<PathBuf> {
     let dir = match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(runtime) => PathBuf::from(runtime).join("hivemux"),
+        Some(runtime) => PathBuf::from(runtime).join("imkr"),
         // SAFETY: getuid has no preconditions and cannot fail.
-        None => PathBuf::from(format!("/tmp/hivemux-{}", unsafe { libc::getuid() })),
+        None => PathBuf::from(format!("/tmp/imkr-{}", unsafe { libc::getuid() })),
     };
     fs::DirBuilder::new()
         .recursive(true)
@@ -264,10 +264,10 @@ pub fn session_socket(name: &str) -> Result<PathBuf> {
     Ok(runtime_dir()?.join(format!("{name}.sock")))
 }
 
-/// The server socket: `$HIVEMUX_SOCKET` if set, otherwise the socket of this
+/// The server socket: `$IMKR_SOCKET` if set, otherwise the socket of this
 /// process's session in the runtime directory.
 pub fn socket_path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("HIVEMUX_SOCKET") {
+    if let Some(path) = std::env::var_os("IMKR_SOCKET") {
         return Ok(PathBuf::from(path));
     }
     session_socket(&session_name())

@@ -1,4 +1,4 @@
-//! Commands for scripts and agents: `hivemux status`, `list`, `send`, `new`,
+//! Commands for scripts and agents: `imkr status`, `list`, `send`, `new`,
 //! `notify` and `hooks`. They talk to the running server over its socket.
 
 use std::io::Read;
@@ -10,15 +10,15 @@ use crate::client;
 use crate::layout::PaneId;
 use crate::protocol::{self, RenameTarget, Request};
 
-/// `hivemux status <working|blocked|idle|clear> [--pane N]`
+/// `imkr status <working|blocked|idle|clear> [--pane N]`
 ///
 /// Meant for agent hooks, so it stays quiet and succeeds when it runs
-/// outside hivemux or the server is gone: a hook must never break the agent.
+/// outside imkr or the server is gone: a hook must never break the agent.
 pub fn status(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?;
     let [state] = rest.as_slice() else {
-        bail!("usage: hivemux status <working|blocked|idle|clear> [--pane N]");
+        bail!("usage: imkr status <working|blocked|idle|clear> [--pane N]");
     };
     let state = match state.as_str() {
         "working" => Some(AgentState::Working),
@@ -72,7 +72,7 @@ fn ignore_hook(hook: &serde_json::Value, state: Option<AgentState>) -> bool {
     subagent && matches!(state, Some(AgentState::Idle) | None)
 }
 
-/// `hivemux ls`: the running sessions with their panes and agents.
+/// `imkr ls`: the running sessions with their panes and agents.
 pub fn ls() -> Result<()> {
     let current = protocol::session_name();
     let names = protocol::sessions();
@@ -115,7 +115,7 @@ pub fn ls() -> Result<()> {
     Ok(())
 }
 
-/// `hivemux list [--json]`
+/// `imkr list [--json]`
 pub fn list(args: &[String]) -> Result<()> {
     let value = client::request(Request::List)?;
     if args.iter().any(|a| a == "--json") {
@@ -151,13 +151,13 @@ pub fn list(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `hivemux send [--pane N] [--no-enter] <text>...`
+/// `imkr send [--pane N] [--no-enter] <text>...`
 pub fn send(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
     let enter = !take_flag(&mut rest, "--no-enter");
     if rest.is_empty() {
-        bail!("usage: hivemux send [--pane N] [--no-enter] <text>...");
+        bail!("usage: imkr send [--pane N] [--no-enter] <text>...");
     }
     client::request(Request::Send {
         pane,
@@ -167,7 +167,7 @@ pub fn send(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `hivemux notify [--title T] [--pane N] <text>...`
+/// `imkr notify [--title T] [--pane N] <text>...`
 ///
 /// Shows `text` as a notification, the way the settings say, and in the
 /// control bar. Without a title it is titled after the pane it runs in.
@@ -176,7 +176,7 @@ pub fn notify(args: &[String]) -> Result<()> {
     let title = take_value(&mut rest, "--title")?;
     let pane = take_pane(&mut rest)?;
     if rest.is_empty() {
-        bail!("usage: hivemux notify [--title T] [--pane N] <text>...");
+        bail!("usage: imkr notify [--title T] [--pane N] <text>...");
     }
     client::request(Request::Notify {
         text: rest.join(" "),
@@ -186,7 +186,7 @@ pub fn notify(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `hivemux read [--pane N] [--lines N]`: what is on a pane's screen, or its
+/// `imkr read [--pane N] [--lines N]`: what is on a pane's screen, or its
 /// last N lines with the history.
 pub fn read(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
@@ -199,7 +199,7 @@ pub fn read(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `hivemux wait [--pane N] --until <working|blocked|idle|done|ready> [--timeout S]`
+/// `imkr wait [--pane N] --until <working|blocked|idle|done|ready> [--timeout S]`
 ///
 /// Waits until the agent in a pane reaches a state, for scripts and agents
 /// that hand work to another agent. `ready` means idle or done. Exits with
@@ -208,7 +208,7 @@ pub fn wait(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
     let until = take_value(&mut rest, "--until")?.context(
-        "usage: hivemux wait [--pane N] --until <working|blocked|idle|done|ready> [--timeout S]",
+        "usage: imkr wait [--pane N] --until <working|blocked|idle|done|ready> [--timeout S]",
     )?;
     let wanted: &[&str] = match until.as_str() {
         "ready" => &["idle", "done"],
@@ -247,7 +247,7 @@ pub fn wait(args: &[String]) -> Result<()> {
     }
 }
 
-/// `hivemux rename [--pane N | --window N] [--clear | <name>...]`
+/// `imkr rename [--pane N | --window N] [--clear | <name>...]`
 ///
 /// Without a target it names the pane it runs in, so an agent can label its
 /// own pane.
@@ -262,7 +262,7 @@ pub fn rename(args: &[String]) -> Result<()> {
     let name = if clear {
         None
     } else if rest.is_empty() {
-        bail!("usage: hivemux rename [--pane N | --window N] [--clear | <name>...]");
+        bail!("usage: imkr rename [--pane N | --window N] [--clear | <name>...]");
     } else {
         Some(rest.join(" "))
     };
@@ -270,7 +270,7 @@ pub fn rename(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `hivemux new [--float] [--window N] [-- command args...]`
+/// `imkr new [--float] [--window N] [-- command args...]`
 pub fn new(args: &[String]) -> Result<()> {
     let (options, command) = match args.iter().position(|a| a == "--") {
         Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
@@ -292,12 +292,12 @@ pub fn new(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `hivemux hooks`: the Claude Code hook config that reports the agent state.
+/// `imkr hooks`: the Claude Code hook config that reports the agent state.
 pub fn hooks() -> Result<()> {
     let hook = |state: &str| {
         serde_json::json!([{ "matcher": "*", "hooks": [{
             "type": "command",
-            "command": format!("hivemux status {state}"),
+            "command": format!("imkr status {state}"),
             "timeout": 10,
         }]}])
     };
@@ -314,15 +314,15 @@ pub fn hooks() -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&config)?);
     eprintln!(
         "\nAdd this to ~/.claude/settings.json (merge it with hooks you already have).\n\
-         Outside hivemux the hooks do nothing, `hivemux` must be on your PATH."
+         Outside imkr the hooks do nothing, `imkr` must be on your PATH."
     );
     Ok(())
 }
 
-/// Removes `--pane N` from `args`, falling back to `$HIVEMUX_PANE`, the pane
+/// Removes `--pane N` from `args`, falling back to `$IMKR_PANE`, the pane
 /// the command runs in.
 fn take_pane(args: &mut Vec<String>) -> Result<Option<PaneId>> {
-    let value = take_value(args, "--pane")?.or_else(|| std::env::var("HIVEMUX_PANE").ok());
+    let value = take_value(args, "--pane")?.or_else(|| std::env::var("IMKR_PANE").ok());
     value
         .map(|v| {
             v.parse()
@@ -363,24 +363,24 @@ fn take_value(args: &mut Vec<String>, option: &str) -> Result<Option<String>> {
     Ok(Some(value))
 }
 
-/// `hivemux rename-session NAME`: renames the session this command is
+/// `imkr rename-session NAME`: renames the session this command is
 /// for, `-s` picks another.
 pub fn rename_session(args: &[String]) -> Result<()> {
     let [name] = args else {
-        bail!("usage: hivemux rename-session NAME");
+        bail!("usage: imkr rename-session NAME");
     };
     client::request(Request::RenameSession { name: name.clone() })?;
     println!("renamed to {name}");
     Ok(())
 }
 
-/// `hivemux save [NAME]`: every running session's layout in one save
+/// `imkr save [NAME]`: every running session's layout in one save
 /// file, `last` without a name.
 pub fn save(args: &[String]) -> Result<()> {
     let name = match args {
         [] => crate::persist::LAST,
         [name] => name.as_str(),
-        _ => bail!("usage: hivemux save [NAME]"),
+        _ => bail!("usage: imkr save [NAME]"),
     };
     let hive = client::snapshot_all()?;
     if hive.sessions.is_empty() {
@@ -396,7 +396,7 @@ pub fn save(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `hivemux restore [NAME]`: starts the sessions of a save file that do
+/// `imkr restore [NAME]`: starts the sessions of a save file that do
 /// not run, `last` without a name. `--list` shows the save files.
 pub fn restore(args: &[String]) -> Result<()> {
     match args {
@@ -425,21 +425,21 @@ pub fn restore(args: &[String]) -> Result<()> {
                 println!("every session of {name} runs already");
             } else {
                 println!(
-                    "started {}; attach with `hivemux -s NAME` or switch with Ctrl+B S",
+                    "started {}; attach with `imkr -s NAME` or switch with Ctrl+B S",
                     started.join(", ")
                 );
             }
             Ok(())
         }
-        _ => bail!("usage: hivemux restore [NAME | --list]"),
+        _ => bail!("usage: imkr restore [NAME | --list]"),
     }
 }
 
-/// `hivemux hive <ls | save | restore | rm | rename>`: hives, saved groups
+/// `imkr hive <ls | save | restore | rm | rename>`: hives, saved groups
 /// of sessions. `save` and `restore` also work without `hive`.
 pub fn hive(args: &[String]) -> Result<()> {
     const USAGE: &str =
-        "usage: hivemux hive <ls | save [NAME] | restore [NAME] | rm NAME | rename OLD NEW>";
+        "usage: imkr hive <ls | save [NAME] | restore [NAME] | rm NAME | rename OLD NEW>";
     match args {
         [] => bail!(USAGE),
         [cmd] if cmd == "ls" => restore(&["--list".to_owned()]),
@@ -459,7 +459,7 @@ pub fn hive(args: &[String]) -> Result<()> {
     }
 }
 
-/// `hivemux update`: the running server becomes this binary, keeping every
+/// `imkr update`: the running server becomes this binary, keeping every
 /// pane and the attached client, see `upgrade`.
 pub fn update() -> Result<()> {
     let exe = std::env::current_exe()?;
@@ -505,9 +505,9 @@ mod tests {
     }
 
     #[test]
-    fn status_outside_hivemux_is_a_quiet_no_op() {
-        // No --pane and, in the test environment, no HIVEMUX_PANE.
-        if std::env::var_os("HIVEMUX_PANE").is_none() {
+    fn status_outside_imkr_is_a_quiet_no_op() {
+        // No --pane and, in the test environment, no IMKR_PANE.
+        if std::env::var_os("IMKR_PANE").is_none() {
             assert!(status(&args(&["working"])).is_ok());
         }
         assert!(status(&args(&["sleeping"])).is_err());

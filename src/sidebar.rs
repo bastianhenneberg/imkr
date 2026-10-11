@@ -300,7 +300,7 @@ pub fn draw(frame: &mut Frame, area: Rect, data: &Data, selected: Option<usize>,
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(border))
         .title(Span::styled(
-            " ⬢ hivemux ",
+            " ⬢ imkr ",
             Style::new()
                 .fg(theme::current().accent)
                 .add_modifier(Modifier::BOLD),
@@ -410,7 +410,7 @@ mod tests {
             workspaces: vec![
                 WorkspaceRow {
                     number: 1,
-                    name: "hivemux".into(),
+                    name: "imkr".into(),
                     active: true,
                     state: Some(AgentState::Working),
                     agents: 1,
@@ -452,7 +452,7 @@ mod tests {
             assert!(line.width() <= 28, "{:?} too wide", text(line));
         }
         let texts: Vec<String> = rows.iter().map(|(l, _)| text(l)).collect();
-        assert!(texts[1].starts_with("▸ 1 hivemux") && texts[1].ends_with("● 1"));
+        assert!(texts[1].starts_with("▸ 1 imkr") && texts[1].ends_with("● 1"));
         assert!(texts[2].contains('…') && texts[2].ends_with("◆ 2"));
         assert_eq!(rows[2].1, Some(Target::Workspace(2)));
         let agent = texts
@@ -536,7 +536,7 @@ mod tests {
         };
         let mut data = data();
         data.files = Some((
-            "hivemux".into(),
+            "imkr".into(),
             vec![
                 entry("src", 0, true, true),
                 entry("app.rs", 1, false, false),
@@ -544,7 +544,7 @@ mod tests {
         ));
         let rows = lines(&data, 28);
         let texts: Vec<String> = rows.iter().map(|(l, _)| text(l)).collect();
-        assert!(texts.iter().any(|t| t == "Files hivemux"));
+        assert!(texts.iter().any(|t| t == "Files imkr"));
         assert!(texts.iter().any(|t| t == "▾ src/"));
         assert_eq!(texts.last().unwrap(), "    app.rs");
         assert_eq!(rows.last().unwrap().1, Some(Target::File(1)));

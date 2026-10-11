@@ -1,4 +1,4 @@
-//! User settings, stored as TOML in `$XDG_CONFIG_HOME/hivemux/config.toml`.
+//! User settings, stored as TOML in `$XDG_CONFIG_HOME/imkr/config.toml`.
 //!
 //! The server loads them at start. The settings menu changes them live and
 //! writes them back right away.
@@ -123,7 +123,7 @@ fn step_cells(value: u16, max: u16, forward: bool) -> u16 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Bars {
-    /// The hivemux badge, mode and key hints. Never off, it is the only
+    /// The imkr badge, mode and key hints. Never off, it is the only
     /// sign of the prefix when the which-key menu is off.
     pub control: Placement,
     /// The workspace tabs.
@@ -160,7 +160,7 @@ impl Bars {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// `hivemux`, `omarchy` to follow the desktop, or an Omarchy theme name.
+    /// `imkr`, `omarchy` to follow the desktop, or an Omarchy theme name.
     pub theme: String,
     pub which_key: WhichKey,
     pub bars: Bars,
@@ -251,7 +251,7 @@ impl Config {
 
     /// Loads the config file. A missing file means all defaults. A broken
     /// one also falls back to the defaults, with the reason returned
-    /// alongside, so a typo never keeps hivemux from starting.
+    /// alongside, so a typo never keeps imkr from starting.
     pub fn load() -> (Self, Option<String>) {
         let path = match path() {
             Ok(path) => path,
@@ -277,17 +277,17 @@ impl Config {
     }
 }
 
-/// `$HIVEMUX_CONFIG` if set, otherwise `hivemux/config.toml` in
+/// `$IMKR_CONFIG` if set, otherwise `imkr/config.toml` in
 /// `$XDG_CONFIG_HOME`, or in `~/.config` without it.
 pub fn path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("HIVEMUX_CONFIG") {
+    if let Some(path) = std::env::var_os("IMKR_CONFIG") {
         return Ok(PathBuf::from(path));
     }
     let base = match std::env::var_os("XDG_CONFIG_HOME") {
         Some(dir) => PathBuf::from(dir),
         None => PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".config"),
     };
-    Ok(base.join("hivemux").join("config.toml"))
+    Ok(base.join("imkr").join("config.toml"))
 }
 
 /// One line in the settings menu. `step` moves to the next value, or the

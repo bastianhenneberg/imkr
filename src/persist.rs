@@ -74,16 +74,16 @@ impl SavedPane {
     }
 }
 
-/// Where the session is saved: `$HIVEMUX_STATE`, else next to a socket set
-/// with `$HIVEMUX_SOCKET` (so test servers keep their own), else
-/// `$XDG_STATE_HOME/hivemux/session.json` for the default session and
+/// Where the session is saved: `$IMKR_STATE`, else next to a socket set
+/// with `$IMKR_SOCKET` (so test servers keep their own), else
+/// `$XDG_STATE_HOME/imkr/session.json` for the default session and
 /// `<name>.json` for named ones, falling back to `~/.local/state`.
 /// Not the runtime directory of the socket, that one is gone after a reboot.
 pub fn path() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("HIVEMUX_STATE") {
+    if let Some(path) = std::env::var_os("IMKR_STATE") {
         return Ok(PathBuf::from(path));
     }
-    if let Some(socket) = std::env::var_os("HIVEMUX_SOCKET") {
+    if let Some(socket) = std::env::var_os("IMKR_SOCKET") {
         return Ok(PathBuf::from(socket).with_extension("state.json"));
     }
     path_for(&crate::protocol::session_name())
@@ -99,7 +99,7 @@ pub fn path_for(name: &str) -> Result<PathBuf> {
     Ok(state_dir()?.join(file))
 }
 
-/// `$XDG_STATE_HOME/hivemux`, falling back to `~/.local/state/hivemux`.
+/// `$XDG_STATE_HOME/imkr`, falling back to `~/.local/state/imkr`.
 fn state_dir() -> Result<PathBuf> {
     let base = match std::env::var_os("XDG_STATE_HOME") {
         Some(dir) => PathBuf::from(dir),
@@ -107,12 +107,12 @@ fn state_dir() -> Result<PathBuf> {
             PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".local/state")
         }
     };
-    Ok(base.join("hivemux"))
+    Ok(base.join("imkr"))
 }
 
 /// A save file: the layouts of several sessions at once, like a
 /// tmux-resurrect save. `last` is kept up to date by every session that
-/// ends on purpose, others are made with `hivemux save NAME`.
+/// ends on purpose, others are made with `imkr save NAME`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Hive {
     pub sessions: BTreeMap<String, HiveSession>,
@@ -131,10 +131,10 @@ pub const LAST: &str = "last";
 /// Where save files go: `saves` next to the session files, or next to the
 /// socket or state file a test set.
 pub fn saves_dir() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("HIVEMUX_STATE") {
+    if let Some(path) = std::env::var_os("IMKR_STATE") {
         return Ok(PathBuf::from(path).with_extension("saves"));
     }
-    if let Some(socket) = std::env::var_os("HIVEMUX_SOCKET") {
+    if let Some(socket) = std::env::var_os("IMKR_SOCKET") {
         return Ok(PathBuf::from(socket).with_extension("saves"));
     }
     Ok(state_dir()?.join("saves"))
@@ -278,7 +278,7 @@ pub fn load(path: &Path) -> Result<Option<Saved>> {
     let saved: Saved =
         serde_json::from_str(&text).with_context(|| format!("cannot read {}", path.display()))?;
     if saved.version != VERSION {
-        anyhow::bail!("{} is from another hivemux version", path.display());
+        anyhow::bail!("{} is from another imkr version", path.display());
     }
     Ok(Some(saved))
 }
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn survives_a_round_trip_through_a_file() {
-        let dir = std::env::temp_dir().join(format!("hivemux-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("imkr-test-{}", std::process::id()));
         let path = dir.join("session.json");
         let saved = sample();
         write(&path, &to_json(&saved).unwrap()).unwrap();
@@ -366,9 +366,9 @@ mod tests {
 
     #[test]
     fn hives_collect_sessions_and_are_managed() {
-        let dir = std::env::temp_dir().join(format!("hivemux-saves-{}", std::process::id()));
-        // SAFETY: the only test that sets HIVEMUX_STATE.
-        unsafe { std::env::set_var("HIVEMUX_STATE", dir.join("state.json")) };
+        let dir = std::env::temp_dir().join(format!("imkr-saves-{}", std::process::id()));
+        // SAFETY: the only test that sets IMKR_STATE.
+        unsafe { std::env::set_var("IMKR_STATE", dir.join("state.json")) };
         keep_in_last("work", sample()).unwrap();
         keep_in_last("play", Saved::new(1, BTreeMap::new(), BTreeMap::new())).unwrap();
         keep_in_last("work", sample()).unwrap();
@@ -398,7 +398,7 @@ mod tests {
         delete_hive("beta").unwrap();
         assert!(delete_hive("beta").is_err());
         assert_eq!(saves(), ["last"]);
-        unsafe { std::env::remove_var("HIVEMUX_STATE") };
+        unsafe { std::env::remove_var("IMKR_STATE") };
         let _ = fs::remove_dir_all(dir);
     }
 }

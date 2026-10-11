@@ -45,7 +45,7 @@ pub fn run(start: bool) -> Result<()> {
     let stream = match UnixStream::connect(&path) {
         Ok(stream) => stream,
         Err(_) if start => start_server(&path, None)?,
-        Err(_) => bail!("no hivemux server running"),
+        Err(_) => bail!("no imkr server running"),
     };
 
     enable_raw_mode()?;
@@ -110,10 +110,10 @@ pub fn run(start: bool) -> Result<()> {
 
 /// What this terminal can do. Images only where the kitty graphics protocol
 /// is known to work: kitty, Ghostty and WezTerm, and never inside tmux,
-/// which does not pass it on. `HIVEMUX_GRAPHICS=1` or `0` decides instead.
+/// which does not pass it on. `IMKR_GRAPHICS=1` or `0` decides instead.
 fn caps() -> Caps {
     let env = |name: &str| std::env::var(name).unwrap_or_default();
-    let graphics = match env("HIVEMUX_GRAPHICS").as_str() {
+    let graphics = match env("IMKR_GRAPHICS").as_str() {
         "1" | "on" | "true" => true,
         "0" | "off" | "false" => false,
         _ => {
@@ -144,10 +144,10 @@ pub fn kill_server() -> Result<()> {
 
 /// Ends the server at `path` and waits until it is gone.
 pub fn kill_server_at(path: &Path) -> Result<()> {
-    let mut stream = UnixStream::connect(path).context("no hivemux server running")?;
+    let mut stream = UnixStream::connect(path).context("no imkr server running")?;
     ClientMsg::KillServer.write_to(&mut stream)?;
     // Wait until the server has closed every shell and let go of the
-    // socket, so `hivemux kill-server && hivemux` starts a new one instead
+    // socket, so `imkr kill-server && imkr` starts a new one instead
     // of reaching the old one on its way out.
     for _ in 0..150 {
         if UnixStream::connect(path).is_err() {
@@ -165,7 +165,7 @@ pub fn request(request: Request) -> Result<serde_json::Value> {
 
 /// Sends `request` to the server at `path`.
 pub fn request_at(path: &Path, request: Request) -> Result<serde_json::Value> {
-    let mut stream = UnixStream::connect(path).context("no hivemux server running")?;
+    let mut stream = UnixStream::connect(path).context("no imkr server running")?;
     ClientMsg::Request(request).write_to(&mut stream)?;
     loop {
         match ServerMsg::read_from(&mut stream)? {
@@ -246,8 +246,8 @@ pub fn snapshot_all_but(
 /// Starts every session of save file `name` that does not run, each
 /// brought back from its layout there. Returns the sessions started.
 pub fn restore_hive(name: &str) -> Result<Vec<String>> {
-    if std::env::var_os("HIVEMUX_SOCKET").is_some() {
-        bail!("restoring sessions needs their names, unset HIVEMUX_SOCKET");
+    if std::env::var_os("IMKR_SOCKET").is_some() {
+        bail!("restoring sessions needs their names, unset IMKR_SOCKET");
     }
     let Some(hive) = crate::persist::load_hive(name)? else {
         bail!("there is no hive called {name}");
@@ -279,8 +279,7 @@ fn start_server(path: &Path, session: Option<&str>) -> Result<UnixStream> {
         .open(path.with_extension("log"))?;
     let mut cmd = Command::new(std::env::current_exe()?);
     if let Some(name) = session {
-        cmd.env("HIVEMUX_SESSION", name)
-            .env_remove("HIVEMUX_SOCKET");
+        cmd.env("IMKR_SESSION", name).env_remove("IMKR_SOCKET");
     }
     cmd.arg("server")
         .stdin(Stdio::null())
@@ -296,7 +295,7 @@ fn start_server(path: &Path, session: Option<&str>) -> Result<UnixStream> {
             Ok(())
         });
     }
-    cmd.spawn().context("failed to start the hivemux server")?;
+    cmd.spawn().context("failed to start the imkr server")?;
 
     for _ in 0..100 {
         if let Ok(stream) = UnixStream::connect(path) {
@@ -305,7 +304,7 @@ fn start_server(path: &Path, session: Option<&str>) -> Result<UnixStream> {
         thread::sleep(Duration::from_millis(20));
     }
     bail!(
-        "the hivemux server did not start, see {}",
+        "the imkr server did not start, see {}",
         path.with_extension("log").display()
     )
 }

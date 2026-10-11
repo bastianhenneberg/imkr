@@ -104,7 +104,7 @@ pub fn draw_help(frame: &mut Frame, area: Rect, scroll: u16) {
         Line::default(),
         Line::styled("Focus and resize repeat: for a moment afterwards,", dim),
         Line::styled("arrow keys work without the prefix.", dim),
-        Line::styled("`hivemux keys` prints this list in a shell.", dim),
+        Line::styled("`imkr keys` prints this list in a shell.", dim),
         Line::default(),
         Line::from(vec![
             Span::styled("j k", key_style()),
@@ -130,7 +130,7 @@ pub fn draw_help(frame: &mut Frame, area: Rect, scroll: u16) {
     draw_box_scrolled(
         frame,
         popup,
-        " ⬢ hivemux keys ".into(),
+        " ⬢ imkr keys ".into(),
         2,
         lines,
         scroll.min(overflow),
@@ -247,7 +247,7 @@ pub fn draw_quit_menu(frame: &mut Frame, area: Rect, items: &[MenuItem], selecte
     draw_choices(
         frame,
         area,
-        " ⬢ Quit hivemux? ",
+        " ⬢ Quit imkr? ",
         items,
         selected,
         &[

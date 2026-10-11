@@ -1,4 +1,4 @@
-//! Colours. The built-in `hivemux` theme is honey on the terminal's own
+//! Colours. The built-in `imkr` theme is honey on the terminal's own
 //! colours. `omarchy` follows the desktop's current Omarchy theme, and every
 //! Omarchy theme can be picked by name, read from its `colors.toml`.
 
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use ratatui::style::Color;
 
-pub const BUILTIN: &str = "hivemux";
+pub const BUILTIN: &str = "imkr";
 /// Follows whatever theme Omarchy currently uses.
 pub const FOLLOW: &str = "omarchy";
 

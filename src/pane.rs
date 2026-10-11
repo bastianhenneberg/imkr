@@ -28,7 +28,7 @@ pub struct Pane {
     last_output: Arc<Mutex<Instant>>,
     /// Images the program shows with the kitty graphics protocol.
     pub graphics: Arc<Mutex<PaneGraphics>>,
-    /// The agent state the program reported with `hivemux status`.
+    /// The agent state the program reported with `imkr status`.
     pub reported: Option<AgentState>,
     /// The agent's session id from its hooks, e.g. for `claude --resume`.
     pub session: Option<String>,
@@ -48,7 +48,7 @@ pub struct Spawn<'a> {
     pub cwd: Option<&'a Path>,
     /// Run this, or the user's shell when empty.
     pub command: &'a [String],
-    /// The server socket, handed to the program so `hivemux` finds it.
+    /// The server socket, handed to the program so `imkr` finds it.
     pub socket: &'a Path,
 }
 
@@ -84,9 +84,9 @@ impl Pane {
             }
         }
         cmd.env("TERM", "xterm-256color");
-        cmd.env("HIVEMUX", "1");
-        cmd.env("HIVEMUX_PANE", id.to_string());
-        cmd.env("HIVEMUX_SOCKET", spawn.socket);
+        cmd.env("IMKR", "1");
+        cmd.env("IMKR_PANE", id.to_string());
+        cmd.env("IMKR_SOCKET", spawn.socket);
 
         let child = pair
             .slave
@@ -98,7 +98,7 @@ impl Pane {
         Self::start(id, (rows, cols), pair.master, child, &[], events)
     }
 
-    /// Takes over the pane the server before `hivemux update` ran, see
+    /// Takes over the pane the server before `imkr update` ran, see
     /// `upgrade`.
     pub fn adopt(
         id: PaneId,
@@ -122,7 +122,7 @@ impl Pane {
         Ok(pane)
     }
 
-    /// What `hivemux update` hands over for this pane: the pty, the process
+    /// What `imkr update` hands over for this pane: the pty, the process
     /// and what the screen shows. `None` if the pty has no descriptor.
     pub fn handover(&self) -> Option<crate::upgrade::HandoverPane> {
         let fd = self.master.as_raw_fd()?;

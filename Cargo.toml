@@ -1,10 +1,10 @@
 [package]
-name = "hivemux"
+name = "imkr"
 version = "0.1.0"
 edition = "2024"
 description = "A terminal multiplexer and window manager for humans and their coding agents"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/bastianhenneberg/hivemux"
+repository = "https://github.com/bastianhenneberg/imkr"
 readme = "README.md"
 keywords = ["terminal", "multiplexer", "tui", "tmux", "agents"]
 categories = ["command-line-utilities"]

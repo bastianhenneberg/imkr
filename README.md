@@ -1,14 +1,15 @@
-# hivemux 🐝
+# imkr 🐝
 
 A terminal multiplexer and window manager for humans and their coding agents, written in Rust.
+Say it like *Imker*, German for beekeeper: it tends the hives your agents work in.
 
-hivemux combines tiling and floating panes with a tmux-style prefix, and keeps an eye on
+imkr combines tiling and floating panes with a tmux-style prefix, and keeps an eye on
 the agents running in its panes: working, blocked, or idle.
 
 The names follow tmux: a session holds windows, a window holds panes. A *hive*, a saved group
-of sessions, is hivemux's own, as tmux has nothing like it.
+of sessions, is imkr's own, as tmux has nothing like it.
 
-> **Status:** early prototype. hivemux runs shells in split panes, including full-screen
+> **Status:** early prototype. imkr runs shells in split panes, including full-screen
 > programs like nvim, spread over windows, and keeps them running when you detach.
 
 ## Ideas
@@ -17,7 +18,7 @@ of sessions, is hivemux's own, as tmux has nothing like it.
 - **Tiling and floating panes**: a BSP layout tree with a floating layer on top, plus windows
 - **Server/client architecture**: detach and reattach without stopping work
 - **Agent-aware**: every pane is marked working, blocked, or idle
-- **Socket API** so agents and scripts can drive hivemux
+- **Socket API** so agents and scripts can drive imkr
 - **Hives**: save several sessions together under a name and bring the whole group back later
 
 Inspired by [TUIOS](https://github.com/Gaurav-Gosain/tuios) and [herdr](https://github.com/herdrdev/herdr).
@@ -36,23 +37,23 @@ Inspired by [TUIOS](https://github.com/Gaurav-Gosain/tuios) and [herdr](https://
 
 ```bash
 cargo build --release
-./target/release/hivemux            # attach to the session, or start one
-./target/release/hivemux attach     # attach, fail if there is no session
-./target/release/hivemux kill-server  # stop the server and every shell in it
-./target/release/hivemux keys         # list the key bindings
-./target/release/hivemux -s work      # the session `work`, started if needed
-./target/release/hivemux ls           # the running sessions with panes and agents
+./target/release/imkr            # attach to the session, or start one
+./target/release/imkr attach     # attach, fail if there is no session
+./target/release/imkr kill-server  # stop the server and every shell in it
+./target/release/imkr keys         # list the key bindings
+./target/release/imkr -s work      # the session `work`, started if needed
+./target/release/imkr ls           # the running sessions with panes and agents
 ```
 
-The first `hivemux` starts a server in the background. It owns the shells and keeps them
+The first `imkr` starts a server in the background. It owns the shells and keeps them
 running after you detach or close the terminal. The socket lives in
-`$XDG_RUNTIME_DIR/hivemux/`, set `HIVEMUX_SOCKET` to use another one. One client is attached at
+`$XDG_RUNTIME_DIR/imkr/`, set `IMKR_SOCKET` to use another one. One client is attached at
 a time, attaching from a second terminal detaches the first.
 
-Sessions are separate servers with their own panes, socket and saved layout. `hivemux -s NAME`
+Sessions are separate servers with their own panes, socket and saved layout. `imkr -s NAME`
 (or `attach -t NAME`) picks one, `Ctrl+B S` switches between them without leaving the terminal,
 and named sessions show their name in the control bar. In that menu `n` starts a new session,
-`x` ends the selected one, `r` renames it (like `hivemux rename-session NAME`, `-s OLD` for
+`x` ends the selected one, `r` renames it (like `imkr rename-session NAME`, `-s OLD` for
 another one), `s` saves all running sessions as a hive and `h` opens the hives.
 
 | Key | Action |
@@ -96,7 +97,7 @@ another one), `s` saves all running sessions as a hive and `h` opens the hives.
 Pressing `Ctrl+B` opens a menu with every key, like which-key in Neovim. `f` and `w` open
 submenus, `⌫` goes back.
 Focus, move and resize repeat: for 600 ms after one of them, arrow keys work without the prefix.
-A pane closes when its shell exits, hivemux exits with the last pane.
+A pane closes when its shell exits, imkr exits with the last pane.
 
 ## Sidebar
 
@@ -121,32 +122,32 @@ for you), `✦ done` (finished while you were elsewhere) or `✓ idle`. A window
 while you look elsewhere or are detached: through `notify-send`, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting `notifications = "system" | "terminal" | "off"`).
 
-hivemux recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen
+imkr recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen
 and kilo. It guesses from their output and from questions on the screen. For exact states, let
 the agent report them with hooks. For Claude Code:
 
 ```bash
-cargo install --path .     # puts hivemux on your PATH
-hivemux hooks              # prints the hooks for ~/.claude/settings.json
+cargo install --path .     # puts imkr on your PATH
+imkr hooks              # prints the hooks for ~/.claude/settings.json
 ```
 
-The hooks call `hivemux status working|blocked|idle|clear`, which knows its pane from
-`$HIVEMUX_PANE` and does nothing outside hivemux. It reads the hook's JSON from stdin: a subagent
+The hooks call `imkr status working|blocked|idle|clear`, which knows its pane from
+`$IMKR_PANE` and does nothing outside imkr. It reads the hook's JSON from stdin: a subagent
 finishing does not mark the agent done, and the session id is kept to resume the agent later.
 
-Scripts and agents can drive hivemux too:
+Scripts and agents can drive imkr too:
 
 ```bash
-hivemux list [--json]                          # panes with program, state and directory
-hivemux send --pane 3 "run the tests"          # type into a pane, then Enter
-hivemux new --window 2 -- claude --resume      # start a command in a new pane
-hivemux new --float                            # a floating shell
-hivemux rename "tests"                          # name the pane this runs in
-hivemux wait --pane 3 --until ready            # wait until an agent is idle or done
-hivemux read --pane 3 --lines 20               # what it wrote last
-hivemux rename --window 2 api                  # name a window
-hivemux notify "tests are green"              # a notification, titled after this pane
-hivemux notify --title build "done in 42 s"    # with a title of its own
+imkr list [--json]                        # panes with program, state and directory
+imkr send --pane 3 "run the tests"        # type into a pane, then Enter
+imkr new --window 2 -- claude --resume    # start a command in a new pane
+imkr new --float                          # a floating shell
+imkr rename "tests"                       # name the pane this runs in
+imkr wait --pane 3 --until ready          # wait until an agent is idle or done
+imkr read --pane 3 --lines 20             # what it wrote last
+imkr rename --window 2 api                # name a window
+imkr notify "tests are green"             # a notification, titled after this pane
+imkr notify --title build "done in 42 s"  # with a title of its own
 ```
 
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
@@ -157,10 +158,10 @@ OSC 9 to the terminal, or none) and shows up in the control bar as well.
 A new version does not need a restart:
 
 ```bash
-cargo install --path . --locked && hivemux update
+cargo install --path . --locked && imkr update
 ```
 
-`hivemux update` tells the running server to become the new binary. It execs it in the same
+`imkr update` tells the running server to become the new binary. It execs it in the same
 process, which keeps every pane's pty, the socket and the attached client's connection open, and
 hands over layout, names and screens (history included) in a file. Shells and agents keep
 running, the attached client just redraws. Only the server is updated: a client started before
@@ -168,9 +169,9 @@ keeps its old code until it reattaches, fine as long as the protocol stays compa
 
 ## Restarts
 
-hivemux saves the layout to `~/.local/state/hivemux/session.json` while it runs: windows,
+imkr saves the layout to `~/.local/state/imkr/session.json` while it runs: windows,
 splits, floating panes and each pane's directory. If the server dies with the machine, the next
-`hivemux` brings the layout back, shells start in their old directories, and Claude Code and
+`imkr` brings the layout back, shells start in their old directories, and Claude Code and
 Codex sessions known from the hooks are resumed (`claude --resume <id>`). Processes and screen
 contents cannot survive a restart. Ending the session on purpose (`Ctrl+B Q`, `kill-server`, or
 exiting the last shell) deletes the file.
@@ -194,29 +195,29 @@ session as its own server again. Sessions already running are left alone, and a 
 session is marked with ● in the list.
 
 ```bash
-hivemux hive save work       # the running sessions as the hive `work`
-hivemux hive ls              # every hive with its sessions and age
-hivemux hive restore work    # start what of `work` does not run
-hivemux hive rename work api
-hivemux hive rm api
+imkr hive save work       # the running sessions as the hive `work`
+imkr hive ls              # every hive with its sessions and age
+imkr hive restore work    # start what of `work` does not run
+imkr hive rename work api
+imkr hive rm api
 ```
 
-`hivemux save` and `hivemux restore` are short for `hive save` and `hive restore`. Hives live in
-`~/.local/state/hivemux/saves/`, plain JSON, easy to copy or back up.
+`imkr save` and `imkr restore` are short for `hive save` and `hive restore`. Hives live in
+`~/.local/state/imkr/saves/`, plain JSON, easy to copy or back up.
 
 ## Images
 
 Programs that show images with the kitty graphics protocol (icat, chafa, yazi, timg, mpv's
-kitty output, …) work in hivemux when your terminal draws them: kitty, Ghostty and WezTerm.
-hivemux answers their question whether images work, passes the image data on and places the
+kitty output, …) work in imkr when your terminal draws them: kitty, Ghostty and WezTerm.
+imkr answers their question whether images work, passes the image data on and places the
 images where the program put them. They scroll with the text, come back in the scrollback, and
 hide while a menu or a floating pane covers them. In other terminals, and inside tmux, nothing
-changes: programs hear no answer and fall back to text. `HIVEMUX_GRAPHICS=1` or `0` overrides
+changes: programs hear no answer and fall back to text. `IMKR_GRAPHICS=1` or `0` overrides
 the detection, the setting `images = false` turns it off.
 
 ## Mouse
 
-The terminal's title shows the window and the focused pane, e.g. `hivemux · 2 api · claude`.
+The terminal's title shows the window and the focused pane, e.g. `imkr · 2 api · claude`.
 
 
 - Click a pane to focus it, click a window tab to switch to it, `+` after the tabs opens a
@@ -237,11 +238,11 @@ Alacritty, Ghostty, foot and WezTerm do).
 ## Settings
 
 `Ctrl+B` `,` opens the settings. Changes apply right away and are saved to
-`~/.config/hivemux/config.toml` (or `$XDG_CONFIG_HOME/hivemux/`, or `$HIVEMUX_CONFIG`).
-The file can also be edited by hand, hivemux reads it when the server starts:
+`~/.config/imkr/config.toml` (or `$XDG_CONFIG_HOME/imkr/`, or `$IMKR_CONFIG`).
+The file can also be edited by hand, imkr reads it when the server starts:
 
 ```toml
-theme = "omarchy"   # "hivemux", "omarchy" to follow the desktop, or an Omarchy theme name
+theme = "omarchy"   # "imkr", "omarchy" to follow the desktop, or an Omarchy theme name
 
 [which_key]
 enabled = true      # show the key menu after Ctrl+B
@@ -252,7 +253,7 @@ enabled = true
 side = "right"      # "left" or "right"
 
 [bars]
-control = "bottom"  # hivemux badge, mode and hints: "top" or "bottom"
+control = "bottom"  # imkr badge, mode and hints: "top" or "bottom"
 tabs = "bottom"     # window tabs: "top", "bottom" or "off"
 path = "bottom"     # directory of the focused pane: "top", "bottom" or "off"
 
@@ -266,11 +267,11 @@ bottom_bar = "edge"
 ```
 
 Two columns look about as wide as one row is tall, so `outer_x = 2, outer_y = 1, gap_x = 2,
-gap_y = 1` gives even spacing all round. hivemux spaces in whole cells, the terminal's own
+gap_y = 1` gives even spacing all round. imkr spaces in whole cells, the terminal's own
 padding (e.g. Ghostty's `window-padding-x/y`) comes on top: a bar on the `edge` only touches the
 window's edge when that padding is 0.
 
-Themes: `hivemux` is honey on your terminal's colours. `omarchy` follows the current Omarchy theme
+Themes: `imkr` is honey on your terminal's colours. `omarchy` follows the current Omarchy theme
 and changes with it. Any installed Omarchy theme (`catppuccin`, `gruvbox`, `tokyo-night`, …) can be
 picked by name, its `colors.toml` provides the colours. In the settings, ←/→ step through them.
 Themes colour more than the accent: every window has its own colour in tabs and sidebar,

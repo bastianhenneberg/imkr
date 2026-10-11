@@ -1,6 +1,6 @@
 //! The key bindings after the prefix. This table is the single source for
 //! what a key does and for every place that shows keys to the user: the
-//! which-key menu, the help overlay and `hivemux keys`.
+//! which-key menu, the help overlay and `imkr keys`.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -474,7 +474,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         label: "Q",
-        description: "quit hivemux",
+        description: "quit imkr",
         group: Group::More,
         keys: &[(Key::plain(Char('Q')), C::Quit)],
     },
@@ -696,7 +696,7 @@ pub const BINDINGS: &[Binding] = &[
 pub type KeyHint = (&'static str, &'static str);
 
 /// The keys of the session list (`Ctrl+B S`) besides its entries. Its
-/// popup, the help and `hivemux keys` all show this list.
+/// popup, the help and `imkr keys` all show this list.
 pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("↑↓", "select"),
     ("Enter", "or key switch"),
@@ -741,7 +741,7 @@ pub fn in_group(group: Group) -> impl Iterator<Item = &'static Binding> {
         .filter(move |binding| binding.group == group)
 }
 
-/// The key reference as plain text, for `hivemux keys`.
+/// The key reference as plain text, for `imkr keys`.
 pub fn reference() -> String {
     let width = BINDINGS
         .iter()
