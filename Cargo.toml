@@ -1,6 +1,6 @@
 [package]
 name = "imkr"
-version = "0.9.19"
+version = "0.9.20"
 edition = "2024"
 description = "A terminal multiplexer and window manager for humans and their coding agents"
 license = "MIT OR Apache-2.0"
