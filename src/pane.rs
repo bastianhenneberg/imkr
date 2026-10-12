@@ -458,7 +458,9 @@ impl Pane {
             )
         } else if found.is_none() {
             let name = argv[0].rsplit('/').next().unwrap_or(&argv[0]);
-            format!("{name} is no agent imkr knows; add \"{name}\" to `extra_agents` in the config if it is one")
+            format!(
+                "{name} is no agent imkr knows; add \"{name}\" to `extra_agents` in the config if it is one"
+            )
         } else if since < agent::ACTIVE {
             format!("it wrote output {} ms ago: working", since.as_millis())
         } else if phrase.is_some() && !self.answered.get() {
