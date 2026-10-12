@@ -327,30 +327,123 @@ pub fn new(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `imkr hooks`: the Claude Code hook config that reports the agent state.
-pub fn hooks() -> Result<()> {
-    let hook = |state: &str| {
-        serde_json::json!([{ "matcher": "*", "hooks": [{
-            "type": "command",
-            "command": format!("imkr status {state}"),
-            "timeout": 10,
-        }]}])
-    };
-    let config = serde_json::json!({
-        "hooks": {
-            "SessionStart": hook("idle"),
-            "UserPromptSubmit": hook("working"),
-            "PreToolUse": hook("working"),
-            "PermissionRequest": hook("blocked"),
-            "Stop": hook("idle"),
-            "SessionEnd": hook("clear"),
-        }
-    });
+/// The Claude Code events that report the agent state, with the matcher
+/// and the state each one sets. Waiting for the user is told by the
+/// permission request and, with permissions skipped, by the notification
+/// that a question or approval waits.
+const HOOKS: &[(&str, &str, &str)] = &[
+    ("SessionStart", "*", "idle"),
+    ("UserPromptSubmit", "*", "working"),
+    ("PreToolUse", "*", "working"),
+    ("PermissionRequest", "*", "blocked"),
+    (
+        "Notification",
+        "permission_prompt|elicitation_dialog",
+        "blocked",
+    ),
+    ("Stop", "*", "idle"),
+    ("SessionEnd", "*", "clear"),
+];
+
+/// The script the hooks run: finds imkr even where `~/.cargo/bin` is only
+/// on the PATH of interactive shells, and does nothing outside imkr.
+const HOOK_SCRIPT: &str = r#"#!/bin/sh
+# imkr: reports Claude Code's state (working, blocked, idle) to the imkr
+# pane it runs in. Installed by `imkr hooks --install`. Does nothing outside imkr.
+
+[ -n "${IMKR_PANE:-}" ] || exit 0
+bin="$(command -v imkr 2>/dev/null || echo "$HOME/.cargo/bin/imkr")"
+[ -x "$bin" ] || bin="$HOME/.local/bin/imkr"
+[ -x "$bin" ] || exit 0
+exec "$bin" status "${1:-}"
+"#;
+
+/// `imkr hooks [--install]`: the Claude Code hook config that reports the
+/// agent state; `--install` puts it into `~/.claude` right away.
+pub fn hooks(args: &[String]) -> Result<()> {
+    if args.iter().any(|a| a == "--install") {
+        return install_hooks();
+    }
+    let mut config = serde_json::Map::new();
+    for &(event, matcher, state) in HOOKS {
+        config.insert(
+            event.to_owned(),
+            serde_json::json!([{ "matcher": matcher, "hooks": [{
+                "type": "command",
+                "command": format!("imkr status {state}"),
+                "timeout": 10,
+            }]}]),
+        );
+    }
+    let config = serde_json::json!({ "hooks": config });
     println!("{}", serde_json::to_string_pretty(&config)?);
     eprintln!(
-        "\nAdd this to ~/.claude/settings.json (merge it with hooks you already have).\n\
-         Outside imkr the hooks do nothing, `imkr` must be on your PATH."
+        "\nAdd this to ~/.claude/settings.json (merge it with hooks you already have),\n\
+         or let `imkr hooks --install` do it. Outside imkr the hooks do nothing."
     );
+    Ok(())
+}
+
+/// Writes the hook script to `~/.claude/hooks/imkr-agent-state.sh` and
+/// puts its hooks into `~/.claude/settings.json`, replacing imkr's own from
+/// before and keeping every other hook. The settings are backed up first.
+fn install_hooks() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
+    let claude = home.join(".claude");
+    let script = claude.join("hooks/imkr-agent-state.sh");
+    std::fs::create_dir_all(script.parent().expect("has a parent"))?;
+    std::fs::write(&script, HOOK_SCRIPT)?;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+
+    let path = claude.join("settings.json");
+    let mut settings: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            std::fs::write(claude.join("settings.json.bak-imkr"), &text)?;
+            serde_json::from_str(&text)
+                .with_context(|| format!("cannot read {}", path.display()))?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(e.into()),
+    };
+    let hooks = settings
+        .as_object_mut()
+        .context("settings.json is no JSON object")?
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .context("\"hooks\" in settings.json is no object")?;
+    let ours =
+        |command: &str| command.contains("imkr-agent-state") || command.starts_with("imkr status");
+    // Out with imkr's hooks from before, whatever they looked like.
+    for groups in hooks.values_mut() {
+        if let Some(groups) = groups.as_array_mut() {
+            for group in groups.iter_mut() {
+                if let Some(list) = group["hooks"].as_array_mut() {
+                    list.retain(|h| !h["command"].as_str().is_some_and(ours));
+                }
+            }
+            groups.retain(|g| g["hooks"].as_array().is_none_or(|list| !list.is_empty()));
+        }
+    }
+    hooks.retain(|_, groups| groups.as_array().is_none_or(|g| !g.is_empty()));
+    for &(event, matcher, state) in HOOKS {
+        let entry = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
+        if let Some(groups) = entry.as_array_mut() {
+            groups.push(serde_json::json!({ "matcher": matcher, "hooks": [{
+                "type": "command",
+                "command": format!("sh '{}' {state}", script.display()),
+                "timeout": 10,
+            }]}));
+        }
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&settings)? + "\n")?;
+    println!(
+        "hooks installed: {} and {} (backup: settings.json.bak-imkr)",
+        script.display(),
+        path.display()
+    );
+    println!("Claude Code sessions started from now on report their state to imkr.");
     Ok(())
 }
 

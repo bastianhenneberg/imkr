@@ -40,6 +40,9 @@ Projekt-Slug: `imkr`
 - Agent-Status: `src/agent.rs` (Erkennung per argv aus `/proc/<pgid>/cmdline`, Aktivität, Fragen
   auf dem Screen; gemeldeter Status aus Hooks hat Vorrang). `App::update_agents` läuft bei jedem
   Tick (500 ms) und klingelt bei neuem `blocked`. Beantwortete Fragen: `Pane::note_input`.
+- Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
+  (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). `Notification` mit
+  `permission_prompt|elicitation_dialog` → blocked, für Agents im Bypass-Modus. Test mit Schein-HOME.
 - Verbindungen attachen erst nach `ClientMsg::Attach`; alle anderen (CLI, Agents) schicken
   `ClientMsg::Request` und bekommen `ServerMsg::Reply`. Befehle: `src/cli.rs`.
 - Mehrere Clients wie in tmux: `App::clients` (Größe, Caps, Fenstertitel, Bilder je Client), alle

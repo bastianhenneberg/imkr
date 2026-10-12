@@ -160,9 +160,15 @@ and kilo. It guesses from their output and from questions on the screen. For exa
 the agent report them with hooks. For Claude Code:
 
 ```bash
-cargo install --path .     # puts imkr on your PATH
-imkr hooks              # prints the hooks for ~/.claude/settings.json
+imkr hooks --install    # puts them into ~/.claude, on every machine you run agents on
+imkr hooks              # or just prints them for ~/.claude/settings.json
 ```
+
+`--install` writes `~/.claude/hooks/imkr-agent-state.sh`, adds its hooks to
+`~/.claude/settings.json` next to your other hooks (backed up as `settings.json.bak-imkr`, imkr's
+own from before replaced), and works where `~/.cargo/bin` is only on interactive shells' PATH.
+Waiting is reported both by permission requests and, for agents running with permissions
+skipped, by the notification that a question waits. Agents started after it report their state.
 
 The hooks call `imkr status working|blocked|idle|clear`, which knows its pane from
 `$IMKR_PANE` and does nothing outside imkr. It reads the hook's JSON from stdin: a subagent

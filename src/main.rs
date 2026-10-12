@@ -83,7 +83,8 @@ For scripts and agents:
   wait [--pane N] --until <state> [--timeout S]
                                         wait for an agent: working, blocked, idle,
                                         done, or ready (idle or done)
-  hooks                                 print the Claude Code hooks for status
+  hooks [--install]                     print the Claude Code hooks for status, or
+                                        install them into ~/.claude
   help          show this help
 
 Inside imkr, Ctrl+B then q opens the quit menu: detach, close the pane or end the
@@ -157,7 +158,7 @@ fn main() -> Result<()> {
         ["hosts", ..] => cli::hosts(&args[1..]),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
-        ["hooks"] => cli::hooks(),
+        ["hooks", ..] => cli::hooks(&args[1..]),
         ["update"] => cli::update(),
         ["upgrade"] => release::upgrade(),
         ["hive", ..] => cli::hive(&args[1..]),
