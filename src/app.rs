@@ -6627,7 +6627,11 @@ impl App {
         if control {
             spans.extend(self.mode_spans());
             // Working on a machine the user does not sit at: worth knowing.
-            if let Some(machine) = self.machine_label(None).filter(|_| self.origin.is_some()) {
+            // With the path in this bar the machine stands next to it.
+            if let Some(machine) = self
+                .machine_label(None)
+                .filter(|_| self.origin.is_some() && bars.path != side)
+            {
                 spans.push(Span::styled(
                     format!(" · {machine}"),
                     Style::new().fg(t.cyan).add_modifier(Modifier::BOLD),
@@ -6646,7 +6650,18 @@ impl App {
         if bars.path == side
             && let Some(cwd) = self.focused_cwd()
         {
-            let room = usize::from(area.width).saturating_sub(left.width() + 5);
+            // Which machine this is, always: ⌂ the one the user sits at,
+            // ⇄ another.
+            let machine = self
+                .machine_label(None)
+                .unwrap_or_else(|| format!("⌂ {}", protocol::machine_name()));
+            let machine_style = if self.origin.is_some() {
+                Style::new().fg(t.cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            let room =
+                usize::from(area.width).saturating_sub(left.width() + 8 + machine.chars().count());
             let path = shorten(&tilde(&cwd), room);
             if !path.is_empty() {
                 // Plain text with a coloured marker: dimmed text is close to
@@ -6654,6 +6669,8 @@ impl App {
                 let line = Line::from(vec![
                     Span::styled("▸ ", Style::new().fg(t.cyan).add_modifier(Modifier::BOLD)),
                     Span::raw(path),
+                    Span::styled(" · ", Style::new().fg(t.muted)),
+                    Span::styled(machine, machine_style),
                     Span::raw(" "),
                 ]);
                 // Alone in its line the path starts on the left, where the
