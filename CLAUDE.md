@@ -198,6 +198,11 @@ Projekt-Slug: `imkr`
   Panes stehen überall hinter ihrem Window: `1 api › claude` (`window_name_of`).
   Listen gruppieren nach Rechner: `MenuItem::group` (Überschrift über dem ersten Eintrag jeder
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
+- tmux-Shim: `src/tmux.rs` (`run` übersetzt tmux-Befehle in Requests, `Options::parse`,
+  `target_pane`, `expand` für `#{…}`, `key_bytes`), `main` erkennt argv0 `tmux`. Einstellung
+  `tmux_shim` → `pane::set_tmux_shim(tmux::shim_dir())` in `apply_theme` (Link in
+  `<state>/tmux-shim/tmux`), `Pane::spawn` setzt dann TMUX, TMUX_PANE, PATH. `Request::Kill`
+  schließt ein Pane (nicht das letzte). Test: Skript mit tmux-Befehlen in einem Pane.
 - Worktrees: `src/worktree.rs` (`create`: neben dem Haupt-Repo `<repo>--<name>`, über
   `--git-common-dir` auch aus einem Worktree heraus), `App::worktree_window` (`Request::Worktree`,
   `Ctrl+B w t` per `PromptFor::Worktree`). Entfernen bleibt bei git.

@@ -23,6 +23,7 @@ mod server;
 mod sidebar;
 mod template;
 mod theme;
+mod tmux;
 mod upgrade;
 mod workspace;
 mod worktree;
@@ -129,6 +130,13 @@ fn main() -> Result<()> {
     if std::env::var_os("IMKR_REEXEC").is_some() {
         let remote = client::reexec_target();
         return client::run(true, false, remote, false);
+    }
+    // Run as `tmux` by programs in panes, with the tmux shim on.
+    if std::env::args()
+        .next()
+        .is_some_and(|argv0| argv0.rsplit('/').next() == Some("tmux"))
+    {
+        std::process::exit(tmux::run(&std::env::args().skip(1).collect::<Vec<_>>()));
     }
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // `--host HOST`: the session on that machine, through ssh.

@@ -74,6 +74,13 @@ pub struct Spawn<'a> {
     pub socket: &'a Path,
 }
 
+/// Where `tmux` for the panes lives while the tmux shim is on, see `tmux`.
+static TMUX_SHIM: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+pub fn set_tmux_shim(dir: Option<PathBuf>) {
+    *TMUX_SHIM.lock().unwrap() = dir;
+}
+
 impl Pane {
     /// Starts `spawn.command` in a new pty. Output is fed into the VT parser
     /// on a background thread, which sends `AppEvent::PtyOutput` after every
@@ -115,6 +122,14 @@ impl Pane {
         cmd.env("IMKR", "1");
         cmd.env("IMKR_PANE", id.to_string());
         cmd.env("IMKR_SOCKET", spawn.socket);
+        if let Some(dir) = TMUX_SHIM.lock().unwrap().clone() {
+            // What tmux sets: its socket, server pid and session.
+            let tmux = format!("{},{},0", spawn.socket.display(), std::process::id());
+            cmd.env("TMUX", tmux);
+            cmd.env("TMUX_PANE", format!("%{id}"));
+            let path = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", format!("{}:{path}", dir.display()));
+        }
 
         let child = pair
             .slave

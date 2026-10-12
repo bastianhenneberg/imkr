@@ -193,6 +193,10 @@ pub struct Config {
     /// Alt+1 … Alt+9 jump to the panes marked with `Ctrl+B m`, without the
     /// prefix. Off leaves those keys to the programs.
     pub marks_on_alt: bool,
+    /// Panes find imkr as `tmux`, so programs that drive tmux, like Claude
+    /// Code's agent teams, open imkr panes. Off by default: with `$TMUX`
+    /// set, programs act as inside tmux.
+    pub tmux_shim: bool,
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
@@ -353,6 +357,7 @@ impl Default for Config {
             images: true,
             renumber_windows: false,
             marks_on_alt: true,
+            tmux_shim: false,
             sessions_on_start: false,
             name: None,
             hosts: Vec::new(),
@@ -514,6 +519,11 @@ pub const SETTINGS: &[Setting] = &[
                 forward,
             )
         },
+    },
+    Setting {
+        name: "tmux for agent teams (new panes)",
+        value: |c| if c.tmux_shim { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.tmux_shim = !c.tmux_shim,
     },
     Setting {
         name: "Marks on Alt+1-9",

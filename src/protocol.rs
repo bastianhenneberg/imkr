@@ -372,6 +372,9 @@ pub enum Request {
         command: Vec<String>,
         cwd: Option<PathBuf>,
     },
+    /// Close pane `pane`, ending its program, as `Ctrl+B x` does. Not the
+    /// last one: that would end the session.
+    Kill { pane: PaneId },
     /// Start `command` (the shell if empty) in a new pane.
     New {
         command: Vec<String>,

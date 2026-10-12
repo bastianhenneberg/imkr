@@ -1665,6 +1665,17 @@ impl App {
                 cwd,
             } => self.new_pane(&command, float, workspace, cwd),
             Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
+            Request::Kill { pane } => {
+                if !self.panes.contains_key(&pane) {
+                    return Err(format!("no pane {pane}"));
+                }
+                let popups: HashSet<PaneId> = self.popups.values().map(|p| p.pane).collect();
+                if self.panes.keys().filter(|id| !popups.contains(id)).count() < 2 {
+                    return Err("the last pane is not closed this way".into());
+                }
+                self.close(pane);
+                Ok(serde_json::json!({ "pane": pane, "closed": true }))
+            }
             Request::Snapshot => serde_json::to_value(self.saved()).map_err(|e| e.to_string()),
             Request::RenameSession { name } => {
                 self.rename_session(&name)?;
@@ -6075,6 +6086,11 @@ impl App {
     /// Draws with the configured theme from now on. When it follows
     /// Omarchy, remembers which Omarchy theme that was.
     fn apply_theme(&mut self) {
+        crate::pane::set_tmux_shim(if self.config.tmux_shim {
+            crate::tmux::shim_dir().ok()
+        } else {
+            None
+        });
         self.followed = theme::omarchy_stamp();
         theme::set(theme::load(&self.config.theme));
     }

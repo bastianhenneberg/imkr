@@ -275,6 +275,17 @@ and never into a question it asks, which stays yours. Each message says who sent
 answer. `imkr skill` prints the guide for agents, `imkr skill --install` puts it into Claude
 Code's skills, so the agents use it on their own.
 
+### tmux for agent teams
+
+Programs that drive tmux, like Claude Code's agent teams, can open imkr panes instead. Turn on
+*tmux for agent teams* in the settings: panes started after that find imkr as `tmux` on their
+PATH, with `$TMUX` and `$TMUX_PANE` set, and `split-window`, `new-window`, `send-keys`,
+`capture-pane`, `kill-pane`, `display-message`, `list-panes`, `list-windows`, `select-pane`
+and `rename-window` work on imkr panes (`%3` is pane 3); layout and option commands are
+accepted and do nothing, `kill-session` and `kill-server` are refused. It is off by default,
+since programs that see `$TMUX` act as if inside tmux. Tested with scripts that use these
+commands, not yet with every program that drives tmux.
+
 ### Events
 
 `imkr subscribe` prints what changes in the sessions on this machine, one JSON object per line,
