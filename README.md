@@ -60,6 +60,7 @@ imkr attach       # attach, fail if there is no session
 imkr kill-server  # stop the server and every shell in it
 imkr keys         # list the key bindings
 imkr version      # what is installed
+imkr upgrade      # fetch the latest release and become it
 imkr -s work      # the session `work`, started if needed
 imkr ls           # the running sessions with panes and agents
 ```
@@ -211,10 +212,16 @@ of imkr there too; the sidebar says if it is missing or the machine does not ans
 A new version does not need a restart:
 
 ```bash
+imkr upgrade                                     # the whole thing, in one
 cargo install --path . --locked && imkr update   # from a checkout
-curl -fsSL https://raw.githubusercontent.com/bastianhenneberg/imkr/main/install.sh | sh
-imkr update                                      # from the latest release
 ```
+
+`imkr upgrade` asks for the newest release, stops right there if it is the one already
+running, and otherwise downloads the archive for this machine, checks its sha256, and
+replaces the binary it was started from — by renaming inside the same directory, so nobody
+ever sees a half-written file. It then moves a running session over, the same way `imkr
+update` does. The installer is still a way to update (it overwrites the binary it finds),
+but it writes to `~/.local/bin`, which shadows a cargo install rather than replacing it.
 
 `imkr update` tells the running server to become the new binary. It execs it in the same
 process, which keeps every pane's pty, the socket and the attached clients' connections open, and

@@ -472,7 +472,13 @@ pub fn hive(args: &[String]) -> Result<()> {
 /// `imkr update`: the running server becomes this binary, keeping every
 /// pane and the attached client, see `upgrade`.
 pub fn update() -> Result<()> {
-    let exe = std::env::current_exe()?;
+    update_to(std::env::current_exe()?)
+}
+
+/// `imkr upgrade` has to name the path itself: once the binary has been
+/// replaced, `current_exe()` reads back as `… (deleted)`, because the running
+/// process still holds the old, now unlinked inode.
+pub fn update_to(exe: std::path::PathBuf) -> Result<()> {
     let reply = client::request(Request::Upgrade { exe: exe.clone() })?;
     let panes = reply["panes"].as_u64().unwrap_or(0);
     // The new server takes the socket over; wait until it answers.

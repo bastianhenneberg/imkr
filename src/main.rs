@@ -15,6 +15,7 @@ mod mouse;
 mod pane;
 mod persist;
 mod protocol;
+mod release;
 mod render;
 mod server;
 mod sidebar;
@@ -55,6 +56,8 @@ Commands:
   update        move the running server to this binary, e.g. after
                 `cargo install`; panes, programs and screens stay
   keys          list the key bindings
+  upgrade       download the latest release, replace this binary and
+                move a running session to it
   version       print the version
 
 For scripts and agents:
@@ -147,6 +150,7 @@ fn main() -> Result<()> {
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks"] => cli::hooks(),
         ["update"] => cli::update(),
+        ["upgrade"] => release::upgrade(),
         ["hive", ..] => cli::hive(&args[1..]),
         ["save", ..] => cli::save(&args[1..]),
         ["restore", ..] => cli::restore(&args[1..]),
