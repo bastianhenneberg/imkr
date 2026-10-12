@@ -52,6 +52,9 @@ pub struct Caps {
     /// machines. Clients from before do not, they are not sent there.
     #[serde(default)]
     pub hosts: bool,
+    /// Follows `ServerMsg::Switch` to `…#pane`, showing that pane there.
+    #[serde(default)]
+    pub panes: bool,
     /// The machine the client runs on, when that is not the server's: where
     /// it can switch back to, with the sessions running there.
     #[serde(default)]
@@ -62,6 +65,10 @@ pub struct Caps {
 pub struct Origin {
     pub host: String,
     pub sessions: Vec<String>,
+    /// The same sessions with their agents, sent again every few seconds,
+    /// so the sidebar there shows this machine as this one shows it.
+    #[serde(default)]
+    pub infos: Vec<SessionInfo>,
 }
 
 /// A session as `imkr ls --json` lists it, for the session list and the
@@ -436,9 +443,11 @@ mod tests {
                 cell_width: 9,
                 cell_height: 19,
                 hosts: true,
+                panes: true,
                 origin: Some(Origin {
                     host: "omarchy".into(),
                     sessions: vec!["default".into()],
+                    infos: Vec::new(),
                 }),
             }),
             ClientMsg::Request(Request::Status {

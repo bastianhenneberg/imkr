@@ -1614,11 +1614,7 @@ impl App {
         };
         let mut rows: Vec<sidebar::SessionRow> = here.iter().map(|info| row(None, info)).collect();
         if let Some(origin) = self.origin.clone() {
-            for name in origin.sessions {
-                let info = protocol::SessionInfo {
-                    name,
-                    ..Default::default()
-                };
+            for info in origin_infos(&origin) {
                 rows.push(row(Some(origin.host.clone()), &info));
             }
         }
@@ -1659,6 +1655,13 @@ impl App {
         let places = self.places.lock().unwrap();
         let mut groups: Vec<(Option<String>, &protocol::SessionInfo)> =
             places.local.iter().map(|s| (None, s)).collect();
+        // The machine the user sits at, as their client last told.
+        let origin = self.origin.clone();
+        if let Some(origin) = &origin {
+            for session in &origin.infos {
+                groups.push((Some(origin.host.clone()), session));
+            }
+        }
         for (host, sessions) in &places.hosts {
             for session in sessions.iter().flatten() {
                 groups.push((Some(host.clone()), session));
@@ -1690,16 +1693,23 @@ impl App {
                 Some("this terminal's imkr is too old for other machines, reattach".into());
             return;
         }
-        self.switch_session(format!("{}#{}", place.target(), agent.pane));
+        // Clients from before only know sessions, not panes in them.
+        if self.active_caps().is_some_and(|caps| caps.panes) {
+            self.switch_session(format!("{}#{}", place.target(), agent.pane));
+        } else {
+            self.switch_session(place.target());
+        }
     }
 
     /// Machine `host` (`None`: this one) as the user sees it: `⌂` for the
-    /// one their client runs on, `⇄` for the others. `None` when it is this
-    /// machine and they sit at it, nothing to point out then.
+    /// one their client runs on, `⇄` for the others. `None` for this one
+    /// when they sit at it and no other machine is known: nothing to tell
+    /// apart then.
     fn machine_label(&self, host: Option<&str>) -> Option<String> {
         let home = self.origin.as_ref().map(|o| o.host.as_str());
         match (host, home) {
-            (None, None) => None,
+            (None, None) if self.places.lock().unwrap().hosts.is_empty() => None,
+            (None, None) => Some(format!("⌂ {}", protocol::hostname())),
             (None, Some(_)) => Some(format!("⇄ {}", protocol::hostname())),
             (Some(h), Some(home)) if h == home => Some(format!("⌂ {h}")),
             (Some(h), _) => Some(format!("⇄ {h}")),
@@ -4928,7 +4938,7 @@ impl App {
         if control {
             spans.extend(self.mode_spans());
             // Working on a machine the user does not sit at: worth knowing.
-            if let Some(machine) = self.machine_label(None) {
+            if let Some(machine) = self.machine_label(None).filter(|_| self.origin.is_some()) {
                 spans.push(Span::styled(
                     format!(" · {machine}"),
                     Style::new().fg(t.cyan).add_modifier(Modifier::BOLD),
@@ -5288,6 +5298,22 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
             thread::sleep(LOCAL_EVERY);
         }
     });
+}
+
+/// The sessions on the client's machine, with their agents if the client
+/// sent them, else just by name, as clients from before do.
+fn origin_infos(origin: &protocol::Origin) -> Vec<protocol::SessionInfo> {
+    if !origin.infos.is_empty() {
+        return origin.infos.clone();
+    }
+    origin
+        .sessions
+        .iter()
+        .map(|name| protocol::SessionInfo {
+            name: name.clone(),
+            ..Default::default()
+        })
+        .collect()
 }
 
 /// What an agent elsewhere did since it was last seen `before`: came to

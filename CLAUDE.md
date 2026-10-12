@@ -78,6 +78,9 @@ Projekt-Slug: `imkr`
   (`.cargo/bin/imkr` als Link), `XDG_RUNTIME_DIR`, `XDG_STATE_HOME`, `IMKR_CONFIG` = zweite Welt.
   Agents anderer Sessions: `SessionInfo::agent_panes` (aus `imkr ls --json`), Sidebar
   `OtherAgentRow`, Klick → Switch `host:name#pane` (Client schickt danach `Request::Reveal`).
+  Rückrichtung: Client auf fremdem Rechner schickt alle 3 s `Caps` mit `Origin::infos` (seine
+  `local_sessions`), der Server zeigt sie unter ⌂ (`origin_infos`). `#pane` nur an Clients mit
+  `Caps::panes`. `machine_label` nimmt die `places`-Sperre: nie aufrufen, während sie gehalten wird.
   Remote-Wechsel nach blocked/done erkennt `watch_places` per `remote_change` und legt sie in
   `Places::alerts`, `pass_on_alerts` meldet wie lokal (lokale Sessions melden sich selbst).
   Falle: `pkill -f <pfad>` trifft die eigene Shell, deren Befehlszeile den Pfad enthält.

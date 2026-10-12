@@ -375,6 +375,24 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
         }
     })?;
 
+    // On another machine, its server learns every few seconds what runs
+    // here, for its sidebar.
+    let origin = Arc::clone(&writer);
+    thread::Builder::new()
+        .name("origin".into())
+        .spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(3));
+                if SHOWN_HOST.lock().unwrap().is_none() {
+                    continue;
+                }
+                let caps = caps();
+                if let Some(stream) = origin.lock().unwrap().as_mut() {
+                    let _ = ClientMsg::Caps(caps).write_to(stream);
+                }
+            }
+        })?;
+
     let mut conn = conn;
     // The setting of this machine, wherever the session is.
     let pick = last && crate::config::Config::load().0.sessions_on_start;
@@ -463,15 +481,20 @@ fn caps() -> Caps {
     };
     // On another machine's server, the client says where it is, so it can
     // be sent back.
-    let origin = SHOWN_HOST.lock().unwrap().is_some().then(|| Origin {
-        host: crate::protocol::hostname(),
-        sessions: or_default(crate::protocol::sessions()),
+    let origin = SHOWN_HOST.lock().unwrap().is_some().then(|| {
+        let infos = local_sessions();
+        Origin {
+            host: crate::protocol::hostname(),
+            sessions: or_default(infos.iter().map(|s| s.name.clone()).collect()),
+            infos,
+        }
     });
     Caps {
         graphics,
         cell_width,
         cell_height,
         hosts: true,
+        panes: true,
         origin,
     }
 }
