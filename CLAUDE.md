@@ -198,6 +198,10 @@ Projekt-Slug: `imkr`
   Panes stehen überall hinter ihrem Window: `1 api › claude` (`window_name_of`).
   Listen gruppieren nach Rechner: `MenuItem::group` (Überschrift über dem ersten Eintrag jeder
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
+- Ereignisse: `imkr subscribe` (`cli::snapshot`/`changes`, Polling per `List`, läuft mit jedem
+  Server) und `[[hooks]]` in der Config (`config::Hook`, `HOOK_EVENTS`, `hook_problems`):
+  `App::check_hooks` vergleicht je Tick (`HookPanes`, erster Blick feuert nichts),
+  `run_hooks` startet `sh -c` im Hintergrund, attach/detach direkt in `attach`/`detach`.
 - Tastenbelegung nach dem Prefix steht **nur** in `src/bindings.rs` (`BINDINGS`). Which-Key-Menü,
   Hilfe-Overlay und `imkr keys` lesen daraus, neue Befehle dort eintragen, nicht in `app.rs`.
 - Einstellungen: `src/config.rs` (serde/TOML, `SETTINGS`-Tabelle fürs Settings-Menü). Neue

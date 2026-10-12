@@ -405,6 +405,10 @@ enum AgentAt {
 /// (`None` for this one), session and pane.
 type InboxId = (Option<String>, String, PaneId);
 
+/// What the hooks compare: each pane's state (empty without an agent),
+/// program and window.
+type HookPanes = BTreeMap<PaneId, (String, String, u8)>;
+
 /// How often the panes' history is kept for after a restart, and how many
 /// lines of it.
 const SCROLLBACK_EVERY: Duration = Duration::from_secs(20);
@@ -593,6 +597,9 @@ pub struct App {
     /// What was saved last, to write only when something changed.
     last_saved: String,
     last_save_at: Instant,
+    /// What the hooks last saw: each pane's state, program and window, and
+    /// the window shown. `None` until the first look, which runs none.
+    hook_seen: Option<(HookPanes, u8)>,
     /// When each pane's history was last kept for after a restart.
     scrollback_at: HashMap<PaneId, Instant>,
     last_scrollback_at: Instant,
@@ -641,6 +648,10 @@ impl App {
         handover: Option<Handover>,
     ) -> Result<()> {
         let (config, config_error) = Config::load();
+        let config_note = config_error
+            .as_ref()
+            .map(|e| format!("config ignored: {e}"))
+            .or_else(|| config.hook_problems());
         if let Some(e) = &config_error {
             eprintln!("config: {e}");
         }
@@ -694,11 +705,12 @@ impl App {
             last_saved: String::new(),
             last_save_at: Instant::now(),
             scrollback_at: HashMap::new(),
+            hook_seen: None,
             last_scrollback_at: Instant::now(),
             events,
             title: shell_name(),
             config,
-            config_note: config_error.map(|e| format!("config ignored: {e}")),
+            config_note,
             mode: Mode::Normal,
             drag: None,
             divider: Vec::new(),
@@ -1085,6 +1097,7 @@ impl App {
             (_, self.body, self.sidebar) = self.areas(self.screen);
             self.sync_sizes();
             self.update_agents();
+            self.check_hooks();
             self.track_focus();
             self.sync_graphics();
             self.refresh_git();
@@ -1316,6 +1329,7 @@ impl App {
             shown_images: HashMap::new(),
             resend_images: true,
         });
+        self.run_hooks("attach", Vec::new());
         Ok(())
     }
 
@@ -1324,6 +1338,92 @@ impl App {
         if let Some(mut client) = self.take_client(id) {
             let _ = client.send(&ServerMsg::Detached);
             self.fit_screen(false);
+            self.run_hooks("detach", Vec::new());
+        }
+    }
+
+    /// Runs the hooks of what changed since the last look: agent states,
+    /// panes opened and closed, the window shown.
+    fn check_hooks(&mut self) {
+        if self.config.hooks.is_empty() {
+            self.hook_seen = None;
+            return;
+        }
+        let popups: HashSet<PaneId> = self.popups.values().map(|p| p.pane).collect();
+        let now: HookPanes = self
+            .panes
+            .iter()
+            .filter(|(id, _)| !popups.contains(id))
+            .map(|(&id, pane)| {
+                let state = self.shown_state(id).map(AgentState::name).unwrap_or("");
+                let program = pane
+                    .name
+                    .clone()
+                    .or_else(|| pane.program())
+                    .unwrap_or_default();
+                (
+                    id,
+                    (
+                        state.to_owned(),
+                        program,
+                        self.workspace_of(id).unwrap_or(0),
+                    ),
+                )
+            })
+            .collect();
+        let Some((seen, window)) = self.hook_seen.replace((now.clone(), self.workspace)) else {
+            return;
+        };
+        let pane_env = |id: PaneId, (state, program, window): &(String, String, u8)| {
+            vec![
+                ("IMKR_HOOK_PANE", id.to_string()),
+                ("IMKR_HOOK_PROGRAM", program.clone()),
+                ("IMKR_HOOK_STATE", state.clone()),
+                ("IMKR_HOOK_WINDOW", window.to_string()),
+            ]
+        };
+        for (&id, info) in &now {
+            match seen.get(&id) {
+                None => self.run_hooks("pane-opened", pane_env(id, info)),
+                Some(was) if was.0 != info.0 && !info.0.is_empty() => {
+                    self.run_hooks(&info.0, pane_env(id, info));
+                }
+                Some(_) => {}
+            }
+        }
+        for (&id, info) in &seen {
+            if !now.contains_key(&id) {
+                self.run_hooks("pane-closed", pane_env(id, info));
+            }
+        }
+        if window != self.workspace {
+            let env = vec![("IMKR_HOOK_WINDOW", self.workspace.to_string())];
+            self.run_hooks("window", env);
+        }
+    }
+
+    /// Starts the hooks `on` `event` in the background, unseen, with `env`.
+    fn run_hooks(&self, event: &str, env: Vec<(&str, String)>) {
+        use std::os::unix::process::CommandExt;
+        for hook in self.config.hooks.iter().filter(|hook| hook.on == event) {
+            let mut command = std::process::Command::new("sh");
+            command
+                .arg("-c")
+                .arg(&hook.run)
+                .env("IMKR_EVENT", event)
+                .env("IMKR_SESSION", protocol::session_name())
+                .env("IMKR_SOCKET", &self.socket)
+                .envs(env.iter().map(|(k, v)| (*k, v)))
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .process_group(0);
+            match command.spawn() {
+                Ok(mut child) => {
+                    thread::spawn(move || child.wait());
+                }
+                Err(e) => eprintln!("hook {:?} on {event}: {e}", hook.run),
+            }
         }
     }
 
@@ -2566,9 +2666,10 @@ impl App {
                 self.config = config;
                 self.apply_theme();
                 self.load_plugins();
-                self.flash = Some(match error {
-                    Some(e) => format!("config has an error, using defaults: {e}"),
-                    None => "config reloaded".into(),
+                self.flash = Some(match (error, self.config.hook_problems()) {
+                    (Some(e), _) => format!("config has an error, using defaults: {e}"),
+                    (None, Some(problem)) => problem,
+                    (None, None) => "config reloaded".into(),
                 });
             }
             Command::ScrollbackEditor => self.scrollback_in_editor(),

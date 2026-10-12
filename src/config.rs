@@ -171,6 +171,9 @@ pub struct Config {
     pub notifications: Notifications,
     /// The user's own commands, in the `Ctrl+B c` menu.
     pub commands: Vec<UserCommand>,
+    /// Shell commands run when something happens, see `Hook`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<Hook>,
     /// Images from programs, with the kitty graphics protocol, where the
     /// terminal shows them.
     pub images: bool,
@@ -192,6 +195,51 @@ pub struct Config {
     /// and the sidebar show. Hosts used with `imkr --host` are added by
     /// themselves.
     pub hosts: Vec<String>,
+}
+
+/// A shell command run in the background when `on` happens: an agent
+/// becomes `blocked`, `done`, `working` or `idle`, a pane opens
+/// (`pane-opened`) or closes (`pane-closed`), another window is shown
+/// (`window`), a terminal attaches or detaches (`attach`, `detach`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hook {
+    pub on: String,
+    /// Run with `sh -c`, with `IMKR_EVENT`, `IMKR_SESSION` and, for a pane,
+    /// `IMKR_HOOK_PANE`, `IMKR_HOOK_PROGRAM`, `IMKR_HOOK_STATE` and
+    /// `IMKR_HOOK_WINDOW` set.
+    pub run: String,
+}
+
+/// The events a `Hook` can be `on`.
+pub const HOOK_EVENTS: &[&str] = &[
+    "blocked",
+    "done",
+    "working",
+    "idle",
+    "pane-opened",
+    "pane-closed",
+    "window",
+    "attach",
+    "detach",
+];
+
+impl Config {
+    /// Hooks on events there are none of, e.g. misspelt, as a note.
+    pub fn hook_problems(&self) -> Option<String> {
+        let unknown: Vec<&str> = self
+            .hooks
+            .iter()
+            .map(|hook| hook.on.as_str())
+            .filter(|on| !HOOK_EVENTS.contains(on))
+            .collect();
+        (!unknown.is_empty()).then(|| {
+            format!(
+                "hooks on unknown events: {} (known: {})",
+                unknown.join(", "),
+                HOOK_EVENTS.join(", ")
+            )
+        })
+    }
 }
 
 /// A command of the user's, e.g. lazygit, started from the `Ctrl+B c` menu.
@@ -256,6 +304,7 @@ impl Default for Config {
                 command: "lazygit".into(),
                 float: true,
             }],
+            hooks: Vec::new(),
             images: true,
             renumber_windows: false,
             marks_on_alt: true,
@@ -511,6 +560,24 @@ mod tests {
         assert_eq!(step_cells(0, 2, true), 1);
         assert_eq!(step_cells(2, 2, true), 0);
         assert_eq!(step_cells(0, 2, false), 2);
+    }
+
+    #[test]
+    fn hooks_come_from_the_config() {
+        let config: Config = toml::from_str(
+            "[[hooks]]\non = \"blocked\"\nrun = \"notify-send waiting\"\n\n[[hooks]]\non = \"blockd\"\nrun = \"true\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.hooks.len(), 2);
+        assert_eq!(config.hooks[0].run, "notify-send waiting");
+        assert!(config.hook_problems().unwrap().contains("blockd"));
+        assert!(Config::default().hook_problems().is_none());
+        // No empty `hooks = []` in a saved config.
+        assert!(
+            !toml::to_string_pretty(&Config::default())
+                .unwrap()
+                .contains("hooks")
+        );
     }
 
     #[test]

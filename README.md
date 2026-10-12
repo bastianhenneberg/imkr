@@ -606,6 +606,24 @@ float = false
 Elements on the same side share one line. New panes start in the directory of the focused
 pane.
 
+Hooks run a shell command in the background when something happens: an agent becomes `blocked`,
+`done`, `working` or `idle`, a pane opens or closes (`pane-opened`, `pane-closed`), another
+window is shown (`window`), a terminal attaches or detaches (`attach`, `detach`). They get
+`IMKR_EVENT`, `IMKR_SESSION` and, for a pane, `IMKR_HOOK_PANE`, `IMKR_HOOK_PROGRAM`,
+`IMKR_HOOK_STATE` and `IMKR_HOOK_WINDOW`; a misspelt event is reported when the config loads:
+
+```toml
+[[hooks]]
+on = "blocked"
+run = 'paplay /usr/share/sounds/freedesktop/stereo/bell.oga'
+
+[[hooks]]
+on = "done"
+run = 'imkr msg "$IMKR_SESSION/reviewer" "Pane $IMKR_HOOK_PANE is done, please review."'
+```
+
+For scripts outside imkr, `imkr subscribe` gives the same as JSON lines.
+
 ## Build
 
 ```bash
