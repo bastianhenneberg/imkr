@@ -22,9 +22,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     /// Over the active window, most of its size.
@@ -34,12 +34,17 @@ pub enum Mode {
     Fullscreen,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plugin {
-    /// The file's name without `.toml`, also the popup's name.
-    #[serde(skip)]
+    /// The file's name without `.toml`, also the popup's name. Set from the
+    /// file name when loading; carried along when the plugin travels with
+    /// the user's client to another machine.
+    #[serde(default)]
     pub name: String,
+    /// The user's own machine it came from, when it is not this one's.
+    #[serde(skip)]
+    pub from: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
     pub command: String,
@@ -67,6 +72,19 @@ fn yes() -> bool {
 impl Plugin {
     pub fn title(&self) -> &str {
         self.title.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Whether the program it runs is on this machine: the first word of
+    /// its command, looked up on the PATH.
+    pub fn installed(&self) -> bool {
+        let Some(program) = self.command.split_whitespace().next() else {
+            return false;
+        };
+        Command::new("sh")
+            .args(["-c", "command -v \"$0\" >/dev/null", program])
+            .stdin(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
     }
 }
 

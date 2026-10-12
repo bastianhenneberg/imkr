@@ -584,6 +584,7 @@ fn caps() -> Caps {
             infos,
             hosts,
             via,
+            plugins: crate::plugin::load().0,
         }
     });
     Caps {

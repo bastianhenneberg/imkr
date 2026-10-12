@@ -415,6 +415,9 @@ pub struct App {
     /// The plugins, see `plugin`, shared with the thread that runs their
     /// status commands, and the files that are broken.
     plugins: Arc<Mutex<Vec<crate::plugin::Plugin>>>,
+    /// This machine's own plugins; `plugins` adds the user's from their
+    /// machine when they work here from another.
+    own_plugins: Vec<crate::plugin::Plugin>,
     broken_plugins: Vec<crate::plugin::Broken>,
     plugin_status: crate::plugin::Statuses,
     /// The panes marked for Alt+1 … Alt+9, in that order.
@@ -529,6 +532,7 @@ impl App {
             popup_shown: false,
             popup_full: false,
             plugins: Arc::default(),
+            own_plugins: Vec::new(),
             broken_plugins: Vec::new(),
             plugin_status: Arc::default(),
             watched_hosts: Arc::default(),
@@ -967,6 +971,7 @@ impl App {
         let graphics = self.graphics_enabled();
         self.attached = self.clients.len();
         self.origin = self.newest_origin();
+        self.merge_plugins();
         let mut clients = std::mem::take(&mut self.clients);
         let resend = clients.iter().any(|c| c.caps.graphics && c.resend_images);
         let (data, wanted) = self.image_state(graphics, resend);
@@ -5046,13 +5051,44 @@ impl App {
     /// Reads the plugin files again.
     fn load_plugins(&mut self) {
         let (plugins, broken) = crate::plugin::load();
-        *self.plugins.lock().unwrap() = plugins;
+        self.own_plugins = plugins;
         self.broken_plugins = broken;
+        self.merge_plugins();
+    }
+
+    /// The plugins shown: this machine's, then those of the user's own
+    /// machine that it has not of the same name.
+    fn merge_plugins(&mut self) {
+        let mut all = self.own_plugins.clone();
+        if let Some(origin) = &self.origin {
+            for plugin in &origin.plugins {
+                if !all.iter().any(|p| p.name == plugin.name) {
+                    all.push(crate::plugin::Plugin {
+                        from: Some(origin.host.clone()),
+                        ..plugin.clone()
+                    });
+                }
+            }
+        }
+        let mut shared = self.plugins.lock().unwrap();
+        if *shared != all {
+            *shared = all;
+        }
     }
 
     /// Opens plugin `plugin` as a popup, starting it the first time, or
     /// hides it if it is shown.
     fn run_plugin(&mut self, plugin: &crate::plugin::Plugin) {
+        // Brought along from the user's machine: it runs here, if it can.
+        if !self.popups.contains_key(&plugin.name) && !plugin.installed() {
+            let program = plugin.command.split_whitespace().next().unwrap_or("");
+            self.flash = Some(format!(
+                "{program} is not installed on {}, plugin {} cannot start here",
+                self.own_name(),
+                plugin.title()
+            ));
+            return;
+        }
         let command = vec!["sh".to_owned(), "-c".to_owned(), plugin.command.clone()];
         let title = Some(plugin.title().to_owned());
         match self.toggle_popup(&plugin.name, title, &command, None) {
@@ -5095,10 +5131,14 @@ impl App {
                 shown: self.popup_shown && self.popup.as_ref() == Some(&name),
                 running: self.popups.contains_key(&name),
                 plugin: plugin.is_some(),
-                key: plugin
-                    .as_ref()
-                    .and_then(|p| p.key)
-                    .map(|k| format!("^B p {k}")),
+                key: plugin.as_ref().and_then(|p| {
+                    let key = format!("^B p {}", p.key?);
+                    // Brought along from the user's own machine.
+                    Some(match p.from {
+                        Some(_) => format!("⌂ {key}"),
+                        None => key,
+                    })
+                }),
                 status: statuses.get(&name).cloned().unwrap_or_default(),
             })
             .collect();

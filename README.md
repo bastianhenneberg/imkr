@@ -242,6 +242,11 @@ it runs on hidden, keeps its state, and has every popup key (`Ctrl+B z`, `!`, `S
 any language and cannot take imkr down; a file with a mistake shows in the sidebar with what is
 wrong, `imkr plugins` lists them all, and `Ctrl+B R` reads them again.
 
+Your plugins come along: working on another machine, your terminal tells its imkr which plugins
+the machine you sit at has, and they show in its sidebar too, marked `⌂`, next to its own (one of
+its own of the same name wins). They run where you open them, so their program has to be
+installed there; if it is not, imkr says so instead of starting nothing.
+
 ## Other machines
 
 The machine you sit at is the **operator**: like the beekeeper with their hives, it looks after

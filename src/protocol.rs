@@ -81,6 +81,10 @@ pub struct Origin {
     /// the user calls this machine, which may not be its hostname.
     #[serde(default)]
     pub via: Option<String>,
+    /// The plugins of the client's machine, so they are at hand wherever
+    /// the user works; they run where they are opened.
+    #[serde(default)]
+    pub plugins: Vec<crate::plugin::Plugin>,
 }
 
 /// A machine with its sessions.
@@ -523,6 +527,7 @@ mod tests {
                     infos: Vec::new(),
                     hosts: Vec::new(),
                     via: Some("codingmachine".into()),
+                    plugins: Vec::new(),
                 }),
             }),
             ClientMsg::Request(Request::Status {
