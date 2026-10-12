@@ -249,9 +249,9 @@ installed there; if it is not, imkr says so instead of starting nothing.
 
 ## Other machines
 
-The machine you sit at is the **operator**: like the beekeeper with their hives, it looks after
-every machine and their sessions, and every connection starts there, with your ssh keys. Any of
-your machines can be the operator, whichever you sit at.
+The machine you sit at is the **operator**, the beekeeper if you like (the *Imker* imkr is named
+after): it tends every hive, every machine with its sessions and agents, and every connection
+starts there, with your ssh keys. Any of your machines can be the operator, whichever you sit at.
 
 One imkr for the sessions here and on other machines, without an imkr inside an imkr: the
 sidebar and the session list (`Ctrl+B S`) show every machine's sessions, and picking one switches
