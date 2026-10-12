@@ -37,6 +37,10 @@ pub struct Pane {
     pub reported: Option<AgentState>,
     /// The agent's session id from its hooks, e.g. for `claude --resume`.
     pub session: Option<String>,
+    /// The agent's transcript, from its hooks, and what it tells (read
+    /// again whenever the file changed, at that time).
+    pub transcript: Option<PathBuf>,
+    pub meta: Option<(crate::agent::Meta, std::time::SystemTime)>,
     /// A name the user gave the pane, shown instead of the program.
     pub name: Option<String>,
     /// Whether the question on the screen was answered: input came while it
@@ -157,6 +161,7 @@ impl Pane {
         let before = replay(&from.history, &from.screen, size.0);
         let mut pane = Self::start(id, size, Box::new(master), child, &before, events)?;
         pane.reported = from.reported;
+        pane.transcript = from.transcript.clone();
         Ok(pane)
     }
 
@@ -185,6 +190,7 @@ impl Pane {
             history,
             screen,
             reported: self.reported,
+            transcript: self.transcript.clone(),
         })
     }
 
@@ -222,6 +228,8 @@ impl Pane {
             links: Arc::new(Mutex::new(Vec::new())),
             reported: None,
             session: None,
+            transcript: None,
+            meta: None,
             name: None,
             answered: Cell::new(false),
             events,
@@ -531,6 +539,24 @@ impl Pane {
             line.extend(next.chars().take_while(|c| !c.is_whitespace()));
         }
         crate::links::url_in(&line, usize::from(col))
+    }
+
+    /// Reads the transcript again if it changed since, and returns what it
+    /// tells.
+    pub fn refresh_meta(&mut self) -> Option<&crate::agent::Meta> {
+        let path = self.transcript.as_ref()?;
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+        if self.meta.as_ref().is_none_or(|(_, at)| *at != modified)
+            && let Some(meta) = crate::agent::transcript_meta(path)
+        {
+            self.meta = Some((meta, modified));
+        }
+        self.meta.as_ref().map(|(meta, _)| meta)
+    }
+
+    /// What the agent's transcript told last.
+    pub fn meta(&self) -> Option<&crate::agent::Meta> {
+        self.meta.as_ref().map(|(meta, _)| meta)
     }
 
     /// When the program last wrote something.

@@ -1431,6 +1431,7 @@ impl App {
                 pane,
                 state,
                 session,
+                transcript,
             } => {
                 // An agent in a pane that moved on still reports here.
                 if let Some((socket, there)) = self.moved.get(&pane).cloned() {
@@ -1438,6 +1439,7 @@ impl App {
                         pane: there,
                         state,
                         session,
+                        transcript,
                     };
                     thread::spawn(move || crate::client::request_at(&socket, request));
                     return Ok(serde_json::json!({ "pane": pane, "moved": true }));
@@ -1446,6 +1448,13 @@ impl App {
                 p.reported = state;
                 if session.is_some() {
                     p.session = session;
+                }
+                if transcript.is_some() {
+                    p.transcript = transcript;
+                }
+                if state.is_none() {
+                    p.transcript = None;
+                    p.meta = None;
                 }
                 Ok(serde_json::json!({ "pane": pane }))
             }
@@ -1577,6 +1586,7 @@ impl App {
                     "session": pane.session,
                     "name": pane.name,
                     "workspace_name": ws.name,
+                    "meta": pane.meta().map(agent::Meta::label),
                     "tail": matches!(
                         self.shown_state(id),
                         Some(AgentState::Blocked | AgentState::Done)
@@ -1766,6 +1776,9 @@ impl App {
     /// Looks at what every agent is doing. When one starts waiting for the
     /// user where the user is not looking, it rings the bell and says so.
     fn update_agents(&mut self) {
+        for pane in self.panes.values_mut() {
+            pane.refresh_meta();
+        }
         let now = Instant::now();
         let mut seen = HashMap::new();
         for (&id, pane) in &self.panes {
@@ -1952,6 +1965,7 @@ impl App {
                     state: self.shown_state(id)?,
                     since: now - since,
                     focused: id == self.ws.focus,
+                    meta: pane.meta().map(agent::Meta::label).unwrap_or_default(),
                 })
             })
             .collect();
@@ -4085,12 +4099,16 @@ impl App {
                     .unwrap_or_default()
             });
             let program = format!("{n} {dir} › {program}");
+            let place = match pane.meta() {
+                Some(meta) => format!("this session · {}", meta.label()),
+                None => "this session".into(),
+            };
             all.push((
                 state,
                 now - since,
                 AgentAt::Here(id),
                 program,
-                "this session".into(),
+                place,
                 here.clone(),
             ));
         }
@@ -4101,7 +4119,12 @@ impl App {
             let group = self.machine_label(place.host.as_deref());
             let program = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
             let since = Duration::from_secs(agent.since);
-            all.push((state, since, AgentAt::Other(i), program, place.name, group));
+            let place = if agent.meta.is_empty() {
+                place.name
+            } else {
+                format!("{} · {}", place.name, agent.meta)
+            };
+            all.push((state, since, AgentAt::Other(i), program, place, group));
         }
         // By machine, this one first, and within each those waiting first.
         let mut machines: Vec<Option<String>> = Vec::new();

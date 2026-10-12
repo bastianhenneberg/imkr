@@ -44,6 +44,11 @@ Projekt-Slug: `imkr`
   `machine_name()` (Config `name`, sonst Hostname) für Anzeige und Origin – zwei Omarchy-Rechner
   heißen beide `omarchy`! Server nimmt `newest_origin()` (Client mit `via`), nicht stur den aktiven.
   Client ersetzt sich selbst (`reexec_if_replaced` im origin-Thread, Ziel in `IMKR_REEXEC`).
+- Agent-Metadaten: `imkr status` reicht `transcript_path` aus dem Hook-JSON als
+  `Request::Status::transcript` weiter (auch im Handover), `Pane::refresh_meta` (je Tick, nur bei
+  geänderter mtime) → `agent::transcript_meta` (letzte `usage` in den letzten 512 KB) →
+  `Meta::label` („opus 5.5 · 300k“), in `list()` als `meta`, `AgentInfo::meta`. Keine Kosten:
+  bräuchte eine Preistabelle.
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
   (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). `Notification` mit
   `permission_prompt|elicitation_dialog` → blocked, für Agents im Bypass-Modus. Test mit Schein-HOME.

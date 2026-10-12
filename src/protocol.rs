@@ -185,6 +185,10 @@ pub struct AgentInfo {
     /// Seconds in this state.
     #[serde(default)]
     pub since: u64,
+    /// Its model and context, e.g. `opus 5.5 · 300k`, if its transcript
+    /// is known.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub meta: String,
     /// For a waiting or finished agent, the bottom of its screen: its
     /// question, or what it said last (`agent::tail`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -290,6 +294,9 @@ pub enum Request {
         /// The agent's own session id, to resume it after a restart.
         #[serde(default)]
         session: Option<String>,
+        /// Its transcript, for the model and context shown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transcript: Option<PathBuf>,
     },
     /// All panes.
     List,
@@ -622,6 +629,7 @@ mod tests {
                 pane: 3,
                 state: Some(AgentState::Blocked),
                 session: Some("abc".into()),
+                transcript: Some("/tmp/t.jsonl".into()),
             }),
             ClientMsg::Request(Request::Notify {
                 text: "build finished".into(),

@@ -74,6 +74,9 @@ pub struct AgentRow {
     /// How long it has been in this state.
     pub since: Duration,
     pub focused: bool,
+    /// Its model and context (`opus 5.5 · 300k`), shown under it while it
+    /// is focused.
+    pub meta: String,
 }
 
 /// An agent of another session, here or on another machine.
@@ -357,6 +360,10 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 agent.focused,
             );
             out.push((line, Some(Target::Pane(agent.pane))));
+            if agent.focused && !agent.meta.is_empty() {
+                let meta = Line::styled(fit(&format!("  {}", agent.meta), width), dim);
+                out.push((meta, Some(Target::Pane(agent.pane))));
+            }
         }
     } else {
         // The same on every machine: machine, then session, then its
@@ -377,7 +384,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 lines: data
                     .agents
                     .iter()
-                    .map(|a| {
+                    .flat_map(|a| {
                         let line = agent_line(
                             "    ",
                             a.state,
@@ -387,7 +394,11 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                             a.since,
                             a.focused,
                         );
-                        (line, Target::Pane(a.pane))
+                        let meta = (a.focused && !a.meta.is_empty()).then(|| {
+                            let text = fit(&format!("      {}", a.meta), width);
+                            (Line::styled(text, dim), Target::Pane(a.pane))
+                        });
+                        std::iter::once((line, Target::Pane(a.pane))).chain(meta)
                     })
                     .collect(),
             });
@@ -726,6 +737,7 @@ mod tests {
                 state: AgentState::Blocked,
                 since: Duration::from_secs(185),
                 focused: false,
+                meta: "opus 5.5 · 300k".into(),
             }],
             branch: Some("main".into()),
             changes: vec![Change {

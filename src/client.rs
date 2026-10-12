@@ -391,6 +391,7 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                         state: state.unwrap_or_default().to_owned(),
                         since: pane["since"].as_u64().unwrap_or(0),
                         tail: pane["tail"].as_str().unwrap_or_default().to_owned(),
+                        meta: pane["meta"].as_str().unwrap_or_default().to_owned(),
                     };
                     if state.is_some() {
                         info.agent_panes.push(entry.clone());

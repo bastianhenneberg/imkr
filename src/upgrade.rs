@@ -93,6 +93,9 @@ pub struct HandoverPane {
     pub history: String,
     pub screen: Vec<u8>,
     pub reported: Option<AgentState>,
+    /// The agent's transcript, see `Pane::transcript`.
+    #[serde(default)]
+    pub transcript: Option<PathBuf>,
 }
 
 /// The handover left by the server this process was before, if any. The

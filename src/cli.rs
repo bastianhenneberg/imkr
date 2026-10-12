@@ -35,14 +35,16 @@ pub fn status(args: &[String]) -> Result<()> {
     if hook.as_ref().is_some_and(|hook| ignore_hook(hook, state)) {
         return Ok(());
     }
-    let session = hook
-        .as_ref()
-        .and_then(|hook| hook["session_id"].as_str())
-        .map(str::to_owned);
+    let field = |name: &str| {
+        hook.as_ref()
+            .and_then(|hook| hook[name].as_str())
+            .map(str::to_owned)
+    };
     let _ = client::request(Request::Status {
         pane,
         state,
-        session,
+        session: field("session_id"),
+        transcript: field("transcript_path").map(std::path::PathBuf::from),
     });
     Ok(())
 }
@@ -361,10 +363,16 @@ pub fn agents(args: &[String]) -> Result<()> {
                         "state": agent.state,
                         "window": agent.workspace,
                         "window_name": agent.dir,
+                        "meta": agent.meta,
                     }));
                 } else {
                     let at = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
-                    println!("{address:<24} {:<8} {at}", agent.state);
+                    let meta = if agent.meta.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  ({})", agent.meta)
+                    };
+                    println!("{address:<24} {:<8} {at}{meta}", agent.state);
                 }
             }
         }

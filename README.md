@@ -225,7 +225,10 @@ skipped, by the notification that a question waits. Agents started after it repo
 
 The hooks call `imkr status working|blocked|idle|clear`, which knows its pane from
 `$IMKR_PANE` and does nothing outside imkr. It reads the hook's JSON from stdin: a subagent
-finishing does not mark the agent done, and the session id is kept to resume the agent later.
+finishing does not mark the agent done, and the session id is kept to resume the agent later. The
+transcript's path comes along too: imkr reads the model and context of the agent's last answer
+from its end and shows them as `opus 5.5 · 300k` in `Ctrl+B A`, the inbox, `imkr agents` and,
+for the focused agent, in the sidebar.
 
 Scripts and agents can drive imkr too:
 
