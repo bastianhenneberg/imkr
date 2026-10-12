@@ -120,6 +120,31 @@ enum Mode {
 struct Picker {
     query: String,
     selected: usize,
+    /// Everything, not only panes: the search of `Ctrl+B /`.
+    global: bool,
+    /// The hives, read once when it opens rather than on every frame.
+    hives: Vec<persist::HiveInfo>,
+}
+
+/// One thing found by the picker, and where Enter goes.
+struct Found {
+    /// What it is, e.g. `window`; empty in the pane picker.
+    kind: &'static str,
+    label: String,
+    hint: String,
+    style: Style,
+    go: Go,
+}
+
+enum Go {
+    Pane(PaneId),
+    Window(u8),
+    Place(Place),
+    Agent(usize),
+    Plugin(String),
+    Hive(String),
+    Mark(usize),
+    Command(Command),
 }
 
 /// One pane in the picker.
@@ -2201,10 +2226,16 @@ impl App {
                 });
                 self.mode = Mode::Prompt;
             }
-            Command::PickPane => {
+            Command::PickPane | Command::Search => {
                 self.picker = Some(Picker {
                     query: String::new(),
                     selected: 0,
+                    global: command == Command::Search,
+                    hives: if command == Command::Search {
+                        persist::hive_infos()
+                    } else {
+                        Vec::new()
+                    },
                 });
                 self.mode = Mode::Picker;
             }
@@ -4091,13 +4122,12 @@ impl App {
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
-                let query = picker.query.clone();
                 let selected = picker.selected;
+                let found = self.found().into_iter().nth(selected);
                 self.picker = None;
                 self.mode = Mode::Normal;
-                if let Some(entry) = self.picker_entries(&query).get(selected) {
-                    let id = entry.pane;
-                    self.reveal(id);
+                if let Some(found) = found {
+                    self.go(found.go);
                 }
             }
             KeyCode::Down | KeyCode::Tab => picker.selected += 1,
@@ -4119,10 +4149,165 @@ impl App {
             _ => {}
         }
         // Keep the selection on an entry.
-        if let Some(picker) = &self.picker {
-            let count = self.picker_entries(&picker.query).len();
+        if self.picker.is_some() {
+            let count = self.found().len();
             if let Some(picker) = &mut self.picker {
                 picker.selected = picker.selected.min(count.saturating_sub(1));
+            }
+        }
+    }
+
+    /// What the picker shows for its query: the panes, or with `global`
+    /// everything there is to go to, words in any order.
+    fn found(&self) -> Vec<Found> {
+        let Some(picker) = &self.picker else {
+            return Vec::new();
+        };
+        let panes = self.picker_entries(&picker.query).into_iter().map(|entry| {
+            let state = entry
+                .state
+                .map(|s| format!("  {} {}", s.symbol(), s.name()))
+                .unwrap_or_default();
+            Found {
+                kind: if picker.global { "pane" } else { "" },
+                label: format!(
+                    "{} · {:>2}  {}{state}",
+                    entry.workspace, entry.pane, entry.label
+                ),
+                hint: entry.dir,
+                style: entry.state.map(state_style).unwrap_or_default(),
+                go: Go::Pane(entry.pane),
+            }
+        });
+        if !picker.global {
+            return panes.collect();
+        }
+        let mut all: Vec<Found> = Vec::new();
+        for n in self.workspaces() {
+            if let Some(ws) = self.workspace_ref(n) {
+                all.push(Found {
+                    kind: "window",
+                    label: tab_label(n, ws).trim().to_owned(),
+                    hint: format!("{} panes", ws.panes().len()),
+                    style: Style::new().fg(theme::current().blue),
+                    go: Go::Window(n),
+                });
+            }
+        }
+        let (places, items) = self.session_items();
+        let current = protocol::session_name();
+        for (place, item) in places.into_iter().zip(items) {
+            if item.apart || (place.host.is_none() && place.name == current) {
+                continue;
+            }
+            all.push(Found {
+                kind: "session",
+                label: item.title,
+                hint: item.hint,
+                style: Style::new().fg(theme::current().magenta),
+                go: Go::Place(place),
+            });
+        }
+        let (agents, items) = self.agent_choices();
+        for (at, item) in agents.into_iter().zip(items) {
+            if let AgentAt::Other(i) = at {
+                all.push(Found {
+                    kind: "agent",
+                    label: item.title,
+                    hint: item.hint,
+                    style: item.color.map(|c| Style::new().fg(c)).unwrap_or_default(),
+                    go: Go::Agent(i),
+                });
+            }
+        }
+        for plugin in self.plugins.lock().unwrap().iter() {
+            all.push(Found {
+                kind: "plugin",
+                label: plugin.title().to_owned(),
+                hint: plugin.key.map(|k| format!("^B p {k}")).unwrap_or_default(),
+                style: Style::new().fg(theme::current().magenta),
+                go: Go::Plugin(plugin.name.clone()),
+            });
+        }
+        for (i, mark) in self.marks.iter().enumerate() {
+            all.push(Found {
+                kind: "mark",
+                label: mark.label.clone(),
+                hint: format!("Alt+{} · {}", i + 1, mark.session),
+                style: Style::new().fg(theme::current().magenta),
+                go: Go::Mark(i),
+            });
+        }
+        for hive in &picker.hives {
+            let mut sessions = hive.sessions.clone();
+            sessions.extend(hive.elsewhere.iter().cloned());
+            all.push(Found {
+                kind: "hive",
+                label: hive.name.clone(),
+                hint: format!("bring back {}", sessions.join(", ")),
+                style: Style::new().fg(theme::current().orange),
+                go: Go::Hive(hive.name.clone()),
+            });
+        }
+        for binding in bindings::BINDINGS {
+            // Keys for one command each; ranges like 1-9 are not one.
+            let [(_, command)] = binding.keys else {
+                continue;
+            };
+            if *command == Command::Search {
+                continue;
+            }
+            let path = binding.group.menu().path();
+            let keys = if path.is_empty() {
+                format!("^B {}", binding.label)
+            } else {
+                format!("^B {path} {}", binding.label)
+            };
+            all.push(Found {
+                kind: "command",
+                label: binding.description.trim_end_matches('…').to_owned(),
+                hint: keys,
+                style: Style::new().fg(theme::current().cyan),
+                go: Go::Command(*command),
+            });
+        }
+        let words: Vec<String> = picker
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        all.retain(|found| {
+            let haystack = format!("{} {} {}", found.kind, found.label, found.hint).to_lowercase();
+            words.iter().all(|w| haystack.contains(w))
+        });
+        panes.chain(all).collect()
+    }
+
+    /// Goes where a found thing is, or does it.
+    fn go(&mut self, go: Go) {
+        match go {
+            Go::Pane(id) => self.reveal(id),
+            Go::Window(n) => self.switch_workspace(n),
+            Go::Place(place) => self.go_to(&place),
+            Go::Agent(i) => self.go_to_other_agent(i),
+            Go::Plugin(name) => {
+                let plugin = self
+                    .plugins
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|p| p.name == name)
+                    .cloned();
+                if let Some(plugin) = plugin {
+                    self.run_plugin(&plugin);
+                }
+            }
+            Go::Hive(name) => self.restore_hive(&name),
+            Go::Mark(i) => self.jump_to_mark(i),
+            Go::Command(command) => {
+                if let Err(e) = self.run_command(command) {
+                    self.flash = Some(format!("{e:#}"));
+                }
             }
         }
     }
@@ -4130,7 +4315,7 @@ impl App {
     /// The picker in the middle of the screen.
     fn draw_picker(&self, frame: &mut Frame, area: Rect) {
         let Some(picker) = &self.picker else { return };
-        let entries = self.picker_entries(&picker.query);
+        let entries = self.found();
         let accent = theme::current().accent;
         let dim = Style::new().add_modifier(Modifier::DIM);
         let width = area.width.saturating_sub(4).min(90);
@@ -4147,20 +4332,25 @@ impl App {
         // Scroll the list so the selection stays visible.
         let first = picker.selected.saturating_sub(rows - 1);
         for (i, entry) in entries.iter().enumerate().skip(first).take(rows) {
-            let state = entry
-                .state
-                .map(|s| (format!("{} {}", s.symbol(), s.name()), state_style(s)))
-                .unwrap_or_default();
-            let left = format!("{} · {:>2}  {}", entry.workspace, entry.pane, entry.label);
-            let used = left.chars().count() + state.0.chars().count() + 2;
-            let dir = shorten(&entry.dir, inner_width.saturating_sub(used));
-            let pad = inner_width.saturating_sub(used + dir.chars().count());
+            let kind = if entry.kind.is_empty() {
+                String::new()
+            } else {
+                format!("{:<8}", entry.kind)
+            };
+            let label: String = entry
+                .label
+                .chars()
+                .take(inner_width.saturating_sub(kind.chars().count() + 2))
+                .collect();
+            let used = kind.chars().count() + label.chars().count() + 2;
+            let hint = shorten(&entry.hint, inner_width.saturating_sub(used));
+            let pad = inner_width.saturating_sub(used + hint.chars().count());
             let mut line = Line::from(vec![
-                Span::raw(left),
+                Span::styled(kind, dim),
+                Span::styled(label, entry.style),
                 Span::raw("  "),
-                Span::styled(state.0, state.1),
                 Span::raw(" ".repeat(pad)),
-                Span::styled(dir, dim),
+                Span::styled(hint, dim),
             ]);
             if i == picker.selected {
                 line = line.patch_style(Style::new().bg(theme::current().subtle));
@@ -4168,7 +4358,14 @@ impl App {
             lines.push(line);
         }
         if entries.is_empty() {
-            lines.push(Line::styled("no pane matches", dim));
+            lines.push(Line::styled(
+                if picker.global {
+                    "nothing matches"
+                } else {
+                    "no pane matches"
+                },
+                dim,
+            ));
         }
         lines.push(Line::default());
         lines.push(Line::styled(
@@ -4181,7 +4378,11 @@ impl App {
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(accent))
             .title(Span::styled(
-                format!(" Go to pane · {} ", entries.len()),
+                if picker.global {
+                    format!(" Search · {} ", entries.len())
+                } else {
+                    format!(" Go to pane · {} ", entries.len())
+                },
                 Style::new().fg(accent).add_modifier(Modifier::BOLD),
             ))
             .padding(Padding::horizontal(2));

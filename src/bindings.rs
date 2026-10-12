@@ -41,6 +41,9 @@ pub enum Command {
     /// Save every running session as a hive, asking for its name.
     SaveHive,
     PickPane,
+    /// Search everything: panes, windows, sessions, agents, plugins,
+    /// hives, marks and commands.
+    Search,
     ReloadConfig,
     ScrollbackEditor,
     Zoom,
@@ -348,6 +351,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "any pane…",
         group: Group::Navigate,
         keys: &[(Key::plain(Char('g')), C::PickPane)],
+    },
+    Binding {
+        label: "/",
+        description: "search all…",
+        group: Group::Navigate,
+        keys: &[(Key::plain(Char('/')), C::Search)],
     },
     Binding {
         label: "a",
