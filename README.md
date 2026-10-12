@@ -138,6 +138,7 @@ state comes from what imkr sees on the screen.
 | `Ctrl+B` `r` | Name the pane (`Ctrl+B` `w` `r` names the window) |
 | `Ctrl+B` `z` | Zoom: the pane alone over the whole window, again to go back |
 | `Ctrl+B` `{` / `}` | Swap the pane with the previous / next one |
+| `Ctrl+B` `>` `1`–`9` / `n` | Move the pane into that window (made if needed) / a new one; it keeps running, a window left empty goes |
 | `Ctrl+B` `=` | Give all panes equal sizes |
 | `Ctrl+B` `f` … | Floating panes menu: `f` float/tile, `n` new, `o` next, arrows move |
 | `Ctrl+B` `Shift+←↑↓→` | Move a floating pane |

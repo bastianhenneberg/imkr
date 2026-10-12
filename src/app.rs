@@ -2495,6 +2495,8 @@ impl App {
             }
             Command::BreakPopup if self.shown_popup().is_some() => self.break_popup(),
             Command::BreakPopup => self.pane_to_popup(),
+            Command::PaneToWindow(n) => self.pane_to_window(Some(n)),
+            Command::PaneToNewWindow => self.pane_to_window(None),
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::NewSession => self.new_session(),
@@ -6162,6 +6164,49 @@ impl App {
                 None => self.quit = true,
             }
         }
+    }
+
+    /// Moves the focused pane into window `to`, made if needed, or into the
+    /// first free one, and shows it there. Its program runs on; the window
+    /// it leaves goes if that was its last pane.
+    fn pane_to_window(&mut self, to: Option<u8>) {
+        if self.shown_popup().is_some() {
+            self.flash = Some("a popup becomes a window with Ctrl+B !".into());
+            return;
+        }
+        let id = self.ws.focus;
+        if !self.panes.contains_key(&id) {
+            return;
+        }
+        let Some(n) = to.or_else(|| self.free_workspace()) else {
+            self.flash = Some("all 9 windows are in use".into());
+            return;
+        };
+        if n == self.workspace {
+            self.flash = Some(format!("the pane is in window {n} already"));
+            return;
+        }
+        if !self.hidden.contains_key(&n) && self.ws.panes().len() == 1 {
+            self.flash = Some("it is the only pane of its window".into());
+            return;
+        }
+        // Into the target first, so the session never looks empty.
+        let floating = self.ws.is_floating(id);
+        let body = self.body;
+        match self.hidden.get_mut(&n) {
+            Some(ws) if floating => ws.add_float(id, body),
+            Some(ws) => {
+                if !ws.split(Axis::Row, id) {
+                    ws.add_float(id, body);
+                }
+            }
+            None => {
+                self.hidden.insert(n, Workspace::new(id));
+            }
+        }
+        self.unplace(id);
+        self.switch_workspace(n);
+        self.ws.focus(id);
     }
 
     fn workspace_exists(&self, n: u8) -> bool {

@@ -92,6 +92,11 @@ pub enum Command {
     SendPrefix,
     /// Opens a submenu, like a group in which-key.nvim.
     Open(Menu),
+    /// Moves the focused pane into window n, made if needed; its program
+    /// runs on.
+    PaneToWindow(u8),
+    /// Moves the focused pane into a new window of its own.
+    PaneToNewWindow,
     /// Goes back from a submenu to the main menu.
     Back,
     Cancel,
@@ -125,13 +130,16 @@ pub enum Menu {
     Session,
     /// The plugins, from `plugins/*.toml` next to the config.
     Plugins,
+    /// Where to move the focused pane.
+    PaneTo,
 }
 
 impl Menu {
-    pub const ALL: [Menu; 6] = [
+    pub const ALL: [Menu; 7] = [
         Menu::Root,
         Menu::Floating,
         Menu::Workspaces,
+        Menu::PaneTo,
         Menu::Session,
         Menu::Commands,
         Menu::Plugins,
@@ -145,6 +153,7 @@ impl Menu {
             Menu::Commands => &[Group::Commands],
             Menu::Session => &[Group::Sessions],
             Menu::Plugins => &[Group::Plugins],
+            Menu::PaneTo => &[Group::PaneTo],
         }
     }
 
@@ -157,6 +166,7 @@ impl Menu {
             Menu::Commands => "c",
             Menu::Session => "s",
             Menu::Plugins => "p",
+            Menu::PaneTo => ">",
         }
     }
 }
@@ -176,6 +186,7 @@ pub enum Group {
     /// The session submenu.
     Sessions,
     Plugins,
+    PaneTo,
 }
 
 impl Group {
@@ -191,6 +202,7 @@ impl Group {
             Group::Commands => "Your commands",
             Group::Sessions => "Sessions and hives",
             Group::Plugins => "Plugins",
+            Group::PaneTo => "Move this pane to",
         }
     }
 
@@ -202,6 +214,7 @@ impl Group {
             Group::Navigate | Group::Floating => t.cyan,
             Group::View => t.orange,
             Group::Session | Group::Commands | Group::Sessions | Group::Plugins => t.magenta,
+            Group::PaneTo => t.blue,
             Group::More => t.muted,
         }
     }
@@ -216,6 +229,7 @@ impl Group {
             Group::Commands => Menu::Commands,
             Group::Sessions => Menu::Session,
             Group::Plugins => Menu::Plugins,
+            Group::PaneTo => Menu::PaneTo,
         }
     }
 }
@@ -326,6 +340,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "name pane",
         group: Group::Panes,
         keys: &[(Key::plain(Char('r')), C::RenamePane)],
+    },
+    Binding {
+        label: ">",
+        description: "move pane to window…",
+        group: Group::Panes,
+        keys: &[(Key::plain(Char('>')), C::Open(Menu::PaneTo))],
     },
     Binding {
         label: "f",
@@ -683,6 +703,35 @@ pub const BINDINGS: &[Binding] = &[
         label: "Esc",
         description: "cancel",
         group: Group::Plugins,
+        keys: &[(Key::plain(Esc), C::Cancel)],
+    },
+    // Moving the focused pane, after the prefix and `>`.
+    Binding {
+        label: "1-9",
+        description: "that window",
+        group: Group::PaneTo,
+        keys: &[
+            (Key::plain(Char('1')), C::PaneToWindow(1)),
+            (Key::plain(Char('2')), C::PaneToWindow(2)),
+            (Key::plain(Char('3')), C::PaneToWindow(3)),
+            (Key::plain(Char('4')), C::PaneToWindow(4)),
+            (Key::plain(Char('5')), C::PaneToWindow(5)),
+            (Key::plain(Char('6')), C::PaneToWindow(6)),
+            (Key::plain(Char('7')), C::PaneToWindow(7)),
+            (Key::plain(Char('8')), C::PaneToWindow(8)),
+            (Key::plain(Char('9')), C::PaneToWindow(9)),
+        ],
+    },
+    Binding {
+        label: "n",
+        description: "a new window",
+        group: Group::PaneTo,
+        keys: &[(Key::plain(Char('n')), C::PaneToNewWindow)],
+    },
+    Binding {
+        label: "Esc",
+        description: "cancel",
+        group: Group::PaneTo,
         keys: &[(Key::plain(Esc), C::Cancel)],
     },
     // Workspaces, after the prefix and `w`.
