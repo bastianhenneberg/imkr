@@ -1098,6 +1098,15 @@ fn remote_restore(
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
+/// Whether `name` belongs to the agent process that runs imkr rather than
+/// to the user: Claude Code's markers of its own session.
+fn is_agent_session_var(name: &str) -> bool {
+    name == "CLAUDECODE"
+        || name.starts_with("CLAUDE_CODE_")
+        || name == "CLAUDE_PID"
+        || name == "CLAUDE_EFFORT"
+}
+
 /// Starts a server in the background and connects to it. With `session`,
 /// the server is that named session, whatever this process was started for.
 pub fn start_server(path: &Path, session: Option<&str>) -> Result<UnixStream> {
@@ -1111,6 +1120,15 @@ pub fn start_server(path: &Path, session: Option<&str>) -> Result<UnixStream> {
     let mut cmd = Command::new(std::env::current_exe()?);
     if let Some(name) = session {
         cmd.env("IMKR_SESSION", name).env_remove("IMKR_SOCKET");
+    }
+    // Started by an agent, e.g. a session from a template, the server must
+    // not pass the agent's own session on to every pane: a Claude Code there
+    // would take itself for that agent's child and stop saving transcripts.
+    // The panes' shells set the user's own variables again.
+    for (name, _) in std::env::vars_os() {
+        if is_agent_session_var(&name.to_string_lossy()) {
+            cmd.env_remove(&name);
+        }
     }
     cmd.arg("server")
         .stdin(Stdio::null())
@@ -1176,6 +1194,26 @@ fn pass_on(from: &mut impl Read, to: &mut impl Write) -> io::Result<()> {
             Ok(n) => to.write_all(&buf[..n])?,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_agents_own_session_stays_out_of_new_servers() {
+        for name in [
+            "CLAUDECODE",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_PID",
+        ] {
+            assert!(is_agent_session_var(name), "{name}");
+        }
+        for name in ["CLAUDE_CONFIG_DIR", "HOME", "IMKR_SESSION", "PATH"] {
+            assert!(!is_agent_session_var(name), "{name}");
         }
     }
 }
