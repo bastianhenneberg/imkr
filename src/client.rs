@@ -134,6 +134,54 @@ fn remote_command(args: &[&str]) -> String {
 /// The machine the client shows a session of, `None` for this one. Read by
 /// `caps`, which tells a server on another machine where the client is.
 static SHOWN_HOST: Mutex<Option<String>> = Mutex::new(None);
+/// The session shown, for coming back to it after `reexec_if_replaced`.
+static SHOWN_SESSION: Mutex<String> = Mutex::new(String::new());
+
+/// Set for a client that started itself again after its binary was
+/// replaced: the place it showed, `host:session` or `session`.
+const REEXEC: &str = "IMKR_REEXEC";
+
+/// If `imkr` was replaced on disk since this client started, e.g. by
+/// `cargo install` or `imkr upgrade`, becomes the new one, which comes
+/// back to the same place. Clients that kept running with old code sent
+/// less than servers expect, so the sidebar on another machine came out
+/// poorer until the user attached again by hand.
+fn reexec_if_replaced(exe: &std::path::Path) {
+    let replaced = std::fs::read_link("/proc/self/exe")
+        .is_ok_and(|now| now.to_string_lossy().ends_with(" (deleted)"));
+    if !replaced || !exe.is_file() {
+        return;
+    }
+    let target = match SHOWN_HOST.lock().unwrap().clone() {
+        Some(host) => format!("{host}:{}", SHOWN_SESSION.lock().unwrap()),
+        None => SHOWN_SESSION.lock().unwrap().clone(),
+    };
+    // The new client turns raw mode on again from the terminal as it was.
+    let _ = disable_raw_mode();
+    let error = Command::new(exe).env(REEXEC, target).exec();
+    // Still here: the new binary would not start. Go on with this one.
+    let _ = enable_raw_mode();
+    eprintln!("imkr: could not restart as the updated binary: {error}");
+}
+
+/// For a client started by `reexec_if_replaced`: where it is to go back to.
+pub fn reexec_target() -> Option<Remote> {
+    let target = std::env::var(REEXEC).ok()?;
+    // SAFETY: called first in main, before any thread starts.
+    unsafe { std::env::remove_var(REEXEC) };
+    let (host, name) = crate::protocol::split_target(&target);
+    match host {
+        Some(host) => Some(Remote {
+            host: host.to_owned(),
+            session: Some(name.to_owned()),
+        }),
+        None => {
+            // SAFETY: as above.
+            unsafe { std::env::set_var("IMKR_SESSION", name) };
+            None
+        }
+    }
+}
 
 /// The file of hosts `imkr --host` reached, one per line.
 fn hosts_file() -> Result<std::path::PathBuf> {
@@ -166,7 +214,7 @@ fn last_place() -> Option<(Option<String>, String)> {
     if !crate::protocol::valid_session_name(name) {
         return None;
     }
-    let host = host.filter(|h| *h != crate::protocol::hostname());
+    let host = host.filter(|h| *h != crate::protocol::machine_name());
     Some((host.map(str::to_owned), name.to_owned()))
 }
 
@@ -343,6 +391,8 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
         .and_then(|r| r.session.clone())
         .unwrap_or_else(crate::protocol::session_name);
     *SHOWN_HOST.lock().unwrap() = host.clone();
+    *SHOWN_SESSION.lock().unwrap() = name.clone();
+    let exe = std::env::current_exe().ok();
     let conn = match &remote {
         Some(r) => match Conn::remote(&r.host, r.session.as_deref(), start) {
             Ok(conn) => conn,
@@ -402,6 +452,9 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
         .spawn(move || {
             loop {
                 thread::sleep(Duration::from_secs(3));
+                if let Some(exe) = &exe {
+                    reexec_if_replaced(exe);
+                }
                 if SHOWN_HOST.lock().unwrap().is_none() {
                     continue;
                 }
@@ -424,7 +477,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                 reveal = crate::protocol::target_pane(&target);
                 let (to_host, to_name) = crate::protocol::split_target(&target);
                 let to_host = match to_host {
-                    Some(h) if h == crate::protocol::hostname() => None,
+                    Some(h) if h == crate::protocol::machine_name() => None,
                     Some(h) => Some(h.to_owned()),
                     None => host.clone(),
                 };
@@ -434,6 +487,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                     Ok(next) => {
                         (host, name) = (to_host, to_name);
                         remember_place(host.as_deref(), &name);
+                        *SHOWN_SESSION.lock().unwrap() = name.clone();
                         next
                     }
                     // Back to where it was, which then tells why.
@@ -515,7 +569,7 @@ fn caps() -> Caps {
             })
             .unwrap_or_default();
         Origin {
-            host: crate::protocol::hostname(),
+            host: crate::protocol::machine_name(),
             sessions: or_default(infos.iter().map(|s| s.name.clone()).collect()),
             infos,
             hosts,
@@ -645,7 +699,8 @@ pub fn snapshot_all_but(
     own: Option<(&str, crate::persist::Saved)>,
 ) -> Result<crate::persist::Hive> {
     let mut hive = crate::persist::Hive {
-        machine: crate::protocol::hostname(),
+        machine: crate::protocol::machine_name(),
+        machine_id: crate::protocol::machine_id(),
         ..Default::default()
     };
     for name in crate::protocol::sessions() {
@@ -683,7 +738,7 @@ pub fn snapshot_all_but(
 pub fn known_hosts() -> Vec<String> {
     let mut hosts = crate::config::Config::load().0.hosts;
     hosts.extend(remembered_hosts());
-    let here = crate::protocol::hostname();
+    let here = crate::protocol::machine_name();
     let mut seen = std::collections::HashSet::new();
     hosts.retain(|h| *h != here && seen.insert(h.clone()));
     hosts
@@ -703,6 +758,7 @@ pub fn snapshot_everywhere(
             Ok(there) => hive.machines.push(crate::persist::HiveMachine {
                 name: host,
                 hostname: there.machine,
+                id: there.machine_id,
                 sessions: there.sessions,
             }),
             Err(_) => {
@@ -820,7 +876,7 @@ pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Resul
     let Some(hive) = crate::persist::load_hive(name)? else {
         bail!("there is no hive called {name}");
     };
-    let here = crate::protocol::hostname();
+    let here = crate::protocol::machine_name();
     // The machine it was saved on, then the others; hives from before
     // know only the one.
     let saver = if hive.machine.is_empty() {
@@ -831,8 +887,18 @@ pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Resul
     let mut machines = vec![crate::persist::HiveMachine {
         name: saver.clone(),
         hostname: saver,
+        id: hive.machine_id,
         sessions: hive.sessions,
     }];
+    // This machine by its id; hives from before only know names.
+    let id = crate::protocol::machine_id();
+    let is_here = |m: &crate::persist::HiveMachine| {
+        if m.id.is_empty() {
+            m.hostname == here
+        } else {
+            m.id == id
+        }
+    };
     machines.extend(hive.machines);
 
     if let Some(take) = take
@@ -858,7 +924,7 @@ pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Resul
             ));
             continue;
         }
-        if machine.hostname == here {
+        if is_here(&machine) {
             let started = restore_sessions(machine.sessions)?;
             report.push(match started.as_slice() {
                 [] => format!("⌂ {here}: all running"),

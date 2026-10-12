@@ -958,7 +958,7 @@ impl App {
         // Asked before taking the clients out, which makes them look detached.
         let graphics = self.graphics_enabled();
         self.attached = self.clients.len();
-        self.origin = self.active_caps().and_then(|caps| caps.origin);
+        self.origin = self.newest_origin();
         let mut clients = std::mem::take(&mut self.clients);
         let resend = clients.iter().any(|c| c.caps.graphics && c.resend_images);
         let (data, wanted) = self.image_state(graphics, resend);
@@ -1740,7 +1740,7 @@ impl App {
     )> {
         let mut hosts = self.places.lock().unwrap().hosts.clone();
         if let Some(origin) = &self.origin {
-            let here = protocol::hostname();
+            let here = protocol::machine_name();
             for info in &origin.hosts {
                 let known = hosts.iter().any(|(h, _)| *h == info.host);
                 let itself = info.host == here || origin.via.as_deref() == Some(&info.host);
@@ -1826,7 +1826,7 @@ impl App {
         let home = self.origin.as_ref().map(|o| o.host.as_str());
         match (host, home) {
             (None, None) if self.places.lock().unwrap().hosts.is_empty() => None,
-            (None, None) => Some(format!("⌂ {}", protocol::hostname())),
+            (None, None) => Some(format!("⌂ {}", protocol::machine_name())),
             (None, Some(_)) => Some(format!("⇄ {}", self.own_name())),
             (Some(h), Some(home)) if h == home => Some(format!("⌂ {h}")),
             (Some(h), _) => Some(format!("⇄ {h}")),
@@ -3021,6 +3021,22 @@ impl App {
             apart: true,
         });
         (places, items)
+    }
+
+    /// Where the user sits, as their client says: the active client's, if
+    /// it tells everything, else that of a client that does. A client from
+    /// before tells only session names and would make the sidebar poorer.
+    fn newest_origin(&self) -> Option<protocol::Origin> {
+        let full = |o: &protocol::Origin| o.via.is_some();
+        let active = self.active_caps().and_then(|caps| caps.origin);
+        if active.as_ref().is_some_and(full) {
+            return active;
+        }
+        self.clients
+            .iter()
+            .filter_map(|c| c.caps.origin.clone())
+            .find(full)
+            .or(active)
     }
 
     /// What the client whose input is handled now can do.
@@ -5911,7 +5927,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
 
             if hosts_at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY) {
                 hosts_at = Some(Instant::now());
-                let here = protocol::hostname();
+                let here = protocol::machine_name();
                 let mut all = hosts.lock().unwrap().clone();
                 all.extend(crate::client::remembered_hosts());
                 let mut seen = HashSet::new();

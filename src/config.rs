@@ -184,6 +184,10 @@ pub struct Config {
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
+    /// This machine's name for you and your other machines, e.g. how they
+    /// reach it by ssh (`laptop`). Without it, its hostname, which machines
+    /// set up alike may share.
+    pub name: Option<String>,
     /// Other machines, as `ssh` knows them, whose sessions the session list
     /// and the sidebar show. Hosts used with `imkr --host` are added by
     /// themselves.
@@ -256,6 +260,7 @@ impl Default for Config {
             renumber_windows: false,
             marks_on_alt: true,
             sessions_on_start: false,
+            name: None,
             hosts: Vec::new(),
         }
     }

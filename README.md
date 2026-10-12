@@ -296,7 +296,8 @@ but it writes to `~/.local/bin`, which shadows a cargo install rather than repla
 process, which keeps every pane's pty, the socket and the attached clients' connections open, and
 hands over layout, names and screens (history included) in a file. Shells and agents keep
 running, the attached clients just redraw. Only the server is updated: a client started before
-keeps its old code until it reattaches, fine as long as the protocol stays compatible.
+restarts itself as the new binary within a few seconds, at the same place, the session on another
+machine included (clients from before 0.7 keep their old code until they attach again).
 
 ## Restarts
 
@@ -357,6 +358,9 @@ imkr hosts                                               # the other machines th
 imkr hosts add desktop                                   # or forget one with `rm`
 ```
 
+Machines are told apart by `/etc/machine-id`, so two machines set up alike may share a hostname
+(both `omarchy`, say); give each a `name` in its settings to tell them apart on screen too.
+
 ssh between the machines has to work without a password (keys, an agent) and they have to reach
 each other, e.g. over a VPN like NetBird or Tailscale; imkr only uses it.
 
@@ -401,6 +405,7 @@ theme = "omarchy"   # "imkr", "omarchy" to follow the desktop, or an Omarchy the
 renumber_windows = false   # true: windows move up to fill gaps, always 1, 2, 3 …
 sessions_on_start = false  # true: plain `imkr` opens the session list first
 hosts = []          # other machines whose sessions to show, see "Other machines"
+name = "laptop"     # this machine's name for the others, e.g. its ssh alias; default: hostname
 
 [which_key]
 enabled = true      # show the key menu after Ctrl+B

@@ -117,9 +117,12 @@ pub fn state_dir() -> Result<PathBuf> {
 pub struct Hive {
     /// The sessions of the machine it was saved on.
     pub sessions: BTreeMap<String, HiveSession>,
-    /// That machine's hostname; empty in hives from before.
+    /// That machine's name; empty in hives from before.
     #[serde(default)]
     pub machine: String,
+    /// Its machine id, which tells it apart where names are alike.
+    #[serde(default)]
+    pub machine_id: String,
     /// Every other machine known then, with its sessions: a map of where
     /// everything runs, to bring back and to show machines that are off.
     #[serde(default)]
@@ -131,8 +134,12 @@ pub struct Hive {
 pub struct HiveMachine {
     /// How it was reached, the name for ssh.
     pub name: String,
-    /// Its own hostname, to know it again from wherever the hive is used.
+    /// Its own name, as it calls itself.
     pub hostname: String,
+    /// Its machine id, to know it again from wherever the hive is used;
+    /// empty in hives from before, which go by `hostname`.
+    #[serde(default)]
+    pub id: String,
     pub sessions: BTreeMap<String, HiveSession>,
 }
 

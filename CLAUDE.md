@@ -40,6 +40,10 @@ Projekt-Slug: `imkr`
 - Agent-Status: `src/agent.rs` (Erkennung per argv aus `/proc/<pgid>/cmdline`, Aktivität, Fragen
   auf dem Screen; gemeldeter Status aus Hooks hat Vorrang). `App::update_agents` läuft bei jedem
   Tick (500 ms) und klingelt bei neuem `blocked`. Beantwortete Fragen: `Pane::note_input`.
+- Rechner-Identität: `protocol::machine_id()` (/etc/machine-id; `IMKR_HOSTNAME` in Tests) für Hives,
+  `machine_name()` (Config `name`, sonst Hostname) für Anzeige und Origin – zwei Omarchy-Rechner
+  heißen beide `omarchy`! Server nimmt `newest_origin()` (Client mit `via`), nicht stur den aktiven.
+  Client ersetzt sich selbst (`reexec_if_replaced` im origin-Thread, Ziel in `IMKR_REEXEC`).
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
   (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). `Notification` mit
   `permission_prompt|elicitation_dialog` → blocked, für Agents im Bypass-Modus. Test mit Schein-HOME.

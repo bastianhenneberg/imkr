@@ -146,6 +146,40 @@ pub fn hostname() -> String {
         .unwrap_or_else(|_| "here".into())
 }
 
+/// This machine's name for the user and the other machines: `name` from
+/// the settings, e.g. its ssh alias, else its hostname. Two machines can
+/// share a hostname (`omarchy` on both), so it only names, `machine_id`
+/// tells them apart.
+pub fn machine_name() -> String {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        if std::env::var_os("IMKR_HOSTNAME").is_some() {
+            return hostname();
+        }
+        crate::config::Config::load()
+            .0
+            .name
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(hostname)
+    })
+    .clone()
+}
+
+/// What tells this machine apart from every other: `/etc/machine-id`, or
+/// `$IMKR_HOSTNAME` where tests play several machines on one.
+pub fn machine_id() -> String {
+    if let Ok(name) = std::env::var("IMKR_HOSTNAME")
+        && !name.is_empty()
+    {
+        return name;
+    }
+    fs::read_to_string("/etc/machine-id")
+        .map(|id| id.trim().to_owned())
+        .ok()
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(hostname)
+}
+
 /// `host:session` for a session on another machine, as `ServerMsg::Switch`
 /// carries it; a plain name is a session on the same machine. Either may
 /// end in `#pane`, the pane to show there.

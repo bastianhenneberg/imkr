@@ -685,7 +685,7 @@ pub fn hosts(args: &[String]) -> Result<()> {
             Ok(())
         }
         [cmd, name] if cmd == "add" => {
-            if *name != crate::protocol::hostname() {
+            if *name != crate::protocol::machine_name() {
                 client::remember_host(name);
             }
             Ok(())

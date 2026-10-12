@@ -93,6 +93,12 @@ Inside imkr, Ctrl+B then q opens the quit menu: detach, close the pane or end th
 session. Ctrl+B then d detaches right away, the shells keep running.";
 
 fn main() -> Result<()> {
+    // A client that started itself again after an update goes back to where
+    // it was.
+    if std::env::var_os("IMKR_REEXEC").is_some() {
+        let remote = client::reexec_target();
+        return client::run(true, false, remote, false);
+    }
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // `--host HOST`: the session on that machine, through ssh.
     let host = match args.iter().position(|a| a == "--host" || a == "-H") {
