@@ -3145,10 +3145,23 @@ impl App {
     fn session_items(&self) -> (Vec<Place>, Vec<menu::MenuItem>) {
         let current = protocol::session_name();
         let places = self.places.lock().unwrap().clone();
-        let mut entries: Vec<(Place, String)> = Vec::new();
+        let mut entries: Vec<(Place, String, BTreeMap<String, usize>)> = Vec::new();
         let mut here: Vec<String> = places.local.iter().map(|s| s.name.clone()).collect();
         here.push(current.clone());
         here.sort();
+        let agents_of = |infos: &[protocol::SessionInfo], name: &str| {
+            infos
+                .iter()
+                .find(|s| s.name == name)
+                .map(|s| s.agents.clone())
+                .unwrap_or_default()
+        };
+        let mut own = BTreeMap::new();
+        for &id in self.panes.keys() {
+            if let Some(state) = self.shown_state(id) {
+                *own.entry(state.name().to_owned()).or_insert(0) += 1;
+            }
+        }
         // This machine's sessions carry its name if the user is not at it.
         let here_label = self.machine_label(None);
         for name in here {
@@ -3158,7 +3171,12 @@ impl App {
                 (Some(machine), false) => machine.clone(),
                 (None, false) => String::new(),
             };
-            entries.push((Place { host: None, name }, hint));
+            let agents = if name == current {
+                own.clone()
+            } else {
+                agents_of(&places.local, &name)
+            };
+            entries.push((Place { host: None, name }, hint, agents));
         }
         // The machine the active client sits at, to go back to.
         if let Some(origin) = self.origin.clone() {
@@ -3167,7 +3185,8 @@ impl App {
                     host: Some(origin.host.clone()),
                     name,
                 };
-                entries.push((place, format!("⌂ {}", origin.host)));
+                let agents = agents_of(&origin.infos, &place.name);
+                entries.push((place, format!("⌂ {}", origin.host), agents));
             }
         }
         for (host, sessions) in &self.known_hosts() {
@@ -3176,24 +3195,51 @@ impl App {
                     host: Some(host.clone()),
                     name: session.name.clone(),
                 };
-                entries.push((place, format!("⇄ {host}")));
+                entries.push((place, format!("⇄ {host}"), session.agents.clone()));
             }
         }
         let (places, mut items): (Vec<Place>, Vec<menu::MenuItem>) = entries
             .into_iter()
             .enumerate()
-            .map(|(i, (place, hint))| {
+            .map(|(i, (place, hint, agents))| {
+                // What its agents do, the most urgent first, as the sidebar
+                // marks them: "◆1 ●2".
+                let info = protocol::SessionInfo {
+                    agents,
+                    ..Default::default()
+                };
+                let urgent = info.urgent().map(|(state, _)| state);
+                let counts: Vec<String> = [
+                    AgentState::Blocked,
+                    AgentState::Done,
+                    AgentState::Working,
+                    AgentState::Idle,
+                ]
+                .into_iter()
+                .filter_map(|state| {
+                    let n = *info.agents.get(state.name())?;
+                    (n > 0).then(|| format!("{}{n}", state.symbol()))
+                })
+                .collect();
+                let hint = match (counts.is_empty(), hint.is_empty()) {
+                    (true, _) => hint,
+                    (false, true) => counts.join(" "),
+                    (false, false) => format!("{} · {hint}", counts.join(" ")),
+                };
                 let item = menu::MenuItem {
                     key: if i < 9 {
                         char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
                     } else {
                         ' '
                     },
-                    title: place.name.clone(),
+                    title: match urgent {
+                        Some(state) => format!("{} {}", state.symbol(), place.name),
+                        None => format!("  {}", place.name),
+                    },
                     hint,
                     danger: false,
                     apart: false,
-                    color: None,
+                    color: urgent.and_then(|state| sidebar::state_style(state).fg),
                 };
                 (place, item)
             })
