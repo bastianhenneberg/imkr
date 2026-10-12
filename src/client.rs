@@ -291,10 +291,14 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                         continue;
                     };
                     *info.agents.entry(state.to_owned()).or_default() += 1;
-                    let dir = pane["cwd"]
+                    let dir = pane["workspace_name"]
                         .as_str()
-                        .and_then(|cwd| std::path::Path::new(cwd).file_name())
-                        .map(|name| name.to_string_lossy().into_owned())
+                        .map(str::to_owned)
+                        .or_else(|| {
+                            let cwd = pane["cwd"].as_str()?;
+                            let name = std::path::Path::new(cwd).file_name()?;
+                            Some(name.to_string_lossy().into_owned())
+                        })
                         .unwrap_or_default();
                     info.agent_panes.push(crate::protocol::AgentInfo {
                         pane: pane["pane"].as_u64().unwrap_or(0) as crate::layout::PaneId,

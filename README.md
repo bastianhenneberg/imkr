@@ -134,6 +134,7 @@ state comes from what imkr sees on the screen.
 | `Ctrl+B` `/` | Search everything: panes, windows, sessions and agents on every machine, plugins, marks, hives and every command with its keys. Words in any order, Enter goes there or does it |
 | `Ctrl+B` `a` | Jump to the agent that has waited longest for you, then to finished ones |
 | `Ctrl+B` `A` | Every agent here and on other machines, those waiting first: Enter or digit goes there |
+| `Ctrl+B` `W` | Every window of the session with its agents' state and programs: Enter or its number goes there, `/` searches |
 | `Ctrl+B` `m` / `M` | Mark the pane for `Alt+1` … `Alt+9`, like Harpoon / list the marks: Enter goes there, `J` `K` reorder, `x` removes |
 | `Alt+1` … `Alt+9` | Straight to a marked pane, in any session, on any machine (setting *Marks on Alt+1-9*) |
 | `Ctrl+B` `[` | Copy mode: scroll back with vim keys (`Ctrl-U`/`Ctrl-D`, `Ctrl-B`/`Ctrl-F`, `g`/`G`), `/` and `?` search down and up, `n`/`N` next, `v` select, `y` copy, `q` quit |

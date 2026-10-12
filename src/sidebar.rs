@@ -286,7 +286,8 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
     if data.agents.is_empty() && data.other_agents.is_empty() {
         out.push((Line::styled("  none running", dim), None));
     }
-    // One line per agent: its state and program, window and directory,
+    // One line per agent: its state, its window (number and name, else
+    // directory) before its program, as agents are mostly all `claude`,
     // and how long it has been so.
     let agent_line = |indent: &str,
                       state: AgentState,
@@ -296,20 +297,41 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                       since: Duration,
                       focused: bool| {
         let age = age(since);
-        let head = format!("{indent}{} {program}", state.symbol());
-        let place = format!(" {workspace}·{dir}");
-        let room = width.saturating_sub(head.chars().count() + age.chars().count() + 1);
-        let place = fit(&place, room);
-        let pad = width
-            .saturating_sub(head.chars().count() + place.chars().count() + age.chars().count());
+        let symbol = format!("{indent}{} ", state.symbol());
+        let number = format!("{workspace} ");
+        let used = symbol.chars().count()
+            + number.chars().count()
+            + program.chars().count()
+            + age.chars().count()
+            + 1;
+        // The window's name gives way first, then the program.
+        let label = if dir.is_empty() {
+            String::new()
+        } else {
+            fit(&format!("{dir} › "), width.saturating_sub(used))
+        };
+        let program = fit(
+            program,
+            width.saturating_sub(used - program.chars().count() + label.chars().count()),
+        );
+        let used = symbol.chars().count()
+            + number.chars().count()
+            + label.chars().count()
+            + program.chars().count()
+            + age.chars().count();
+        let pad = width.saturating_sub(used);
         let name_style = if focused {
             state_style(state).add_modifier(Modifier::UNDERLINED)
         } else {
             state_style(state)
         };
         Line::from(vec![
-            Span::styled(head, name_style),
-            Span::styled(place, Style::new().fg(t.workspace(workspace))),
+            Span::styled(symbol, state_style(state)),
+            Span::styled(
+                format!("{number}{label}"),
+                Style::new().fg(t.workspace(workspace)),
+            ),
+            Span::styled(program, name_style),
             Span::raw(" ".repeat(pad)),
             Span::styled(age, dim),
         ])
@@ -722,9 +744,9 @@ mod tests {
         assert_eq!(rows[2].1, Some(Target::Workspace(2)));
         let agent = texts
             .iter()
-            .position(|t| t.starts_with("◆ claude"))
+            .position(|t| t.starts_with("◆ 2 api › claude"))
             .unwrap();
-        assert!(texts[agent].contains("2·api") && texts[agent].ends_with("3m"));
+        assert!(texts[agent].ends_with("3m"));
         assert_eq!(rows[agent].1, Some(Target::Pane(7)));
         assert!(
             texts

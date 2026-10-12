@@ -348,13 +348,11 @@ pub fn agents(args: &[String]) -> Result<()> {
                         "program": agent.program,
                         "state": agent.state,
                         "window": agent.workspace,
-                        "dir": agent.dir,
+                        "window_name": agent.dir,
                     }));
                 } else {
-                    println!(
-                        "{address:<28} {:<10} {:<8} window {} · {}",
-                        agent.program, agent.state, agent.workspace, agent.dir
-                    );
+                    let at = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
+                    println!("{address:<24} {:<8} {at}", agent.state);
                 }
             }
         }

@@ -119,7 +119,8 @@ pub struct AgentInfo {
     pub pane: PaneId,
     pub program: String,
     pub workspace: u8,
-    /// The name of its directory.
+    /// Its window's name, else the name of its directory: what tells
+    /// agents apart that are all called `claude`.
     pub dir: String,
     pub state: String,
     /// Seconds in this state.

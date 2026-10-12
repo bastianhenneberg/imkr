@@ -111,6 +111,8 @@ enum Mode {
     NewWindowWhere(usize),
     /// Choosing the template for the new session `App::new_session`.
     NewSessionTemplate(usize),
+    /// The list of this session's windows, that one selected.
+    Windows(usize),
     /// The marks, that one selected.
     Marks(usize),
 }
@@ -1695,6 +1697,17 @@ impl App {
         }
     }
 
+    /// The name of the window pane `id` is in, else the name of its
+    /// directory, which is what the sidebar calls a window without one.
+    fn window_name_of(&self, id: PaneId) -> Option<String> {
+        let n = self.workspace_of(id)?;
+        let ws = self.workspace_ref(n)?;
+        ws.name.clone().or_else(|| {
+            let cwd = self.panes.get(&ws.focus)?.cwd()?;
+            Some(cwd.file_name()?.to_string_lossy().into_owned())
+        })
+    }
+
     /// The number of the workspace that contains pane `id`.
     fn workspace_of(&self, id: PaneId) -> Option<u8> {
         if self.ws.contains(id) {
@@ -1763,7 +1776,7 @@ impl App {
                         .or_else(|| pane.program())
                         .unwrap_or_default(),
                     workspace: self.workspace_of(id)?,
-                    dir: dir_name(id),
+                    dir: self.window_name_of(id).unwrap_or_else(|| dir_name(id)),
                     state: self.shown_state(id)?,
                     since: now - since,
                     focused: id == self.ws.focus,
@@ -2179,6 +2192,10 @@ impl App {
                 self.agents_key(key, selected);
                 Ok(())
             }
+            Mode::Windows(selected) => {
+                self.windows_key(key, selected);
+                Ok(())
+            }
             Mode::NewSessionWhere(selected) => {
                 self.new_session_where_key(key, selected);
                 Ok(())
@@ -2365,6 +2382,10 @@ impl App {
             Command::RenameWorkspace => self.start_prompt(RenameTarget::Workspace(self.workspace)),
             Command::MoveWorkspace => self.mode = Mode::MoveTo(self.workspace, 0),
             Command::Agents => self.mode = Mode::Agents(0),
+            Command::Windows => {
+                let at = self.workspaces().iter().position(|&n| n == self.workspace);
+                self.mode = Mode::Windows(at.unwrap_or(0));
+            }
             Command::Mark => self.mark_focused(),
             Command::Marks => self.mode = Mode::Marks(0),
             Command::TogglePopup => match self.popup.clone() {
@@ -3694,15 +3715,21 @@ impl App {
                     Some(machine) => format!("{machine} · "),
                     None => String::new(),
                 };
+                // Its window by name while it is in this session.
+                let here = mark.host.is_none() && mark.session == protocol::session_name();
+                let window = here
+                    .then(|| self.window_name_of(mark.pane))
+                    .flatten()
+                    .map_or(mark.window.to_string(), |name| {
+                        format!(
+                            "{} {name}",
+                            self.workspace_of(mark.pane).unwrap_or(mark.window)
+                        )
+                    });
                 menu::MenuItem {
                     key: char::from_digit(i as u32 + 1, 10).unwrap_or(' '),
-                    title: mark.label.clone(),
-                    hint: format!(
-                        "Alt+{} · {machine}{} · window {}",
-                        i + 1,
-                        mark.session,
-                        mark.window
-                    ),
+                    title: format!("{window} › {}", mark.label),
+                    hint: format!("Alt+{} · {machine}{}", i + 1, mark.session),
                     danger: false,
                     apart: false,
                     color: None,
@@ -3769,12 +3796,19 @@ impl App {
                 .clone()
                 .or_else(|| pane.program())
                 .unwrap_or_default();
-            let dir = pane
-                .cwd()
-                .and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_default();
-            let place = format!("this session · {n}·{dir}");
-            all.push((state, now - since, AgentAt::Here(id), program, place));
+            let dir = self.window_name_of(id).unwrap_or_else(|| {
+                pane.cwd()
+                    .and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .unwrap_or_default()
+            });
+            let program = format!("{n} {dir} › {program}");
+            all.push((
+                state,
+                now - since,
+                AgentAt::Here(id),
+                program,
+                "this session".into(),
+            ));
         }
         for (i, (place, agent)) in self.other_agents().into_iter().enumerate() {
             let Some(state) = AgentState::from_name(&agent.state) else {
@@ -3784,12 +3818,10 @@ impl App {
                 Some(machine) => format!("{machine} · "),
                 None => String::new(),
             };
-            let at = format!(
-                "{machine}{} · {}·{}",
-                place.name, agent.workspace, agent.dir
-            );
+            let at = format!("{machine}{}", place.name);
+            let program = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
             let since = Duration::from_secs(agent.since);
-            all.push((state, since, AgentAt::Other(i), agent.program, at));
+            all.push((state, since, AgentAt::Other(i), program, at));
         }
         all.sort_by_key(|(state, since, ..)| (sidebar::urgency(*state), std::cmp::Reverse(*since)));
         all.into_iter()
@@ -3813,6 +3845,99 @@ impl App {
     }
 
     /// Enter or a digit goes to that agent, here or wherever it runs.
+    /// Every window of the session: its number and name, what its agents
+    /// do in the sidebar's colours, how many panes it has.
+    fn window_items(&self) -> (Vec<u8>, Vec<menu::MenuItem>) {
+        let numbers = self.workspaces();
+        let items = numbers
+            .iter()
+            .map(|&n| {
+                let ws = self.workspace_ref(n);
+                let panes = ws.map(Workspace::panes).unwrap_or_default();
+                let states: Vec<AgentState> = panes
+                    .iter()
+                    .filter_map(|&id| self.shown_state(id))
+                    .collect();
+                let urgent = states.iter().copied().min_by_key(|s| sidebar::urgency(*s));
+                let name = ws
+                    .and_then(|ws| ws.name.clone())
+                    .or_else(|| {
+                        let cwd = self.panes.get(&ws?.focus)?.cwd()?;
+                        Some(cwd.file_name()?.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_default();
+                let mut counts: Vec<String> = Vec::new();
+                for state in [
+                    AgentState::Blocked,
+                    AgentState::Done,
+                    AgentState::Working,
+                    AgentState::Idle,
+                ] {
+                    let k = states.iter().filter(|s| **s == state).count();
+                    if k > 0 {
+                        counts.push(format!("{}{k}", state.symbol()));
+                    }
+                }
+                let programs: Vec<String> = panes
+                    .iter()
+                    .filter_map(|id| {
+                        let pane = self.panes.get(id)?;
+                        pane.name.clone().or_else(|| pane.program())
+                    })
+                    .collect();
+                let mut hint = programs.join(", ");
+                if !counts.is_empty() {
+                    hint = format!("{} · {hint}", counts.join(" "));
+                }
+                if n == self.workspace {
+                    hint = format!("{hint} · shown");
+                }
+                menu::MenuItem {
+                    key: char::from_digit(u32::from(n) % 10, 10).unwrap_or(' '),
+                    title: match urgent {
+                        Some(state) => format!("{} {n} {name}", state.symbol()),
+                        None => format!("  {n} {name}"),
+                    },
+                    hint,
+                    danger: false,
+                    apart: false,
+                    color: urgent.and_then(|state| sidebar::state_style(state).fg),
+                }
+            })
+            .collect();
+        (numbers, items)
+    }
+
+    fn windows_key(&mut self, key: KeyEvent, selected: usize) {
+        let (numbers, _) = self.window_items();
+        let count = numbers.len().max(1);
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::Windows((selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::Windows((selected + 1) % count);
+                return;
+            }
+            KeyCode::Enter => numbers.get(selected).copied(),
+            // The digit is the window's number, as in Ctrl+B 1-9.
+            KeyCode::Char(c @ '1'..='9') => {
+                let n = c as u8 - b'0';
+                numbers.contains(&n).then_some(n)
+            }
+            _ => return,
+        };
+        self.mode = Mode::Normal;
+        if let Some(n) = pick {
+            self.switch_workspace(n);
+        }
+    }
+
     fn agents_key(&mut self, key: KeyEvent, selected: usize) {
         let (targets, _) = self.agent_choices();
         let count = targets.len().max(1);
@@ -4322,10 +4447,12 @@ impl App {
             Found {
                 kind: if picker.global { "pane" } else { "" },
                 label: format!(
-                    "{} · {:>2}  {}{state}",
-                    entry.workspace, entry.pane, entry.label
+                    "{} {} › {}{state}",
+                    entry.workspace,
+                    self.window_name_of(entry.pane).unwrap_or_default(),
+                    entry.label
                 ),
-                hint: entry.dir,
+                hint: format!("pane {} · {}", entry.pane, entry.dir),
                 style: entry.state.map(state_style).unwrap_or_default(),
                 go: Go::Pane(entry.pane),
             }
@@ -5913,6 +6040,7 @@ impl App {
                         | Mode::Hives(_)
                         | Mode::MoveTo(..)
                         | Mode::Agents(_)
+                        | Mode::Windows(_)
                         | Mode::NewSessionWhere(_)
                         | Mode::NewSessionTemplate(_)
                         | Mode::NewWindowWhere(_)
@@ -6048,6 +6176,17 @@ impl App {
                     bindings::MARK_LIST_KEYS,
                 );
             }
+            Mode::Windows(selected) => {
+                let (_, items) = self.window_items();
+                self.draw_list(
+                    frame,
+                    body,
+                    " ⬢ Windows ",
+                    &items,
+                    selected,
+                    bindings::CHOOSE_LIST_KEYS,
+                );
+            }
             Mode::Agents(selected) => {
                 let (_, mut items) = self.agent_choices();
                 if items.is_empty() {
@@ -6110,6 +6249,7 @@ impl App {
         Some(match self.mode {
             Mode::Sessions(s) => (self.session_items().1, s),
             Mode::Agents(s) => (self.agent_choices().1, s),
+            Mode::Windows(s) => (self.window_items().1, s),
             Mode::Hives(s) => (self.hive_items().1, s),
             Mode::MoveTo(_, s) => (self.move_to_items().1, s),
             Mode::Marks(s) => (self.mark_items(), s),
@@ -6128,6 +6268,7 @@ impl App {
         match &mut self.mode {
             Mode::Sessions(s)
             | Mode::Agents(s)
+            | Mode::Windows(s)
             | Mode::Hives(s)
             | Mode::Marks(s)
             | Mode::NewWindowWhere(s)
@@ -6617,6 +6758,11 @@ impl App {
                 "AGENTS",
                 t.magenta,
                 "↑↓ choose · Enter or digit go there · m mark for Alt+1-9 · Esc cancel",
+            ),
+            Mode::Windows(_) => (
+                "WINDOWS",
+                t.blue,
+                "↑↓ choose · Enter or digit go there · / search · Esc cancel",
             ),
             Mode::MoveTo(..) => (
                 "MOVE",
