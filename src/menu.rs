@@ -254,6 +254,8 @@ pub struct MenuItem {
     /// after a list of what runs: a line above, quieter, and out of the
     /// arrow keys' way.
     pub apart: bool,
+    /// A colour of its own, e.g. an agent's state as the sidebar shows it.
+    pub color: Option<ratatui::style::Color>,
 }
 
 /// The quit menu in the middle of `area`, `selected` highlighted.
@@ -303,7 +305,9 @@ pub fn draw_choices(
                 Style::new().fg(theme::current().subtle),
             ));
         }
-        let color = if item.danger {
+        let color = if let Some(color) = item.color {
+            color
+        } else if item.danger {
             theme::current().danger
         } else if item.apart {
             theme::current().muted
@@ -575,6 +579,7 @@ mod tests {
             hint: String::new(),
             danger: false,
             apart: false,
+            color: None,
         }];
         let keys = [("Enter", "switch"), ("r", "rename"), ("Esc", "cancel")];
         let screen = render(80, 20, |f, a| {

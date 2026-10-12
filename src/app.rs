@@ -3057,6 +3057,7 @@ impl App {
                     hint,
                     danger: false,
                     apart: false,
+                    color: None,
                 };
                 (place, item)
             })
@@ -3067,6 +3068,7 @@ impl App {
             hint: "`imkr -s NAME` does the same".into(),
             danger: false,
             apart: true,
+            color: None,
         });
         (places, items)
     }
@@ -3144,6 +3146,7 @@ impl App {
                     },
                     danger: false,
                     apart: false,
+                    color: None,
                 }
             })
             .collect();
@@ -3220,6 +3223,7 @@ impl App {
                     .map_or("one shell".into(), |t| t.summary()),
                 danger: false,
                 apart: false,
+                color: None,
             })
             .collect();
         (templates, items)
@@ -3519,6 +3523,7 @@ impl App {
                     ),
                     danger: false,
                     apart: false,
+                    color: None,
                 }
             })
             .collect()
@@ -3618,6 +3623,7 @@ impl App {
                     hint: format!("{place} · {}", sidebar::age(since)),
                     danger: state == AgentState::Blocked,
                     apart: false,
+                    color: sidebar::state_style(state).fg,
                 };
                 (at, item)
             })
@@ -3674,6 +3680,7 @@ impl App {
                 hint: String::new(),
                 danger: false,
                 apart: false,
+                color: None,
             })
             .collect();
         items.push(menu::MenuItem {
@@ -3682,6 +3689,7 @@ impl App {
             hint: "started for this window".into(),
             danger: false,
             apart: true,
+            color: None,
         });
         (names, items)
     }
@@ -3764,6 +3772,7 @@ impl App {
                     hint: format!("{} · {age} ago{auto}", sessions.join(", ")),
                     danger: false,
                     apart: false,
+                    color: None,
                 }
             })
             .collect();
@@ -5675,6 +5684,7 @@ impl App {
                         hint: "Ctrl+B m marks the focused pane".into(),
                         danger: false,
                         apart: false,
+                        color: None,
                     });
                 }
                 self.draw_list(
@@ -5695,6 +5705,7 @@ impl App {
                         hint: "here or on any machine known".into(),
                         danger: false,
                         apart: false,
+                        color: None,
                     });
                 }
                 self.draw_list(
@@ -5726,6 +5737,7 @@ impl App {
                         hint: "s saves the running sessions as one".into(),
                         danger: false,
                         apart: false,
+                        color: None,
                     });
                 }
                 self.draw_list(
@@ -5872,6 +5884,7 @@ impl App {
                 hint: "Esc clears the search".into(),
                 danger: false,
                 apart: false,
+                color: None,
             });
         }
         let title = format!("{title}· /{query}▏ ");
@@ -5888,6 +5901,7 @@ impl App {
                     hint: "shells keep running, `imkr` brings you back".into(),
                     danger: false,
                     apart: false,
+                    color: None,
                 },
                 MenuEntry::ClosePane => menu::MenuItem {
                     key,
@@ -5895,6 +5909,7 @@ impl App {
                     hint: "ends the program running in it".into(),
                     danger: true,
                     apart: false,
+                    color: None,
                 },
                 MenuEntry::EndSession => menu::MenuItem {
                     key,
@@ -5905,6 +5920,7 @@ impl App {
                     ),
                     danger: true,
                     apart: false,
+                    color: None,
                 },
             })
             .collect()
@@ -6976,6 +6992,7 @@ mod tests {
             hint: "⇄ codingmachine".into(),
             danger: false,
             apart: false,
+            color: None,
         };
         assert!(list_matches(&item, ""));
         assert!(list_matches(&item, "BRA"));
