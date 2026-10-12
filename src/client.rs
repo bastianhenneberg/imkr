@@ -220,9 +220,27 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                 info.panes = panes.len();
                 info.windows = windows.len();
                 for pane in &panes {
-                    if let Some(state) = pane["state"].as_str() {
-                        *info.agents.entry(state.to_owned()).or_default() += 1;
-                    }
+                    let Some(state) = pane["state"].as_str() else {
+                        continue;
+                    };
+                    *info.agents.entry(state.to_owned()).or_default() += 1;
+                    let dir = pane["cwd"]
+                        .as_str()
+                        .and_then(|cwd| std::path::Path::new(cwd).file_name())
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    info.agent_panes.push(crate::protocol::AgentInfo {
+                        pane: pane["pane"].as_u64().unwrap_or(0) as crate::layout::PaneId,
+                        program: pane["name"]
+                            .as_str()
+                            .or(pane["program"].as_str())
+                            .unwrap_or("agent")
+                            .to_owned(),
+                        workspace: pane["workspace"].as_u64().unwrap_or(0) as u8,
+                        dir,
+                        state: state.to_owned(),
+                        since: pane["since"].as_u64().unwrap_or(0),
+                    });
                 }
             }
             info
@@ -361,10 +379,12 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
     // The setting of this machine, wherever the session is.
     let pick = last && crate::config::Config::load().0.sessions_on_start;
     let mut hello = last.then_some((pick, flash));
+    let mut reveal = None;
     let outcome = loop {
-        match session(conn, &writer, alone, hello.take()) {
+        match session(conn, &writer, alone, hello.take(), reveal.take()) {
             // Another session, on this machine, the one shown or another.
             Ok(Outcome::Switch(target)) => {
+                reveal = crate::protocol::target_pane(&target);
                 let (to_host, to_name) = crate::protocol::split_target(&target);
                 let to_host = match to_host {
                     Some(h) if h == crate::protocol::hostname() => None,
@@ -381,6 +401,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                     }
                     // Back to where it was, which then tells why.
                     Err(e) => {
+                        reveal = None;
                         *SHOWN_HOST.lock().unwrap() = host.clone();
                         match connect(host.as_deref(), &name) {
                             Ok(back) => {
@@ -514,11 +535,13 @@ fn connect(host: Option<&str>, name: &str) -> Result<Conn> {
 /// end also ends its ssh, if any.
 /// With `hello`, imkr just started: whether the session list should open,
 /// and why it is not where it was last, if that is the case.
+/// With `reveal`, that pane is shown and focused there.
 fn session(
     mut conn: Conn,
     writer: &Writer,
     alone: bool,
     hello: Option<(bool, Option<String>)>,
+    reveal: Option<crate::layout::PaneId>,
 ) -> Result<Outcome> {
     let mut to_server = std::mem::replace(&mut conn.writer, Box::new(io::sink()));
     let stream = &mut conn.reader;
@@ -526,6 +549,9 @@ fn session(
     ClientMsg::Attach { alone }.write_to(&mut to_server)?;
     ClientMsg::Event(Event::Resize(cols, rows)).write_to(&mut to_server)?;
     ClientMsg::Caps(caps()).write_to(&mut to_server)?;
+    if let Some(pane) = reveal {
+        ClientMsg::Request(Request::Reveal { pane }).write_to(&mut to_server)?;
+    }
     if let Some((pick, flash)) = hello {
         if pick {
             ClientMsg::Request(Request::OpenSessions).write_to(&mut to_server)?;

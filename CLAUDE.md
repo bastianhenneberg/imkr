@@ -62,6 +62,10 @@ Projekt-Slug: `imkr`
   enden sie beim Update wie ein Pane ohne Platz. `close()` entfernt sie. `popup_full` (Ctrl+B z
   über einem Popup) = Panes + Sidebar, `break_popup` (Ctrl+B !) macht ein Window daraus. Basis
   für Plugins.
+- OSC 52 aus Panes: `clipboard::Osc52Scanner` im Pane-Reader (vor dem Grafik-Scanner, über
+  Lesegrenzen), `AppEvent::Clipboard` → `send_active`. Clipboard-Abfragen (`?`) werden verworfen.
+  Test verschachtelt: im Pane `ssh -t -- server <scratchpad>/bin/imkr` aufrufen, nicht `imkr`
+  (die zsh im Pane stellt `~/.cargo/bin` vorn in den PATH → installiertes Binary).
 - Mehrere Rechner in einem imkr: Hosts aus `Config::hosts` + gemerkte (`client::remembered_hosts`,
   `~/.local/state/imkr/hosts`). Thread `watch_places` füllt `App::places` (lokal alle 2 s per
   `client::local_sessions`, Hosts alle 15 s per `ssh … imkr ls --json`). Sidebar-Abschnitt
@@ -72,6 +76,10 @@ Projekt-Slug: `imkr`
   State-Verzeichnis, `imkr` ohne Argumente geht dorthin; „Session list on start“ entscheidet der
   Client nach lokaler Config (`Request::OpenSessions`). Test: Fake-`ssh` mit eigenem HOME
   (`.cargo/bin/imkr` als Link), `XDG_RUNTIME_DIR`, `XDG_STATE_HOME`, `IMKR_CONFIG` = zweite Welt.
+  Agents anderer Sessions: `SessionInfo::agent_panes` (aus `imkr ls --json`), Sidebar
+  `OtherAgentRow`, Klick → Switch `host:name#pane` (Client schickt danach `Request::Reveal`).
+  Remote-Wechsel nach blocked/done erkennt `watch_places` per `remote_change` und legt sie in
+  `Places::alerts`, `pass_on_alerts` meldet wie lokal (lokale Sessions melden sich selbst).
   Falle: `pkill -f <pfad>` trifft die eigene Shell, deren Befehlszeile den Pfad enthält.
 - Window in andere Session verschieben: `App::move_window` → `Pane::stop_reading` (Reader-Thread
   wartet per `poll` auf PTY oder Stopp-Pipe, damit nach der Übergabe kein Byte mehr hier gelesen

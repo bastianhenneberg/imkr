@@ -186,6 +186,13 @@ imkr notify --title build "done in 42 s"  # with a title of its own
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.
 
+## Clipboard
+
+Text you select is copied with OSC 52, so it lands in the clipboard of the machine your terminal
+runs on, over ssh too. What programs in panes copy the same way, nvim or an imkr on another
+machine reached by `ssh` in a pane, is passed on to your terminal (like tmux's `set-clipboard`);
+requests to read the clipboard are not.
+
 ## Popups
 
 A popup is a pane outside every window, shown over the active one: a TUI you want at hand
@@ -205,7 +212,9 @@ One imkr for the sessions here and on other machines, without an imkr inside an 
 sidebar and the session list (`Ctrl+B S`) show every machine's sessions, and picking one switches
 this terminal over to it. imkr runs on that machine and keeps its shells and agents going when the
 connection drops; this terminal stays the client, so keys, clipboard, images and the window size
-are local. On the other machine the list offers this one's sessions to come back to.
+are local. On the other machine the list offers this one's sessions to come back to. Machines
+are marked from where you sit: `⌂` is the one your terminal runs on, `⇄` any other, and the
+control bar says `⇄ machine` while you work on one you do not sit at.
 
 Machines come from the settings and from `imkr --host`:
 
@@ -220,8 +229,13 @@ starts here and says why.
 
 It runs `ssh -C server imkr proxy` through a login shell, with `~/.cargo/bin` and `~/.local/bin`
 added to the PATH, so ssh should log in without a password (keys, an agent or `ControlMaster`).
-The sessions there are listed every 15 seconds with `imkr ls --json`, which needs this version
+The sessions there are listed every 5 seconds with `imkr ls --json`, which needs this version
 of imkr there too; the sidebar says if it is missing or the machine does not answer.
+
+Agents of the other sessions, here and on other machines, are listed under *Agents* below this
+session's own, grouped by session (`⇄ codingmachine · brain`), those that need you first. A click
+goes to the session and shows the agent's pane. When one elsewhere comes to need you or finishes,
+imkr tells you as it does for its own: in the bar, with a bell, and a notification.
 
 ## Updates
 

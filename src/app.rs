@@ -58,6 +58,9 @@ pub type ClientId = u64;
 pub enum AppEvent {
     PtyOutput,
     PtyExited(PaneId),
+    /// A program put something into the clipboard (OSC 52), for the
+    /// terminal of the client.
+    Clipboard(Vec<u8>),
     ClientConnected(UnixStream),
     ClientMsg(ClientId, ClientMsg),
     /// A window moved here from another session, with its ptys, or why it
@@ -218,6 +221,9 @@ struct Places {
         String,
         std::result::Result<Vec<protocol::SessionInfo>, String>,
     )>,
+    /// Agents on other machines that came to need the user or finished,
+    /// as notification title and text, for the server to pass on.
+    alerts: Vec<(String, String)>,
 }
 
 /// A session to switch to: on this machine (`host` is `None`) or another.
@@ -246,7 +252,7 @@ struct Popup {
 
 /// How often the sessions here and on other machines are listed again.
 const LOCAL_EVERY: Duration = Duration::from_secs(2);
-const HOSTS_EVERY: Duration = Duration::from_secs(15);
+const HOSTS_EVERY: Duration = Duration::from_secs(5);
 
 /// Where images are placed, by (image, placement): column, row, columns
 /// and rows.
@@ -830,6 +836,7 @@ impl App {
             if self.config.renumber_windows {
                 self.renumber_windows();
             }
+            self.pass_on_alerts();
             if *self.watched_hosts.lock().unwrap() != self.config.hosts {
                 *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
             }
@@ -935,6 +942,11 @@ impl App {
             AppEvent::PtyOutput => Ok(()),
             AppEvent::PtyExited(id) => {
                 self.close(id);
+                Ok(())
+            }
+            AppEvent::Clipboard(sequence) => {
+                self.send_active(&sequence);
+                self.flash = Some("copied to the clipboard".into());
                 Ok(())
             }
             AppEvent::ClientConnected(stream) => self.connect(stream),
@@ -1189,6 +1201,10 @@ impl App {
                 self.open_sessions();
                 Ok(serde_json::json!({}))
             }
+            Request::Reveal { pane } => {
+                self.reveal(pane);
+                Ok(serde_json::json!({ "pane": pane }))
+            }
             Request::Flash { text } => {
                 self.flash = Some(text);
                 Ok(serde_json::json!({}))
@@ -1260,6 +1276,7 @@ impl App {
                     "focused": n == self.workspace && id == self.ws.focus,
                     "program": pane.program(),
                     "state": self.shown_state(id).map(AgentState::name),
+                    "since": self.agents.get(&id).map(|(_, since)| since.elapsed().as_secs()),
                     "cwd": pane.cwd(),
                     "session": pane.session,
                     "name": pane.name,
@@ -1531,6 +1548,23 @@ impl App {
         sidebar::Data {
             workspaces,
             sessions: self.session_rows(),
+            other_agents: self
+                .other_agents()
+                .into_iter()
+                .filter_map(|(place, agent)| {
+                    Some(sidebar::OtherAgentRow {
+                        place: match self.machine_label(place.host.as_deref()) {
+                            Some(machine) => format!("{machine} · {}", place.name),
+                            None => place.name.clone(),
+                        },
+                        program: agent.program,
+                        workspace: agent.workspace,
+                        dir: agent.dir,
+                        state: AgentState::from_name(&agent.state)?,
+                        since: Duration::from_secs(agent.since),
+                    })
+                })
+                .collect(),
             popups: self
                 .popups
                 .iter()
@@ -1572,6 +1606,7 @@ impl App {
         here.sort_by(|a, b| a.name.cmp(&b.name));
         let row = |host: Option<String>, info: &protocol::SessionInfo| sidebar::SessionRow {
             current: host.is_none() && info.name == current,
+            machine: self.machine_label(host.as_deref()),
             host,
             name: info.name.clone(),
             state: info.urgent(),
@@ -1594,6 +1629,7 @@ impl App {
                 }
                 Err(e) => rows.push(sidebar::SessionRow {
                     host: Some(host.clone()),
+                    machine: self.machine_label(Some(host)),
                     name: String::new(),
                     current: false,
                     state: None,
@@ -1602,6 +1638,72 @@ impl App {
             }
         }
         rows
+    }
+
+    /// Tells about agents on other machines the way it tells about its own:
+    /// the bar, a bell when one waits, and a notification.
+    fn pass_on_alerts(&mut self) {
+        let alerts = std::mem::take(&mut self.places.lock().unwrap().alerts);
+        for (title, body) in alerts {
+            if title.ends_with("needs you") {
+                self.broadcast(b"\x07");
+            }
+            self.flash = Some(format!("{title} · {body}"));
+            self.send_notification(&title, &body);
+        }
+    }
+
+    /// The agents of the other sessions, here and elsewhere: grouped by
+    /// session, those that need the user first.
+    fn other_agents(&self) -> Vec<(Place, protocol::AgentInfo)> {
+        let places = self.places.lock().unwrap();
+        let mut groups: Vec<(Option<String>, &protocol::SessionInfo)> =
+            places.local.iter().map(|s| (None, s)).collect();
+        for (host, sessions) in &places.hosts {
+            for session in sessions.iter().flatten() {
+                groups.push((Some(host.clone()), session));
+            }
+        }
+        let mut out = Vec::new();
+        for (host, session) in groups {
+            let mut agents = session.agent_panes.clone();
+            agents.sort_by_key(|a| AgentState::from_name(&a.state).map_or(9, sidebar::urgency));
+            for agent in agents {
+                let place = Place {
+                    host: host.clone(),
+                    name: session.name.clone(),
+                };
+                out.push((place, agent));
+            }
+        }
+        out
+    }
+
+    /// Switches to the agent in row `i` of the other sessions' agents and
+    /// shows its pane.
+    fn go_to_other_agent(&mut self, i: usize) {
+        let Some((place, agent)) = self.other_agents().into_iter().nth(i) else {
+            return;
+        };
+        if place.host.is_some() && !self.active_caps().is_some_and(|caps| caps.hosts) {
+            self.flash =
+                Some("this terminal's imkr is too old for other machines, reattach".into());
+            return;
+        }
+        self.switch_session(format!("{}#{}", place.target(), agent.pane));
+    }
+
+    /// Machine `host` (`None`: this one) as the user sees it: `⌂` for the
+    /// one their client runs on, `⇄` for the others. `None` when it is this
+    /// machine and they sit at it, nothing to point out then.
+    fn machine_label(&self, host: Option<&str>) -> Option<String> {
+        let home = self.origin.as_ref().map(|o| o.host.as_str());
+        match (host, home) {
+            (None, None) => None,
+            (None, Some(_)) => Some(format!("⇄ {}", protocol::hostname())),
+            (Some(h), Some(home)) if h == home => Some(format!("⌂ {h}")),
+            (Some(h), _) => Some(format!("⇄ {h}")),
+        }
     }
 
     /// Switches to the session in row `i` of the sidebar.
@@ -2360,6 +2462,7 @@ impl App {
                         Some(sidebar::Target::Workspace(n)) => self.switch_workspace(n),
                         Some(sidebar::Target::Session(i)) => self.go_to_row(i),
                         Some(sidebar::Target::Popup(i)) => self.toggle_popup_at(i),
+                        Some(sidebar::Target::OtherAgent(i)) => self.go_to_other_agent(i),
                         Some(sidebar::Target::Pane(id)) => self.reveal(id),
                         Some(sidebar::Target::Change(i)) => self.open_change(i, false),
                         Some(sidebar::Target::File(i)) => {
@@ -2702,11 +2805,14 @@ impl App {
         let mut here: Vec<String> = places.local.iter().map(|s| s.name.clone()).collect();
         here.push(current.clone());
         here.sort();
+        // This machine's sessions carry its name if the user is not at it.
+        let here_label = self.machine_label(None);
         for name in here {
-            let hint = if name == current {
-                "this session".to_owned()
-            } else {
-                String::new()
+            let hint = match (&here_label, name == current) {
+                (Some(machine), true) => format!("this session · {machine}"),
+                (None, true) => "this session".to_owned(),
+                (Some(machine), false) => machine.clone(),
+                (None, false) => String::new(),
             };
             entries.push((Place { host: None, name }, hint));
         }
@@ -2717,7 +2823,7 @@ impl App {
                     host: Some(origin.host.clone()),
                     name,
                 };
-                entries.push((place, format!("⇄ {}", origin.host)));
+                entries.push((place, format!("⌂ {}", origin.host)));
             }
         }
         for (host, sessions) in &places.hosts {
@@ -3309,6 +3415,7 @@ impl App {
                     sidebar::Target::Workspace(n) => self.switch_workspace(n),
                     sidebar::Target::Session(i) => self.go_to_row(i),
                     sidebar::Target::Popup(i) => self.toggle_popup_at(i),
+                    sidebar::Target::OtherAgent(i) => self.go_to_other_agent(i),
                     sidebar::Target::Pane(id) => self.reveal(id),
                     sidebar::Target::Change(i) => self.open_change(i, false),
                     sidebar::Target::File(i) => {
@@ -3349,7 +3456,8 @@ impl App {
                 sidebar::Target::Change(_)
                 | sidebar::Target::File(_)
                 | sidebar::Target::Session(_)
-                | sidebar::Target::Popup(_) => {}
+                | sidebar::Target::Popup(_)
+                | sidebar::Target::OtherAgent(_) => {}
             },
             KeyCode::Char('x') => match target {
                 sidebar::Target::Pane(id) => self.mode = Mode::Confirm(Action::ClosePane(id)),
@@ -4819,6 +4927,13 @@ impl App {
         }
         if control {
             spans.extend(self.mode_spans());
+            // Working on a machine the user does not sit at: worth knowing.
+            if let Some(machine) = self.machine_label(None) {
+                spans.push(Span::styled(
+                    format!(" · {machine}"),
+                    Style::new().fg(t.cyan).add_modifier(Modifier::BOLD),
+                ));
+            }
             // Others see and type into the same session: worth knowing.
             if self.attached > 1 {
                 spans.push(Span::styled(
@@ -5120,6 +5235,9 @@ fn short_problem(error: &str) -> String {
 fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
     let _ = thread::Builder::new().name("places".into()).spawn(move || {
         let mut hosts_at: Option<Instant> = None;
+        // The state each agent elsewhere was last seen in, by host, session
+        // and pane.
+        let mut states: HashMap<(String, String, PaneId), String> = HashMap::new();
         loop {
             let own = protocol::session_name();
             let local: Vec<_> = crate::client::local_sessions()
@@ -5135,7 +5253,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                 all.extend(crate::client::remembered_hosts());
                 let mut seen = HashSet::new();
                 all.retain(|h| *h != here && seen.insert(h.clone()));
-                let found = all
+                let found: Vec<_> = all
                     .into_iter()
                     .map(|host| {
                         let sessions =
@@ -5143,11 +5261,45 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                         (host, sessions)
                     })
                     .collect();
-                places.lock().unwrap().hosts = found;
+                let mut alerts = Vec::new();
+                let mut now = HashMap::new();
+                for (host, sessions) in &found {
+                    for session in sessions.iter().flatten() {
+                        for agent in &session.agent_panes {
+                            let key = (host.clone(), session.name.clone(), agent.pane);
+                            if let Some(what) = remote_change(states.get(&key), &agent.state) {
+                                alerts.push((
+                                    format!("{} {what}", agent.program),
+                                    format!(
+                                        "⇄ {host} · {} · window {}",
+                                        session.name, agent.workspace
+                                    ),
+                                ));
+                            }
+                            now.insert(key, agent.state.clone());
+                        }
+                    }
+                }
+                states = now;
+                let mut places = places.lock().unwrap();
+                places.hosts = found;
+                places.alerts.extend(alerts);
             }
             thread::sleep(LOCAL_EVERY);
         }
     });
+}
+
+/// What an agent elsewhere did since it was last seen `before`: came to
+/// need the user, or finished. Nothing for one seen the first time, so a
+/// newly known host does not ring for everything already waiting there.
+fn remote_change(before: Option<&String>, now: &str) -> Option<&'static str> {
+    let before = before?;
+    match (before.as_str(), now) {
+        (old, "blocked") if old != "blocked" => Some("needs you"),
+        ("working" | "blocked", "idle" | "done") => Some("is done"),
+        _ => None,
+    }
 }
 
 /// Reads a moved window and the descriptors of its ptys that follow it on
@@ -5531,6 +5683,31 @@ mod tests {
         let layout = screen_layout(screen, &Bars::default(), &spacing);
         assert_eq!(layout.bottom, Some(Rect::new(0, 23, 80, 1)));
         assert_eq!(layout.body, Rect::new(2, 1, 76, 21));
+    }
+
+    #[test]
+    fn agents_elsewhere_alert_on_waiting_and_finishing_only() {
+        let was = |s: &str| Some(s.to_owned());
+        assert_eq!(
+            remote_change(was("working").as_ref(), "blocked"),
+            Some("needs you")
+        );
+        assert_eq!(
+            remote_change(was("idle").as_ref(), "blocked"),
+            Some("needs you")
+        );
+        assert_eq!(
+            remote_change(was("working").as_ref(), "idle"),
+            Some("is done")
+        );
+        assert_eq!(
+            remote_change(was("blocked").as_ref(), "done"),
+            Some("is done")
+        );
+        // Still waiting, just busy, or seen for the first time: quiet.
+        assert_eq!(remote_change(was("blocked").as_ref(), "blocked"), None);
+        assert_eq!(remote_change(was("idle").as_ref(), "working"), None);
+        assert_eq!(remote_change(None, "blocked"), None);
     }
 
     #[test]

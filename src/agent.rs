@@ -33,6 +33,13 @@ impl AgentState {
         }
     }
 
+    /// The state `name` names, as `name` gives it.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Working, Self::Blocked, Self::Idle, Self::Done]
+            .into_iter()
+            .find(|state| state.name() == name)
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             AgentState::Working => "working",

@@ -41,6 +41,9 @@ pub struct PopupRow {
 pub struct SessionRow {
     /// The machine, `None` for this one.
     pub host: Option<String>,
+    /// The machine as the user sees it, e.g. `⇄ codingmachine` or
+    /// `⌂ omarchy`; `None` for the one they sit at when that is this one.
+    pub machine: Option<String>,
     pub name: String,
     pub current: bool,
     /// The state that needs attention most among its agents, and how many
@@ -61,8 +64,22 @@ pub struct AgentRow {
     pub focused: bool,
 }
 
+/// An agent of another session, here or on another machine.
+pub struct OtherAgentRow {
+    /// Where it runs: the session, with the machine in front if it is not
+    /// the one the user sits at.
+    pub place: String,
+    pub program: String,
+    pub workspace: u8,
+    pub dir: String,
+    pub state: AgentState,
+    pub since: Duration,
+}
+
 pub struct Data {
     pub workspaces: Vec<WorkspaceRow>,
+    /// The agents of the other sessions, those that need the user first.
+    pub other_agents: Vec<OtherAgentRow>,
     /// Every session, this one included, grouped by machine. Shown only
     /// when there is more than this one.
     pub sessions: Vec<SessionRow>,
@@ -94,6 +111,8 @@ pub enum Target {
     Session(usize),
     /// The popup at this index in `Data::popups`.
     Popup(usize),
+    /// The agent at this index in `Data::other_agents`.
+    OtherAgent(usize),
     Pane(PaneId),
     /// The changed file at this index in `Data::changes`.
     Change(usize),
@@ -175,18 +194,18 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
     if data.sessions.len() > 1 || data.sessions.iter().any(|s| s.host.is_some()) {
         out.push((Line::default(), None));
         out.push((Line::styled("Sessions", heading(t.cyan)), None));
-        let mut host: Option<&str> = None;
+        let mut machine: Option<&str> = None;
         for (i, session) in data.sessions.iter().enumerate() {
-            if session.host.as_deref() != host {
-                host = session.host.as_deref();
-                if let Some(name) = host {
+            if session.machine.as_deref() != machine {
+                machine = session.machine.as_deref();
+                if let Some(name) = machine {
                     out.push((
-                        Line::styled(fit(&format!("⇄ {name}"), width), Style::new().fg(t.cyan)),
+                        Line::styled(fit(name, width), Style::new().fg(t.cyan)),
                         None,
                     ));
                 }
             }
-            let indent = if session.host.is_some() { "  " } else { "" };
+            let indent = if session.machine.is_some() { "  " } else { "" };
             if let Some(problem) = &session.problem {
                 out.push((
                     Line::styled(fit(&format!("{indent}  {problem}"), width), dim),
@@ -220,7 +239,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
 
     out.push((Line::default(), None));
     out.push((Line::styled("Agents", heading(t.magenta)), None));
-    if data.agents.is_empty() {
+    if data.agents.is_empty() && data.other_agents.is_empty() {
         out.push((Line::styled("  none running", dim), None));
     }
     for agent in &data.agents {
@@ -243,6 +262,30 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             Span::styled(age, dim),
         ]);
         out.push((line, Some(Target::Pane(agent.pane))));
+    }
+    let mut place: Option<&str> = None;
+    for (i, agent) in data.other_agents.iter().enumerate() {
+        if place != Some(agent.place.as_str()) {
+            place = Some(agent.place.as_str());
+            out.push((
+                Line::styled(fit(&agent.place, width), Style::new().fg(t.cyan)),
+                None,
+            ));
+        }
+        let age = age(agent.since);
+        let head = format!("  {} {}", agent.state.symbol(), agent.program);
+        let where_ = format!(" {}·{}", agent.workspace, agent.dir);
+        let room = width.saturating_sub(head.chars().count() + age.chars().count() + 1);
+        let where_ = fit(&where_, room);
+        let pad = width
+            .saturating_sub(head.chars().count() + where_.chars().count() + age.chars().count());
+        let line = Line::from(vec![
+            Span::styled(head, state_style(agent.state)),
+            Span::styled(where_, dim),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(age, dim),
+        ]);
+        out.push((line, Some(Target::OtherAgent(i))));
     }
 
     if let Some(branch) = &data.branch {
@@ -498,6 +541,7 @@ mod tests {
         Data {
             sessions: Vec::new(),
             popups: Vec::new(),
+            other_agents: Vec::new(),
             workspaces: vec![
                 WorkspaceRow {
                     number: 1,
@@ -650,6 +694,7 @@ mod tests {
     fn sessions_are_grouped_by_machine_and_clickable() {
         let session = |host: Option<&str>, name: &str, current| SessionRow {
             host: host.map(str::to_owned),
+            machine: host.map(|h| format!("⇄ {h}")),
             name: name.into(),
             current,
             state: None,

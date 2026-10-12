@@ -243,6 +243,7 @@ impl Pane {
             .spawn(move || {
                 let mut buf = [0u8; 8192];
                 let mut scanner = Scanner::default();
+                let mut copies = crate::clipboard::Osc52Scanner::default();
                 loop {
                     // Stopped: the pty is someone else's from here on, not a
                     // byte more is read.
@@ -254,6 +255,9 @@ impl Pane {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
+                            for copy in copies.feed(&buf[..n]) {
+                                let _ = events.send(AppEvent::Clipboard(copy));
+                            }
                             let mut parser = reader_parser.lock().unwrap();
                             for chunk in scanner.feed(&buf[..n]) {
                                 match chunk {

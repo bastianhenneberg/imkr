@@ -28,6 +28,103 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// Picks the OSC 52 sequences, "put this into the clipboard", out of a
+/// program's output, so they reach the client's terminal: a pane shows the
+/// program through imkr, which would swallow them otherwise. That is what
+/// copying in an imkr on another machine, reached by ssh in a pane, or in
+/// nvim relies on. Sequences may span reads.
+#[derive(Default)]
+pub struct Osc52Scanner {
+    /// The sequence being read, `ESC ] 52 ;` included.
+    current: Option<Vec<u8>>,
+    /// The end of the last read, if it could be the start of one.
+    tail: Vec<u8>,
+}
+
+const START: &[u8] = b"\x1b]52;";
+/// Large copies are fine, endless ones are not.
+const MAX_SEQUENCE: usize = 8 * 1024 * 1024;
+
+impl Osc52Scanner {
+    /// The complete sequences in `bytes` and what came before, each ended
+    /// with BEL. Requests to read the clipboard (`?`) are left out: a
+    /// program in a pane does not get to see what the user copied.
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+        let mut data = std::mem::take(&mut self.tail);
+        data.extend_from_slice(bytes);
+        let mut found = Vec::new();
+        let mut i = 0;
+        while i < data.len() {
+            if let Some(current) = &mut self.current {
+                let rest = &data[i..];
+                // Ended by BEL or by ST, `ESC \`.
+                let end = rest.iter().enumerate().find_map(|(j, &b)| match b {
+                    0x07 => Some((j, 1)),
+                    0x1b if rest.get(j + 1) == Some(&b'\\') => Some((j, 2)),
+                    _ => None,
+                });
+                match end {
+                    Some((j, len)) => {
+                        current.extend_from_slice(&rest[..j]);
+                        let mut sequence = self.current.take().expect("inside one");
+                        if keep(&sequence) {
+                            sequence.push(0x07);
+                            found.push(sequence);
+                        }
+                        i += j + len;
+                    }
+                    None => {
+                        // A lone ESC at the end may start ST.
+                        let cut = if rest.ends_with(b"\x1b") {
+                            rest.len() - 1
+                        } else {
+                            rest.len()
+                        };
+                        current.extend_from_slice(&rest[..cut]);
+                        self.tail = rest[cut..].to_vec();
+                        if current.len() > MAX_SEQUENCE {
+                            self.current = None;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+            match find(&data[i..], START) {
+                Some(at) => {
+                    self.current = Some(START.to_vec());
+                    i += at + START.len();
+                }
+                None => {
+                    // Hold back an end that may be the start of one.
+                    let rest = &data[i..];
+                    let keep = (1..START.len())
+                        .rev()
+                        .find(|&n| rest.ends_with(&START[..n]))
+                        .unwrap_or(0);
+                    self.tail = rest[rest.len() - keep..].to_vec();
+                    break;
+                }
+            }
+        }
+        found
+    }
+}
+
+/// Whether a sequence sets the clipboard, rather than asking for it.
+fn keep(sequence: &[u8]) -> bool {
+    let body = &sequence[START.len()..];
+    let data = body
+        .iter()
+        .position(|&b| b == b';')
+        .map_or(body, |at| &body[at + 1..]);
+    data != b"?"
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
 /// Base64 for other modules' tests.
 #[cfg(test)]
 pub fn base64_for_tests(bytes: &[u8]) -> String {
@@ -37,6 +134,28 @@ pub fn base64_for_tests(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copies_from_programs_get_through_whole() {
+        let mut scanner = Osc52Scanner::default();
+        let found = scanner.feed(b"text\x1b]52;c;aGFsbG8=\x07more");
+        assert_eq!(found, vec![b"\x1b]52;c;aGFsbG8=\x07".to_vec()]);
+        // Ended by ST, and split across reads, the start included.
+        assert!(scanner.feed(b"x\x1b]5").is_empty());
+        assert!(scanner.feed(b"2;c;d2Vs").is_empty());
+        assert!(scanner.feed(b"dA==\x1b").is_empty());
+        assert_eq!(
+            scanner.feed(b"\\ rest"),
+            vec![b"\x1b]52;c;d2VsdA==\x07".to_vec()]
+        );
+    }
+
+    #[test]
+    fn asking_for_the_clipboard_is_not_passed_on() {
+        let mut scanner = Osc52Scanner::default();
+        assert!(scanner.feed(b"\x1b]52;c;?\x07").is_empty());
+        assert!(scanner.feed(b"\x1b]52;?\x07").is_empty());
+    }
 
     #[test]
     fn base64_matches_the_rfc_examples() {

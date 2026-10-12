@@ -74,6 +74,23 @@ pub struct SessionInfo {
     /// How many agents are in each state, by state name.
     #[serde(default)]
     pub agents: BTreeMap<String, usize>,
+    /// Every agent, for the sidebar of another session.
+    #[serde(default)]
+    pub agent_panes: Vec<AgentInfo>,
+}
+
+/// An agent of a session, as another session's sidebar lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub pane: PaneId,
+    pub program: String,
+    pub workspace: u8,
+    /// The name of its directory.
+    pub dir: String,
+    pub state: String,
+    /// Seconds in this state.
+    #[serde(default)]
+    pub since: u64,
 }
 
 impl SessionInfo {
@@ -101,12 +118,19 @@ pub fn hostname() -> String {
 }
 
 /// `host:session` for a session on another machine, as `ServerMsg::Switch`
-/// carries it; a plain name is a session on the same machine.
+/// carries it; a plain name is a session on the same machine. Either may
+/// end in `#pane`, the pane to show there.
 pub fn split_target(target: &str) -> (Option<&str>, &str) {
+    let target = target.split_once('#').map_or(target, |(place, _)| place);
     match target.split_once(':') {
         Some((host, name)) => (Some(host), name),
         None => (None, target),
     }
+}
+
+/// The pane a switch target names after `#`, if any.
+pub fn target_pane(target: &str) -> Option<PaneId> {
+    target.split_once('#')?.1.parse().ok()
 }
 
 /// Commands for scripts and agents, sent by `imkr status`, `list`,
@@ -151,6 +175,8 @@ pub enum Request {
     },
     /// Show `text` in the control bar, e.g. why a switch failed.
     Flash { text: String },
+    /// Show pane `pane` and focus it, e.g. after switching to its session.
+    Reveal { pane: PaneId },
     /// Open the session list, e.g. when `imkr` starts and the settings of
     /// the machine it runs on say so.
     OpenSessions,
