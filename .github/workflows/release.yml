@@ -17,6 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Nothing else enforces this, and a mismatch is invisible until someone
+      # reports a bug: the release would say v0.2.0 and `imkr version` 0.1.0.
+      - name: tag matches the version in Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag=${GITHUB_REF#refs/tags/v}
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          test "$tag" = "$version" || {
+            echo "tag v$tag does not match Cargo.toml $version" >&2
+            exit 1
+          }
       - run: rustup update stable --no-self-update
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
