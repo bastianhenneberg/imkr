@@ -184,13 +184,27 @@ OSC 9 to the terminal, or none) and shows up in the control bar as well.
 
 ## Other machines
 
-`imkr --host server` shows the session on `server` in this terminal: imkr runs there, started if
-needed, and keeps the shells and agents going when the connection drops. This terminal stays the
-client, so keys, clipboard, images and the window size are local. `-s NAME` picks a session
-there, `attach --host server` only attaches to one that runs, and `Ctrl+B S` switches between the
-sessions on that machine. It runs `ssh -C server imkr proxy` through a login shell, so imkr must
-be on the PATH there and ssh should log in without a password (keys, an agent or `ControlMaster`).
-Inside a local imkr, `Ctrl+B Ctrl+B` sends the prefix on to the one on the server.
+One imkr for the sessions here and on other machines, without an imkr inside an imkr: the
+sidebar and the session list (`Ctrl+B S`) show every machine's sessions, and picking one switches
+this terminal over to it. imkr runs on that machine and keeps its shells and agents going when the
+connection drops; this terminal stays the client, so keys, clipboard, images and the window size
+are local. On the other machine the list offers this one's sessions to come back to.
+
+Machines come from the settings and from `imkr --host`:
+
+```toml
+hosts = ["codingmachine"]   # as ssh knows them, e.g. from ~/.ssh/config
+```
+
+`imkr --host server` goes straight to a session there (`-s NAME` picks one), and remembers the
+host. Plain `imkr` goes back to the session used last, wherever it was; with *Session list on
+start* in the settings it opens the session list there first. If the machine is out of reach, it
+starts here and says why.
+
+It runs `ssh -C server imkr proxy` through a login shell, with `~/.cargo/bin` and `~/.local/bin`
+added to the PATH, so ssh should log in without a password (keys, an agent or `ControlMaster`).
+The sessions there are listed every 15 seconds with `imkr ls --json`, which needs this version
+of imkr there too; the sidebar says if it is missing or the machine does not answer.
 
 ## Updates
 

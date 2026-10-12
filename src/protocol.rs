@@ -3,6 +3,7 @@
 //! Every message is one frame: a tag byte, the payload length as a 4 byte
 //! big-endian integer, then the payload.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -40,13 +41,72 @@ pub enum ClientMsg {
     Move(Vec<u8>),
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Caps {
     /// Shows images sent with the kitty graphics protocol.
     pub graphics: bool,
     /// The size of a cell in pixels, for sizing images.
     pub cell_width: u16,
     pub cell_height: u16,
+    /// Follows `ServerMsg::Switch` to `host:session`, i.e. to other
+    /// machines. Clients from before do not, they are not sent there.
+    #[serde(default)]
+    pub hosts: bool,
+    /// The machine the client runs on, when that is not the server's: where
+    /// it can switch back to, with the sessions running there.
+    #[serde(default)]
+    pub origin: Option<Origin>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origin {
+    pub host: String,
+    pub sessions: Vec<String>,
+}
+
+/// A session as `imkr ls --json` lists it, for the session list and the
+/// sidebar, here and from other machines.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionInfo {
+    pub name: String,
+    pub panes: usize,
+    pub windows: usize,
+    /// How many agents are in each state, by state name.
+    #[serde(default)]
+    pub agents: BTreeMap<String, usize>,
+}
+
+impl SessionInfo {
+    /// The state that needs attention most among its agents, and how many
+    /// agents there are.
+    pub fn urgent(&self) -> Option<(AgentState, usize)> {
+        let total = self.agents.values().sum();
+        [
+            AgentState::Blocked,
+            AgentState::Done,
+            AgentState::Working,
+            AgentState::Idle,
+        ]
+        .into_iter()
+        .find(|state| self.agents.get(state.name()).is_some_and(|&n| n > 0))
+        .map(|state| (state, total))
+    }
+}
+
+/// This machine's name, as `hostname` prints it.
+pub fn hostname() -> String {
+    fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|name| name.trim().to_owned())
+        .unwrap_or_else(|_| "here".into())
+}
+
+/// `host:session` for a session on another machine, as `ServerMsg::Switch`
+/// carries it; a plain name is a session on the same machine.
+pub fn split_target(target: &str) -> (Option<&str>, &str) {
+    match target.split_once(':') {
+        Some((host, name)) => (Some(host), name),
+        None => (None, target),
+    }
 }
 
 /// Commands for scripts and agents, sent by `imkr status`, `list`,
@@ -89,6 +149,11 @@ pub enum Request {
         #[serde(default)]
         pane: Option<PaneId>,
     },
+    /// Show `text` in the control bar, e.g. why a switch failed.
+    Flash { text: String },
+    /// Open the session list, e.g. when `imkr` starts and the settings of
+    /// the machine it runs on say so.
+    OpenSessions,
     /// The session's layout as `persist` saves it, for save files.
     Snapshot,
     /// Replace the server with the binary at `exe`, keeping the session,
@@ -336,6 +401,11 @@ mod tests {
                 graphics: true,
                 cell_width: 9,
                 cell_height: 19,
+                hosts: true,
+                origin: Some(Origin {
+                    host: "omarchy".into(),
+                    sessions: vec!["default".into()],
+                }),
             }),
             ClientMsg::Request(Request::Status {
                 pane: 3,

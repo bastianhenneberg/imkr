@@ -73,27 +73,19 @@ fn ignore_hook(hook: &serde_json::Value, state: Option<AgentState>) -> bool {
 }
 
 /// `imkr ls`: the running sessions with their panes and agents.
-pub fn ls() -> Result<()> {
-    let current = protocol::session_name();
-    let names = protocol::sessions();
-    if names.is_empty() {
+pub fn ls(args: &[String]) -> Result<()> {
+    let sessions = client::local_sessions();
+    if args.iter().any(|a| a == "--json") {
+        println!("{}", serde_json::to_string(&sessions)?);
+        return Ok(());
+    }
+    if sessions.is_empty() {
         println!("no sessions running");
         return Ok(());
     }
-    for name in names {
-        let path = protocol::session_socket(&name)?;
-        let marker = if name == current { "*" } else { " " };
-        let Ok(panes) = client::request_at(&path, Request::List) else {
-            println!("{marker} {name:<16} (not answering)");
-            continue;
-        };
-        let panes = panes.as_array().cloned().unwrap_or_default();
-        let mut workspaces: Vec<u64> = panes
-            .iter()
-            .filter_map(|p| p["workspace"].as_u64())
-            .collect();
-        workspaces.sort_unstable();
-        workspaces.dedup();
+    let current = protocol::session_name();
+    for info in sessions {
+        let marker = if info.name == current { "*" } else { " " };
         let mut agents = String::new();
         for state in [
             AgentState::Blocked,
@@ -101,15 +93,13 @@ pub fn ls() -> Result<()> {
             AgentState::Working,
             AgentState::Idle,
         ] {
-            let count = panes.iter().filter(|p| p["state"] == state.name()).count();
-            if count > 0 {
+            if let Some(count) = info.agents.get(state.name()).filter(|&&n| n > 0) {
                 agents.push_str(&format!("  {} {count} {}", state.symbol(), state.name()));
             }
         }
         println!(
-            "{marker} {name:<16} {} panes in {} windows{agents}",
-            panes.len(),
-            workspaces.len()
+            "{marker} {:<16} {} panes in {} windows{agents}",
+            info.name, info.panes, info.windows
         );
     }
     Ok(())

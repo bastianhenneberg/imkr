@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -206,6 +207,40 @@ enum Action {
     OverwriteHive,
 }
 
+/// The sessions besides this one, here and on other machines, as the
+/// watcher thread last found them.
+#[derive(Clone, Default)]
+struct Places {
+    /// The other sessions on this machine.
+    local: Vec<protocol::SessionInfo>,
+    /// Every known host with its sessions, or why they could not be listed.
+    hosts: Vec<(
+        String,
+        std::result::Result<Vec<protocol::SessionInfo>, String>,
+    )>,
+}
+
+/// A session to switch to: on this machine (`host` is `None`) or another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Place {
+    host: Option<String>,
+    name: String,
+}
+
+impl Place {
+    /// The target `ServerMsg::Switch` carries.
+    fn target(&self) -> String {
+        match &self.host {
+            Some(host) => format!("{host}:{}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
+/// How often the sessions here and on other machines are listed again.
+const LOCAL_EVERY: Duration = Duration::from_secs(2);
+const HOSTS_EVERY: Duration = Duration::from_secs(15);
+
 /// Where images are placed, by (image, placement): column, row, columns
 /// and rows.
 type Placements = HashMap<(u32, u32), (u16, u16, u16, u16)>;
@@ -295,6 +330,9 @@ pub struct App {
     /// How many clients are attached, for drawing: `render` takes them out
     /// of `clients` while it draws.
     attached: usize,
+    /// The machine the active client sits at, if not this one, with its
+    /// sessions: kept for drawing like `attached`.
+    origin: Option<protocol::Origin>,
     /// The client whose input is handled now: it is the one detached by
     /// `Ctrl+B d`, sent on by a session switch and given the clipboard.
     active: Option<ClientId>,
@@ -303,6 +341,10 @@ pub struct App {
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
+    /// The other sessions, here and elsewhere, kept up to date by a thread.
+    places: Arc<Mutex<Places>>,
+    /// The hosts from the settings, for that thread.
+    watched_hosts: Arc<Mutex<Vec<String>>>,
     /// Panes moved to another session: its socket and their id there, to
     /// pass on what their agents report to this socket.
     moved: HashMap<PaneId, (PathBuf, PaneId)>,
@@ -395,11 +437,14 @@ impl App {
             body,
             clients: Vec::new(),
             attached: 0,
+            origin: None,
             active: None,
             conns: HashMap::new(),
             next_client_id: 0,
             socket,
             moved: HashMap::new(),
+            places: Arc::default(),
+            watched_hosts: Arc::default(),
             first_shell: None,
             agents: HashMap::new(),
             unseen: HashSet::new(),
@@ -435,6 +480,8 @@ impl App {
             quit: false,
         };
         app.apply_theme();
+        *app.watched_hosts.lock().unwrap() = app.config.hosts.clone();
+        watch_places(Arc::clone(&app.places), Arc::clone(&app.watched_hosts));
         match handover {
             Some(handover) => app.adopt(handover),
             None => app.restore(),
@@ -659,14 +706,14 @@ impl App {
             .map(|c| upgrade::HandoverClient {
                 fd: c.stream.as_raw_fd(),
                 size: (c.size.width, c.size.height),
-                caps: c.caps,
+                caps: c.caps.clone(),
             })
             .collect();
         let handover = Handover {
             listener: self.listener,
             client: clients.first().map(|c| c.fd),
             screen: (self.screen.width, self.screen.height),
-            caps: clients.first().map(|c| c.caps).unwrap_or_default(),
+            caps: clients.first().map(|c| c.caps.clone()).unwrap_or_default(),
             clients,
             focus_mode: self.focus_mode,
             saved: self.saved(),
@@ -735,6 +782,9 @@ impl App {
             self.refresh_files();
             self.scroll_sidebar_to_selection();
             self.follow_omarchy();
+            if *self.watched_hosts.lock().unwrap() != self.config.hosts {
+                *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
+            }
             self.save_state();
             self.render();
 
@@ -789,6 +839,7 @@ impl App {
         // Asked before taking the clients out, which makes them look detached.
         let graphics = self.graphics_enabled();
         self.attached = self.clients.len();
+        self.origin = self.active_caps().and_then(|caps| caps.origin);
         let mut clients = std::mem::take(&mut self.clients);
         let resend = clients.iter().any(|c| c.caps.graphics && c.resend_images);
         let (data, wanted) = self.image_state(graphics, resend);
@@ -1070,6 +1121,14 @@ impl App {
             }
             Request::List => Ok(self.list()),
             Request::Rename { target, name } => self.rename(target, name),
+            Request::OpenSessions => {
+                self.open_sessions();
+                Ok(serde_json::json!({}))
+            }
+            Request::Flash { text } => {
+                self.flash = Some(text);
+                Ok(serde_json::json!({}))
+            }
             Request::MoveWindow { workspace, to } => {
                 self.move_window(workspace.unwrap_or(self.workspace), &to)
             }
@@ -1407,6 +1466,7 @@ impl App {
         let branch = self.focused_cwd().and_then(|cwd| sidebar::git_branch(&cwd));
         sidebar::Data {
             workspaces,
+            sessions: self.session_rows(),
             agents,
             branch,
             changes: self
@@ -1415,6 +1475,72 @@ impl App {
                 .map(|g| g.changes.clone())
                 .unwrap_or_default(),
             files: self.file_rows(),
+        }
+    }
+
+    /// The sessions for the sidebar: those here, this one with its own
+    /// agents, then every other machine's.
+    fn session_rows(&self) -> Vec<sidebar::SessionRow> {
+        let current = protocol::session_name();
+        let places = self.places.lock().unwrap().clone();
+        let mut here = places.local.clone();
+        let states: Vec<AgentState> = self
+            .panes
+            .keys()
+            .filter_map(|id| self.shown_state(*id))
+            .collect();
+        let mut own = protocol::SessionInfo {
+            name: current.clone(),
+            ..Default::default()
+        };
+        for state in states {
+            *own.agents.entry(state.name().to_owned()).or_default() += 1;
+        }
+        here.push(own);
+        here.sort_by(|a, b| a.name.cmp(&b.name));
+        let row = |host: Option<String>, info: &protocol::SessionInfo| sidebar::SessionRow {
+            current: host.is_none() && info.name == current,
+            host,
+            name: info.name.clone(),
+            state: info.urgent(),
+            problem: None,
+        };
+        let mut rows: Vec<sidebar::SessionRow> = here.iter().map(|info| row(None, info)).collect();
+        if let Some(origin) = self.origin.clone() {
+            for name in origin.sessions {
+                let info = protocol::SessionInfo {
+                    name,
+                    ..Default::default()
+                };
+                rows.push(row(Some(origin.host.clone()), &info));
+            }
+        }
+        for (host, sessions) in &places.hosts {
+            match sessions {
+                Ok(sessions) => {
+                    rows.extend(sessions.iter().map(|info| row(Some(host.clone()), info)));
+                }
+                Err(e) => rows.push(sidebar::SessionRow {
+                    host: Some(host.clone()),
+                    name: String::new(),
+                    current: false,
+                    state: None,
+                    problem: Some(short_problem(e)),
+                }),
+            }
+        }
+        rows
+    }
+
+    /// Switches to the session in row `i` of the sidebar.
+    fn go_to_row(&mut self, i: usize) {
+        let rows = self.session_rows();
+        if let Some(row) = rows.get(i) {
+            let place = Place {
+                host: row.host.clone(),
+                name: row.name.clone(),
+            };
+            self.go_to(&place);
         }
     }
 
@@ -1664,14 +1790,7 @@ impl App {
             Command::JumpToWaiting => self.jump_to_waiting(),
             Command::RenamePane => self.start_prompt(RenameTarget::Pane(self.ws.focus)),
             Command::Zoom => self.ws.toggle_zoom(),
-            Command::Sessions => {
-                let current = protocol::session_name();
-                let selected = protocol::sessions()
-                    .iter()
-                    .position(|s| *s == current)
-                    .unwrap_or(0);
-                self.mode = Mode::Sessions(selected);
-            }
+            Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::NewSession => {
                 self.prompt = Some(Prompt {
@@ -2128,6 +2247,7 @@ impl App {
                     let data = self.sidebar_data();
                     match sidebar::target_at(&data, area, pos, self.sidebar_scroll) {
                         Some(sidebar::Target::Workspace(n)) => self.switch_workspace(n),
+                        Some(sidebar::Target::Session(i)) => self.go_to_row(i),
                         Some(sidebar::Target::Pane(id)) => self.reveal(id),
                         Some(sidebar::Target::Change(i)) => self.open_change(i, false),
                         Some(sidebar::Target::File(i)) => {
@@ -2461,30 +2581,75 @@ impl App {
     }
 
     /// The switcher's entries: every running session, then a new one.
-    fn session_items(&self) -> (Vec<String>, Vec<menu::MenuItem>) {
+    /// The session list: this machine's sessions, then those of every
+    /// other machine known, and the client's own machine if it is another.
+    fn session_items(&self) -> (Vec<Place>, Vec<menu::MenuItem>) {
         let current = protocol::session_name();
-        let names = protocol::sessions();
-        let mut items: Vec<menu::MenuItem> = names
-            .iter()
+        let places = self.places.lock().unwrap().clone();
+        let mut entries: Vec<(Place, String)> = Vec::new();
+        let mut here: Vec<String> = places.local.iter().map(|s| s.name.clone()).collect();
+        here.push(current.clone());
+        here.sort();
+        for name in here {
+            let hint = if name == current {
+                "this session".to_owned()
+            } else {
+                String::new()
+            };
+            entries.push((Place { host: None, name }, hint));
+        }
+        // The machine the active client sits at, to go back to.
+        if let Some(origin) = self.origin.clone() {
+            for name in origin.sessions {
+                let place = Place {
+                    host: Some(origin.host.clone()),
+                    name,
+                };
+                entries.push((place, format!("⇄ {}", origin.host)));
+            }
+        }
+        for (host, sessions) in &places.hosts {
+            for session in sessions.iter().flatten() {
+                let place = Place {
+                    host: Some(host.clone()),
+                    name: session.name.clone(),
+                };
+                entries.push((place, format!("⇄ {host}")));
+            }
+        }
+        let (places, mut items): (Vec<Place>, Vec<menu::MenuItem>) = entries
+            .into_iter()
             .enumerate()
-            .map(|(i, name)| menu::MenuItem {
-                key: char::from_digit((i as u32 + 1) % 10, 10).unwrap_or(' '),
-                title: name.clone(),
-                hint: if *name == current {
-                    "this session".into()
-                } else {
-                    String::new()
-                },
-                danger: false,
+            .map(|(i, (place, hint))| {
+                let item = menu::MenuItem {
+                    key: if i < 9 {
+                        char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
+                    } else {
+                        ' '
+                    },
+                    title: place.name.clone(),
+                    hint,
+                    danger: false,
+                };
+                (place, item)
             })
-            .collect();
+            .unzip();
         items.push(menu::MenuItem {
             key: 'n',
             title: "new session…".into(),
             hint: "`imkr -s NAME` does the same".into(),
             danger: false,
         });
-        (names, items)
+        (places, items)
+    }
+
+    /// What the client whose input is handled now can do.
+    fn active_caps(&self) -> Option<Caps> {
+        let client = match self.active {
+            Some(id) => self.clients.iter().find(|c| c.id == id),
+            None => None,
+        };
+        client.or(self.clients.first()).map(|c| c.caps.clone())
     }
 
     /// Where a window can move: every other running session, then a new
@@ -2596,7 +2761,15 @@ impl App {
     /// The session switcher: arrows or j/k choose, Enter or the digit
     /// switches, n starts a new session.
     fn sessions_key(&mut self, key: KeyEvent, selected: usize) {
-        let (names, items) = self.session_items();
+        let (places, items) = self.session_items();
+        // Ending and renaming reach only the sessions on this machine.
+        let names: Vec<String> = places
+            .iter()
+            .map(|p| match p.host {
+                None => p.name.clone(),
+                Some(_) => String::new(),
+            })
+            .collect();
         let count = items.len();
         let pick = match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
@@ -2614,7 +2787,7 @@ impl App {
             KeyCode::Enter => selected,
             KeyCode::Char('n') => names.len(),
             KeyCode::Char('x') => {
-                if let Some(name) = names.get(selected) {
+                if let Some(name) = names.get(selected).filter(|n| !n.is_empty()) {
                     self.confirm_target = Some(name.clone());
                     self.mode = Mode::Confirm(Action::EndSession);
                 }
@@ -2633,7 +2806,7 @@ impl App {
                 return;
             }
             KeyCode::Char('r') => {
-                if let Some(name) = names.get(selected) {
+                if let Some(name) = names.get(selected).filter(|n| !n.is_empty()) {
                     self.prompt = Some(Prompt {
                         purpose: PromptFor::RenameSession(name.clone()),
                         text: name.clone(),
@@ -2649,10 +2822,10 @@ impl App {
             _ => return,
         };
         self.mode = Mode::Normal;
-        match names.get(pick) {
-            Some(name) if *name == protocol::session_name() => {}
-            Some(name) => self.switch_session(name.clone()),
-            None if pick == names.len() => {
+        match places.get(pick) {
+            Some(place) if place.host.is_none() && place.name == protocol::session_name() => {}
+            Some(place) => self.go_to(place),
+            None if pick == places.len() => {
                 self.prompt = Some(Prompt {
                     purpose: PromptFor::NewSession,
                     text: String::new(),
@@ -2823,6 +2996,28 @@ impl App {
             Ok(()) => format!("session {old} is now {name}"),
             Err(e) => format!("not renamed: {e}"),
         });
+    }
+
+    /// Opens the session list with this session selected.
+    fn open_sessions(&mut self) {
+        let current = protocol::session_name();
+        let selected = self
+            .session_items()
+            .0
+            .iter()
+            .position(|p| p.host.is_none() && p.name == current)
+            .unwrap_or(0);
+        self.mode = Mode::Sessions(selected);
+    }
+
+    /// Sends the active client to `place`, on this machine or another.
+    fn go_to(&mut self, place: &Place) {
+        if place.host.is_some() && !self.active_caps().is_some_and(|caps| caps.hosts) {
+            self.flash =
+                Some("this terminal's imkr is too old for other machines, reattach".into());
+            return;
+        }
+        self.switch_session(place.target());
     }
 
     /// Sends the active client on to session `name`; it starts it if
@@ -3000,6 +3195,7 @@ impl App {
                 self.mode = Mode::Normal;
                 match target {
                     sidebar::Target::Workspace(n) => self.switch_workspace(n),
+                    sidebar::Target::Session(i) => self.go_to_row(i),
                     sidebar::Target::Pane(id) => self.reveal(id),
                     sidebar::Target::Change(i) => self.open_change(i, false),
                     sidebar::Target::File(i) => {
@@ -3037,7 +3233,9 @@ impl App {
             KeyCode::Char('r') => match target {
                 sidebar::Target::Workspace(n) => self.start_prompt(RenameTarget::Workspace(n)),
                 sidebar::Target::Pane(id) => self.start_prompt(RenameTarget::Pane(id)),
-                sidebar::Target::Change(_) | sidebar::Target::File(_) => {}
+                sidebar::Target::Change(_)
+                | sidebar::Target::File(_)
+                | sidebar::Target::Session(_) => {}
             },
             KeyCode::Char('x') => {
                 if let sidebar::Target::Pane(id) = target {
@@ -3199,7 +3397,11 @@ impl App {
     /// What the first client that shows images can do. Programs are told
     /// its cell size, the others may scale a little differently.
     fn graphics_caps(&self) -> Option<Caps> {
-        self.clients.iter().map(|c| c.caps).find(|c| c.graphics)
+        self.clients
+            .iter()
+            .map(|c| &c.caps)
+            .find(|c| c.graphics)
+            .cloned()
     }
 
     /// Tells every pane whether to handle images and the cell size, and
@@ -4547,6 +4749,54 @@ fn screen_layout(screen: Rect, bars: &Bars, spacing: &Spacing) -> ScreenLayout {
 }
 
 /// ` ⬢ imkr `, or the session's name for a named one.
+/// Why a host's sessions are unknown, in a few words for the sidebar.
+fn short_problem(error: &str) -> String {
+    if error.contains("command not found") || error.contains("unknown arguments") {
+        "imkr there is too old or missing".into()
+    } else if error.contains("no sessions") {
+        "no sessions".into()
+    } else {
+        "not reachable".into()
+    }
+}
+
+/// Lists the other sessions here every `LOCAL_EVERY` and those on the hosts
+/// from the settings and from `imkr --host` every `HOSTS_EVERY`, into
+/// `places`. Hosts are asked one after the other, through ssh without
+/// prompting; one that does not answer only says so.
+fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
+    let _ = thread::Builder::new().name("places".into()).spawn(move || {
+        let mut hosts_at: Option<Instant> = None;
+        loop {
+            let own = protocol::session_name();
+            let local: Vec<_> = crate::client::local_sessions()
+                .into_iter()
+                .filter(|s| s.name != own)
+                .collect();
+            places.lock().unwrap().local = local;
+
+            if hosts_at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY) {
+                hosts_at = Some(Instant::now());
+                let here = protocol::hostname();
+                let mut all = hosts.lock().unwrap().clone();
+                all.extend(crate::client::remembered_hosts());
+                let mut seen = HashSet::new();
+                all.retain(|h| *h != here && seen.insert(h.clone()));
+                let found = all
+                    .into_iter()
+                    .map(|host| {
+                        let sessions =
+                            crate::client::remote_sessions(&host).map_err(|e| format!("{e:#}"));
+                        (host, sessions)
+                    })
+                    .collect();
+                places.lock().unwrap().hosts = found;
+            }
+            thread::sleep(LOCAL_EVERY);
+        }
+    });
+}
+
 /// Reads a moved window and the descriptors of its ptys that follow it on
 /// `stream`.
 fn receive_window(

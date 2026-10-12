@@ -174,6 +174,13 @@ pub struct Config {
     /// Images from programs, with the kitty graphics protocol, where the
     /// terminal shows them.
     pub images: bool,
+    /// `imkr` opens the session list when it starts, to pick where to go.
+    /// Without it, it goes straight to the session used last.
+    pub sessions_on_start: bool,
+    /// Other machines, as `ssh` knows them, whose sessions the session list
+    /// and the sidebar show. Hosts used with `imkr --host` are added by
+    /// themselves.
+    pub hosts: Vec<String>,
 }
 
 /// A command of the user's, e.g. lazygit, started from the `Ctrl+B c` menu.
@@ -239,6 +246,8 @@ impl Default for Config {
                 float: true,
             }],
             images: true,
+            sessions_on_start: false,
+            hosts: Vec::new(),
         }
     }
 }
@@ -379,6 +388,11 @@ pub const SETTINGS: &[Setting] = &[
                 forward,
             )
         },
+    },
+    Setting {
+        name: "Session list on start",
+        value: |c| if c.sessions_on_start { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.sessions_on_start = !c.sessions_on_start,
     },
     Setting {
         name: "Images",

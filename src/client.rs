@@ -24,7 +24,9 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 
-use crate::protocol::{Caps, ClientMsg, Request, ServerMsg, session_socket, socket_path};
+use crate::protocol::{
+    Caps, ClientMsg, Origin, Request, ServerMsg, SessionInfo, session_socket, socket_path,
+};
 
 /// How a client session ended.
 enum Outcome {
@@ -61,41 +63,42 @@ impl Conn {
     /// the default one there, started if needed with `start`. Asks for a
     /// password or host key on the terminal if ssh must.
     fn remote(host: &str, session: Option<&str>, start: bool) -> Result<Self> {
-        // ~/.cargo/bin is often only on the PATH of interactive shells.
-        let mut command = String::from("PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH exec imkr");
+        let mut args = Vec::new();
         if let Some(name) = session {
-            command.push_str(" -s ");
-            command.push_str(name);
+            args.extend(["-s", name]);
         }
-        command.push_str(" proxy");
+        args.push("proxy");
         if start {
-            command.push_str(" --start");
+            args.push("--start");
         }
-        // A login shell, for what else the profile puts on the PATH.
-        let remote = format!("exec \"${{SHELL:-sh}}\" -lc '{command}'");
         let mut ssh = Command::new("ssh")
-            .args([
-                "-C",
-                "-T",
-                "-o",
-                "ServerAliveInterval=15",
-                "--",
-                host,
-                &remote,
-            ])
+            .args(["-C", "-T", "-o", "ServerAliveInterval=15", "--", host])
+            .arg(remote_command(&args))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .context("could not run ssh")?;
         let mut reader = ssh.stdout.take().expect("piped");
         let writer = ssh.stdin.take().expect("piped");
+        let mut errors = ssh.stderr.take().expect("piped");
         // The proxy says it reached the server before the protocol starts,
-        // so a failure shows ssh's or imkr's own message.
+        // so a failure comes with ssh's or imkr's own message.
         let mut ready = [0u8; 1];
         if reader.read_exact(&mut ready).is_err() || ready[0] != PROXY_READY {
             let _ = ssh.wait();
-            bail!("could not reach imkr on {host}");
+            let mut message = String::new();
+            let _ = errors.read_to_string(&mut message);
+            let message = message.trim();
+            if message.is_empty() {
+                bail!("could not reach imkr on {host}");
+            }
+            bail!("could not reach imkr on {host}: {message}");
         }
+        remember_host(host);
+        // Read on, or ssh blocks once the pipe is full. Nothing of it is
+        // shown: the terminal belongs to imkr now.
+        thread::spawn(move || io::copy(&mut errors, &mut io::sink()));
         Ok(Conn {
             reader: Box::new(reader),
             writer: Box::new(writer),
@@ -116,6 +119,159 @@ impl Drop for Conn {
 /// Written by `imkr proxy` once it is connected to the server.
 const PROXY_READY: u8 = 0x06;
 
+/// The shell command that runs `imkr args...` on another machine through
+/// ssh: in a login shell for the profile's PATH, with ~/.cargo/bin and
+/// ~/.local/bin added, which are often only on the PATH of interactive
+/// shells. `args` are session names and fixed words, nothing to quote.
+fn remote_command(args: &[&str]) -> String {
+    let command = format!(
+        "PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH exec imkr {}",
+        args.join(" ")
+    );
+    format!("exec \"${{SHELL:-sh}}\" -lc '{command}'")
+}
+
+/// The machine the client shows a session of, `None` for this one. Read by
+/// `caps`, which tells a server on another machine where the client is.
+static SHOWN_HOST: Mutex<Option<String>> = Mutex::new(None);
+
+/// The file of hosts `imkr --host` reached, one per line.
+fn hosts_file() -> Result<std::path::PathBuf> {
+    Ok(crate::persist::state_dir()?.join("hosts"))
+}
+
+/// The file naming the session used last, as `host:name` or `name`.
+fn last_file() -> Result<std::path::PathBuf> {
+    Ok(crate::persist::state_dir()?.join("last-session"))
+}
+
+/// Notes where the client is, for the next plain `imkr`.
+fn remember_place(host: Option<&str>, name: &str) {
+    let target = match host {
+        Some(host) => format!("{host}:{name}"),
+        None => name.to_owned(),
+    };
+    if let Ok(path) = last_file() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, target);
+    }
+}
+
+/// Where the client was last: the host (`None`: this machine) and session.
+fn last_place() -> Option<(Option<String>, String)> {
+    let text = std::fs::read_to_string(last_file().ok()?).ok()?;
+    let (host, name) = crate::protocol::split_target(text.trim());
+    if !crate::protocol::valid_session_name(name) {
+        return None;
+    }
+    let host = host.filter(|h| *h != crate::protocol::hostname());
+    Some((host.map(str::to_owned), name.to_owned()))
+}
+
+/// Notes `host` for the session list, once it was reached.
+fn remember_host(host: &str) {
+    let mut hosts = remembered_hosts();
+    if hosts.iter().any(|h| h == host) {
+        return;
+    }
+    hosts.push(host.to_owned());
+    if let Ok(path) = hosts_file() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, hosts.join("\n") + "\n");
+    }
+}
+
+/// The hosts `imkr --host` reached before.
+pub fn remembered_hosts() -> Vec<String> {
+    hosts_file()
+        .and_then(|path| Ok(std::fs::read_to_string(path)?))
+        .map(|text| {
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The sessions running on this machine.
+pub fn local_sessions() -> Vec<SessionInfo> {
+    crate::protocol::sessions()
+        .into_iter()
+        .map(|name| {
+            let mut info = SessionInfo {
+                name: name.clone(),
+                ..SessionInfo::default()
+            };
+            let reply = session_socket(&name).and_then(|path| request_at(&path, Request::List));
+            if let Ok(panes) = reply {
+                let panes = panes.as_array().cloned().unwrap_or_default();
+                let mut windows: Vec<u64> = panes
+                    .iter()
+                    .filter_map(|p| p["workspace"].as_u64())
+                    .collect();
+                windows.sort_unstable();
+                windows.dedup();
+                info.panes = panes.len();
+                info.windows = windows.len();
+                for pane in &panes {
+                    if let Some(state) = pane["state"].as_str() {
+                        *info.agents.entry(state.to_owned()).or_default() += 1;
+                    }
+                }
+            }
+            info
+        })
+        .collect()
+}
+
+/// `names`, or the default session if none runs: there is always one to
+/// go to, started when switched to.
+fn or_default(names: Vec<String>) -> Vec<String> {
+    if names.is_empty() {
+        vec![crate::protocol::DEFAULT_SESSION.to_owned()]
+    } else {
+        names
+    }
+}
+
+/// The sessions running on `host`, asked through ssh without prompting.
+pub fn remote_sessions(host: &str) -> Result<Vec<SessionInfo>> {
+    let output = Command::new("ssh")
+        .args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "--",
+            host,
+        ])
+        .arg(remote_command(&["ls", "--json"]))
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("could not run ssh")?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        let message = message.lines().last().unwrap_or("").trim();
+        bail!("{host}: {message}");
+    }
+    let sessions: Vec<SessionInfo> = serde_json::from_slice(&output.stdout)?;
+    if sessions.is_empty() {
+        return Ok(vec![SessionInfo {
+            name: crate::protocol::DEFAULT_SESSION.to_owned(),
+            ..SessionInfo::default()
+        }]);
+    }
+    Ok(sessions)
+}
+
 /// A session on another machine: its host for ssh, and the session's name
 /// there if not the default one.
 pub struct Remote {
@@ -125,11 +281,43 @@ pub struct Remote {
 
 /// Attaches to the running server, here or on the `remote` machine. With
 /// `start`, starts one first if there is none. With `alone`, other
-/// terminals attached to it are detached.
-pub fn run(start: bool, alone: bool, remote: Option<Remote>) -> Result<()> {
-    let host = remote.as_ref().map(|r| r.host.as_str());
+/// terminals attached to it are detached. With `last`, i.e. plain `imkr`,
+/// it goes to the session used last, wherever it is, and opens the session
+/// list there if this machine's settings say so.
+pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Result<()> {
+    let mut remote = remote;
+    let mut flash = None;
+    if last && let Some((last_host, last_name)) = last_place() {
+        match last_host {
+            Some(host) => {
+                remote = Some(Remote {
+                    host,
+                    session: Some(last_name),
+                })
+            }
+            // SAFETY: nothing else runs yet, no thread reads the environment.
+            None => unsafe { std::env::set_var("IMKR_SESSION", last_name) },
+        }
+    }
+    // Where the client is now: the host (`None` here) and the session.
+    let mut host = remote.as_ref().map(|r| r.host.clone());
+    let mut name = remote
+        .as_ref()
+        .and_then(|r| r.session.clone())
+        .unwrap_or_else(crate::protocol::session_name);
+    *SHOWN_HOST.lock().unwrap() = host.clone();
     let conn = match &remote {
-        Some(r) => Conn::remote(&r.host, r.session.as_deref(), start)?,
+        Some(r) => match Conn::remote(&r.host, r.session.as_deref(), start) {
+            Ok(conn) => conn,
+            // The last session was elsewhere and is out of reach: here then.
+            Err(e) if last => {
+                flash = Some(format!("{e:#}"));
+                (host, name) = (None, crate::protocol::DEFAULT_SESSION.to_owned());
+                *SHOWN_HOST.lock().unwrap() = None;
+                connect(None, &name)?
+            }
+            Err(e) => return Err(e),
+        },
         None => {
             let path = socket_path()?;
             let stream = match UnixStream::connect(&path) {
@@ -140,6 +328,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>) -> Result<()> {
             Conn::local(stream)?
         }
     };
+    remember_place(host.as_deref(), &name);
 
     enable_raw_mode()?;
     execute!(
@@ -169,23 +358,41 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>) -> Result<()> {
     })?;
 
     let mut conn = conn;
+    // The setting of this machine, wherever the session is.
+    let pick = last && crate::config::Config::load().0.sessions_on_start;
+    let mut hello = last.then_some((pick, flash));
     let outcome = loop {
-        match session(conn, &writer, alone) {
-            // Another session on the same machine.
-            Ok(Outcome::Switch(name)) => {
-                let next = match host {
-                    Some(host) => Conn::remote(host, Some(&name), true),
-                    None => session_socket(&name).and_then(|path| {
-                        let stream = match UnixStream::connect(&path) {
-                            Ok(stream) => stream,
-                            Err(_) => start_server(&path, Some(&name))?,
-                        };
-                        Conn::local(stream)
-                    }),
+        match session(conn, &writer, alone, hello.take()) {
+            // Another session, on this machine, the one shown or another.
+            Ok(Outcome::Switch(target)) => {
+                let (to_host, to_name) = crate::protocol::split_target(&target);
+                let to_host = match to_host {
+                    Some(h) if h == crate::protocol::hostname() => None,
+                    Some(h) => Some(h.to_owned()),
+                    None => host.clone(),
                 };
-                conn = match next {
-                    Ok(conn) => conn,
-                    Err(e) => break Err(e),
+                let to_name = to_name.to_owned();
+                *SHOWN_HOST.lock().unwrap() = to_host.clone();
+                conn = match connect(to_host.as_deref(), &to_name) {
+                    Ok(next) => {
+                        (host, name) = (to_host, to_name);
+                        remember_place(host.as_deref(), &name);
+                        next
+                    }
+                    // Back to where it was, which then tells why.
+                    Err(e) => {
+                        *SHOWN_HOST.lock().unwrap() = host.clone();
+                        match connect(host.as_deref(), &name) {
+                            Ok(back) => {
+                                let mut back = back;
+                                let why = format!("not switched: {e:#}");
+                                let _ = ClientMsg::Request(Request::Flash { text: why })
+                                    .write_to(&mut back.writer);
+                                back
+                            }
+                            Err(_) => break Err(e),
+                        }
+                    }
                 };
                 execute!(stdout(), Clear(ClearType::All))?;
             }
@@ -233,10 +440,18 @@ fn caps() -> Caps {
         }
         _ => (10, 20),
     };
+    // On another machine's server, the client says where it is, so it can
+    // be sent back.
+    let origin = SHOWN_HOST.lock().unwrap().is_some().then(|| Origin {
+        host: crate::protocol::hostname(),
+        sessions: or_default(crate::protocol::sessions()),
+    });
     Caps {
         graphics,
         cell_width,
         cell_height,
+        hosts: true,
+        origin,
     }
 }
 
@@ -280,15 +495,45 @@ pub fn request_at(path: &Path, request: Request) -> Result<serde_json::Value> {
     }
 }
 
+/// The session `name` on `host` (`None`: this machine), started if needed.
+fn connect(host: Option<&str>, name: &str) -> Result<Conn> {
+    match host {
+        Some(host) => Conn::remote(host, Some(name), true),
+        None => {
+            let path = session_socket(name)?;
+            let stream = match UnixStream::connect(&path) {
+                Ok(stream) => stream,
+                Err(_) => start_server(&path, Some(name))?,
+            };
+            Conn::local(stream)
+        }
+    }
+}
+
 /// Shows the session behind `conn` until it ends. Dropping `conn` at the
 /// end also ends its ssh, if any.
-fn session(mut conn: Conn, writer: &Writer, alone: bool) -> Result<Outcome> {
+/// With `hello`, imkr just started: whether the session list should open,
+/// and why it is not where it was last, if that is the case.
+fn session(
+    mut conn: Conn,
+    writer: &Writer,
+    alone: bool,
+    hello: Option<(bool, Option<String>)>,
+) -> Result<Outcome> {
     let mut to_server = std::mem::replace(&mut conn.writer, Box::new(io::sink()));
     let stream = &mut conn.reader;
     let (cols, rows) = terminal::size()?;
     ClientMsg::Attach { alone }.write_to(&mut to_server)?;
     ClientMsg::Event(Event::Resize(cols, rows)).write_to(&mut to_server)?;
     ClientMsg::Caps(caps()).write_to(&mut to_server)?;
+    if let Some((pick, flash)) = hello {
+        if pick {
+            ClientMsg::Request(Request::OpenSessions).write_to(&mut to_server)?;
+        }
+        if let Some(text) = flash {
+            ClientMsg::Request(Request::Flash { text }).write_to(&mut to_server)?;
+        }
+    }
     *writer.lock().unwrap() = Some(to_server);
 
     let mut out = stdout().lock();

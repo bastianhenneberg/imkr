@@ -100,7 +100,7 @@ pub fn path_for(name: &str) -> Result<PathBuf> {
 }
 
 /// `$XDG_STATE_HOME/imkr`, falling back to `~/.local/state/imkr`.
-fn state_dir() -> Result<PathBuf> {
+pub fn state_dir() -> Result<PathBuf> {
     let base = match std::env::var_os("XDG_STATE_HOME") {
         Some(dir) => PathBuf::from(dir),
         None => {

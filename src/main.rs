@@ -38,7 +38,7 @@ Commands:
                 images). E.g. `imkr --host server -s work`
   proxy [--start]
                 connect stdin/stdout to the session, used by --host
-  ls            list the running sessions
+  ls [--json]   list the running sessions
   hive ls       list the hives: saved groups of sessions
   hive save [NAME]
                 save every running session as a hive (default `last`)
@@ -114,6 +114,8 @@ fn main() -> Result<()> {
             std::env::remove_var("IMKR_SOCKET");
         }
     }
+    // Plain `imkr` goes where it was last; a session or host given wins.
+    let last = session.is_none() && host.is_none() && std::env::var_os("IMKR_SOCKET").is_none();
     let remote = host.map(|host| client::Remote { host, session });
     match args
         .iter()
@@ -121,14 +123,14 @@ fn main() -> Result<()> {
         .collect::<Vec<_>>()
         .as_slice()
     {
-        [] => client::run(true, false, remote),
-        ["attach" | "a"] => client::run(false, false, remote),
-        ["attach" | "a", "-d"] => client::run(false, true, remote),
+        [] => client::run(true, false, remote, last),
+        ["attach" | "a"] => client::run(false, false, remote, false),
+        ["attach" | "a", "-d"] => client::run(false, true, remote, false),
         ["proxy"] => client::proxy(false),
         ["proxy", "--start"] => client::proxy(true),
         _ if remote.is_some() => bail!("--host works with attach only, run other commands there"),
         ["kill-server"] => client::kill_server(),
-        ["ls"] => cli::ls(),
+        ["ls", ..] => cli::ls(&args[1..]),
         ["keys"] => {
             print!("{}", bindings::reference());
             Ok(())

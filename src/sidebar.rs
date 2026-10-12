@@ -31,6 +31,19 @@ pub struct WorkspaceRow {
     pub agents: usize,
 }
 
+/// A session in the sidebar, here or on another machine.
+pub struct SessionRow {
+    /// The machine, `None` for this one.
+    pub host: Option<String>,
+    pub name: String,
+    pub current: bool,
+    /// The state that needs attention most among its agents, and how many
+    /// agents there are.
+    pub state: Option<(AgentState, usize)>,
+    /// Why the host's sessions are unknown; the row is then about the host.
+    pub problem: Option<String>,
+}
+
 pub struct AgentRow {
     pub pane: PaneId,
     pub program: String,
@@ -44,6 +57,9 @@ pub struct AgentRow {
 
 pub struct Data {
     pub workspaces: Vec<WorkspaceRow>,
+    /// Every session, this one included, grouped by machine. Shown only
+    /// when there is more than this one.
+    pub sessions: Vec<SessionRow>,
     pub agents: Vec<AgentRow>,
     pub branch: Option<String>,
     /// Changed files in the focused pane's repository, as `git status`
@@ -66,6 +82,8 @@ const MAX_CHANGES: usize = 12;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
     Workspace(u8),
+    /// The session at this index in `Data::sessions`.
+    Session(usize),
     Pane(PaneId),
     /// The changed file at this index in `Data::changes`.
     Change(usize),
@@ -127,6 +145,52 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             spans.push(Span::styled(right, state_style(state)));
         }
         out.push((Line::from(spans), Some(Target::Workspace(ws.number))));
+    }
+
+    if data.sessions.len() > 1 || data.sessions.iter().any(|s| s.host.is_some()) {
+        out.push((Line::default(), None));
+        out.push((Line::styled("Sessions", heading(t.cyan)), None));
+        let mut host: Option<&str> = None;
+        for (i, session) in data.sessions.iter().enumerate() {
+            if session.host.as_deref() != host {
+                host = session.host.as_deref();
+                if let Some(name) = host {
+                    out.push((
+                        Line::styled(fit(&format!("⇄ {name}"), width), Style::new().fg(t.cyan)),
+                        None,
+                    ));
+                }
+            }
+            let indent = if session.host.is_some() { "  " } else { "" };
+            if let Some(problem) = &session.problem {
+                out.push((
+                    Line::styled(fit(&format!("{indent}  {problem}"), width), dim),
+                    None,
+                ));
+                continue;
+            }
+            let marker = if session.current { "▸ " } else { "  " };
+            let right = session
+                .state
+                .map(|(state, n)| format!("{} {n}", state.symbol()))
+                .unwrap_or_default();
+            let left = fit(
+                &format!("{indent}{marker}{}", session.name),
+                width.saturating_sub(right.chars().count() + 1),
+            );
+            let pad = width.saturating_sub(left.chars().count() + right.chars().count());
+            let style = if session.current {
+                Style::new().add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            let mut spans = vec![Span::styled(left, style), Span::raw(" ".repeat(pad))];
+            if let Some((state, _)) = session.state {
+                spans.push(Span::styled(right, state_style(state)));
+            }
+            let target = (!session.current).then_some(Target::Session(i));
+            out.push((Line::from(spans), target));
+        }
     }
 
     out.push((Line::default(), None));
@@ -407,6 +471,7 @@ mod tests {
 
     fn data() -> Data {
         Data {
+            sessions: Vec::new(),
             workspaces: vec![
                 WorkspaceRow {
                     number: 1,
@@ -553,5 +618,36 @@ mod tests {
         let scroll = scroll_to_show(&data, 5, last, 0);
         assert_eq!(scroll, rows.len() - 5);
         assert_eq!(scroll_to_show(&data, 5, 0, scroll), 0);
+    }
+
+    #[test]
+    fn sessions_are_grouped_by_machine_and_clickable() {
+        let session = |host: Option<&str>, name: &str, current| SessionRow {
+            host: host.map(str::to_owned),
+            name: name.into(),
+            current,
+            state: None,
+            problem: None,
+        };
+        let mut data = data();
+        data.sessions = vec![
+            session(None, "default", true),
+            session(Some("codingmachine"), "brain", false),
+            SessionRow {
+                problem: Some("not reachable".into()),
+                ..session(Some("kiserver"), "", false)
+            },
+        ];
+        let rows: Vec<(String, Option<Target>)> = lines(&data, 28)
+            .into_iter()
+            .map(|(line, target)| (line.to_string(), target))
+            .collect();
+        let find = |text: &str| rows.iter().find(|(line, _)| line.contains(text)).cloned();
+        assert!(find("Sessions").is_some());
+        // This session is not a target, the other machine's is.
+        assert_eq!(find("▸ default").unwrap().1, None);
+        assert!(find("⇄ codingmachine").is_some());
+        assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
+        assert_eq!(find("not reachable").unwrap().1, None);
     }
 }
