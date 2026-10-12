@@ -139,6 +139,10 @@ enum Spot {
     Elsewhere(Place, PaneId),
 }
 
+/// A session in the session list before it becomes a line: where it is,
+/// the hint, its agents by state, and what it says when it does not run.
+type SessionEntry = (Place, String, BTreeMap<String, usize>, Option<String>);
+
 /// A window in the window list, before it becomes a line.
 struct WindowEntry {
     spot: Spot,
@@ -290,6 +294,8 @@ enum Action {
     KillServer,
     /// End the session named in `App::confirm_target`.
     EndSession,
+    /// Forget the stopped or closed session named in `App::confirm_target`.
+    ForgetSession,
     /// Delete the hive named in `App::confirm_target`.
     DeleteHive,
     /// Save the running sessions over the hive named in `App::confirm_target`.
@@ -1894,7 +1900,8 @@ impl App {
             *own.agents.entry(state.name().to_owned()).or_default() += 1;
         }
         here.push(own);
-        here.sort_by(|a, b| a.name.cmp(&b.name));
+        // What runs first, then what can come back.
+        here.sort_by(|a, b| (a.dormant.is_some(), &a.name).cmp(&(b.dormant.is_some(), &b.name)));
         let row = |host: Option<String>, info: &protocol::SessionInfo| sidebar::SessionRow {
             current: host.is_none() && info.name == current,
             machine: self.machine_label(host.as_deref()),
@@ -1903,6 +1910,7 @@ impl App {
             state: info.urgent(),
             problem: None,
             offline: false,
+            dormant: info.dormant.is_some(),
         };
         let mut rows: Vec<sidebar::SessionRow> = here.iter().map(|info| row(None, info)).collect();
         if let Some(origin) = self.origin.clone() {
@@ -1924,6 +1932,7 @@ impl App {
                         state: None,
                         problem: Some(short_problem(e)),
                         offline: true,
+                        dormant: false,
                     });
                     // What ran there when it last answered, greyed out.
                     let seen = places.last_seen.get(host).cloned().unwrap_or_default();
@@ -1936,6 +1945,7 @@ impl App {
                             state: None,
                             problem: None,
                             offline: true,
+                            dormant: false,
                         });
                     }
                 }
@@ -3226,10 +3236,23 @@ impl App {
     fn session_items(&self) -> (Vec<Place>, Vec<menu::MenuItem>) {
         let current = protocol::session_name();
         let places = self.places.lock().unwrap().clone();
-        let mut entries: Vec<(Place, String, BTreeMap<String, usize>)> = Vec::new();
+        let mut entries: Vec<SessionEntry> = Vec::new();
         let mut here: Vec<String> = places.local.iter().map(|s| s.name.clone()).collect();
         here.push(current.clone());
-        here.sort();
+        // What runs first, then what can come back.
+        let asleep = |name: &str| {
+            places
+                .local
+                .iter()
+                .any(|s| s.name == name && s.dormant.is_some())
+        };
+        here.sort_by(|a, b| (asleep(a), a).cmp(&(asleep(b), b)));
+        // "stopped 21:57 · 2 windows" for a session that does not run.
+        let dormant_of = |infos: &[protocol::SessionInfo], name: &str| {
+            let info = infos.iter().find(|s| s.name == name)?;
+            let label = info.dormant_label()?;
+            Some(format!("{label} · {} windows", info.windows))
+        };
         let agents_of = |infos: &[protocol::SessionInfo], name: &str| {
             infos
                 .iter()
@@ -3257,7 +3280,8 @@ impl App {
             } else {
                 agents_of(&places.local, &name)
             };
-            entries.push((Place { host: None, name }, hint, agents));
+            let dormant = dormant_of(&places.local, &name);
+            entries.push((Place { host: None, name }, hint, agents, dormant));
         }
         // The machine the active client sits at, to go back to.
         if let Some(origin) = self.origin.clone() {
@@ -3267,7 +3291,8 @@ impl App {
                     name,
                 };
                 let agents = agents_of(&origin.infos, &place.name);
-                entries.push((place, format!("⌂ {}", origin.host), agents));
+                let dormant = dormant_of(&origin.infos, &place.name);
+                entries.push((place, format!("⌂ {}", origin.host), agents, dormant));
             }
         }
         for (host, sessions) in &self.known_hosts() {
@@ -3276,13 +3301,30 @@ impl App {
                     host: Some(host.clone()),
                     name: session.name.clone(),
                 };
-                entries.push((place, format!("⇄ {host}"), session.agents.clone()));
+                let dormant = dormant_of(std::slice::from_ref(session), &session.name);
+                entries.push((place, format!("⇄ {host}"), session.agents.clone(), dormant));
             }
         }
         let (places, mut items): (Vec<Place>, Vec<menu::MenuItem>) = entries
             .into_iter()
             .enumerate()
-            .map(|(i, (place, hint, agents))| {
+            .map(|(i, (place, hint, agents, dormant))| {
+                if let Some(dormant) = dormant {
+                    let hint = if hint.is_empty() {
+                        format!("{dormant} · Enter brings it back")
+                    } else {
+                        format!("{dormant} · {hint}")
+                    };
+                    let item = menu::MenuItem {
+                        key: list_key_char(i),
+                        title: format!("◌ {}", place.name),
+                        hint,
+                        danger: false,
+                        apart: false,
+                        color: Some(theme::current().muted),
+                    };
+                    return (place, item);
+                }
                 // What its agents do, the most urgent first, as the sidebar
                 // marks them: "◆1 ●2".
                 let info = protocol::SessionInfo {
@@ -4344,8 +4386,17 @@ impl App {
             KeyCode::Char('n') => names.len(),
             KeyCode::Char('x') => {
                 if let Some(name) = names.get(selected).filter(|n| !n.is_empty()) {
+                    let place = Place {
+                        host: None,
+                        name: name.clone(),
+                    };
+                    let asleep = self.dormant_of(&place).is_some();
                     self.confirm_target = Some(name.clone());
-                    self.mode = Mode::Confirm(Action::EndSession);
+                    self.mode = Mode::Confirm(if asleep {
+                        Action::ForgetSession
+                    } else {
+                        Action::EndSession
+                    });
                 }
                 return;
             }
@@ -4597,7 +4648,60 @@ impl App {
                 Some("this terminal's imkr is too old for other machines, reattach".into());
             return;
         }
+        // A session closed on purpose comes back from the hive `last` first;
+        // a stopped one brings its layout back by itself when it starts.
+        if self.dormant_of(place).as_deref() == Some("closed") {
+            match place.host.clone() {
+                None => {
+                    if let Err(e) = persist::revive(&place.name) {
+                        self.flash = Some(format!("{} cannot come back: {e:#}", place.name));
+                        return;
+                    }
+                }
+                Some(host) => {
+                    let socket = self.socket.clone();
+                    let (name, target) = (place.name.clone(), place.target());
+                    self.flash = Some(format!("bringing {name} back on {host} …"));
+                    thread::spawn(move || {
+                        let request =
+                            match crate::client::remote_output(&host, &["revive", &name], "") {
+                                Ok(_) => Request::Go { target },
+                                Err(e) => Request::Flash {
+                                    text: format!("{name} cannot come back: {e:#}"),
+                                },
+                            };
+                        let _ = crate::client::request_at(&socket, request);
+                    });
+                    return;
+                }
+            }
+        }
         self.switch_session(place.target());
+    }
+
+    /// The session info of `place` as this server last heard of it.
+    fn session_info(&self, place: &Place) -> Option<protocol::SessionInfo> {
+        let find =
+            |infos: &[protocol::SessionInfo]| infos.iter().find(|s| s.name == place.name).cloned();
+        match &place.host {
+            None => find(&self.places.lock().unwrap().local),
+            Some(host) => {
+                if let Some(origin) = self.origin.as_ref().filter(|o| o.host == *host)
+                    && let Some(info) = find(&origin.infos)
+                {
+                    return Some(info);
+                }
+                self.known_hosts()
+                    .into_iter()
+                    .find(|(h, _)| h == host)
+                    .and_then(|(_, sessions)| find(&sessions.ok()?))
+            }
+        }
+    }
+
+    /// `stopped` or `closed` when session `place` does not run.
+    fn dormant_of(&self, place: &Place) -> Option<String> {
+        self.session_info(place)?.dormant
     }
 
     /// Sends the active client on to session `name`; it starts it if
@@ -5463,6 +5567,14 @@ impl App {
             Action::EndSession => {
                 if let Some(name) = self.confirm_target.take() {
                     self.end_session(&name);
+                }
+            }
+            Action::ForgetSession => {
+                if let Some(name) = self.confirm_target.take() {
+                    self.flash = Some(match persist::forget(&name) {
+                        Ok(_) => format!("{name} forgotten"),
+                        Err(e) => format!("not forgotten: {e:#}"),
+                    });
                 }
             }
             Action::DeleteHive => {
@@ -6752,6 +6864,19 @@ impl App {
                     )),
                     Line::from(Span::styled(
                         "Its layout goes into the hive `last`, ^B H brings it back.",
+                        Style::new().add_modifier(Modifier::DIM),
+                    )),
+                ],
+            ),
+            Action::ForgetSession => (
+                " Forget session ",
+                vec![
+                    Line::from(format!(
+                        "Forget session {}? It does not run, its layout is deleted.",
+                        target()
+                    )),
+                    Line::from(Span::styled(
+                        "Hives that hold it keep it.",
                         Style::new().add_modifier(Modifier::DIM),
                     )),
                 ],

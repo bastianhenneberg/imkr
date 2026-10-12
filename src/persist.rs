@@ -118,6 +118,114 @@ pub fn state_dir() -> Result<PathBuf> {
     Ok(base.join("imkr"))
 }
 
+/// A session that does not run but can come back: stopped with the machine
+/// or a crash, its state file left behind, or ended on purpose and kept in
+/// the hive `last`.
+#[derive(Debug, Clone)]
+pub struct Dormant {
+    pub name: String,
+    pub layout: Saved,
+    /// When it stopped or was closed, seconds since 1970.
+    pub since: u64,
+    /// Ended on purpose, rather than stopped.
+    pub closed: bool,
+}
+
+/// The sessions on this machine that do not run, of those not in
+/// `running`: stopped ones first, then closed ones, newest first in each.
+pub fn dormant_sessions(running: &[String]) -> Vec<Dormant> {
+    let mut stopped = Vec::new();
+    if let Ok(dir) = state_dir()
+        && let Ok(entries) = fs::read_dir(&dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "json") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let name = if stem == "session" {
+                crate::protocol::DEFAULT_SESSION.to_owned()
+            } else {
+                stem.to_owned()
+            };
+            if running.contains(&name) || !crate::protocol::valid_session_name(&name) {
+                continue;
+            }
+            // Other files live here too, e.g. the marks: only layouts count.
+            let Ok(Some(layout)) = load(&path) else {
+                continue;
+            };
+            let since = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs());
+            stopped.push(Dormant {
+                name,
+                layout,
+                since,
+                closed: false,
+            });
+        }
+    }
+    stopped.sort_by_key(|d| std::cmp::Reverse(d.since));
+    let mut closed: Vec<Dormant> = load_hive(LAST)
+        .ok()
+        .flatten()
+        .map(|hive| hive.sessions)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(name, _)| !running.contains(name) && !stopped.iter().any(|d| d.name == *name))
+        .map(|(name, session)| Dormant {
+            name,
+            layout: session.layout,
+            since: session.saved_at,
+            closed: true,
+        })
+        .collect();
+    closed.sort_by_key(|d| std::cmp::Reverse(d.since));
+    stopped.extend(closed);
+    stopped
+}
+
+/// Gets session `name` ready to come back when it was closed on purpose:
+/// its layout from the hive `last` becomes its state file again, which the
+/// server starting for it restores. A stopped session has one already.
+pub fn revive(name: &str) -> Result<()> {
+    let path = path_for(name)?;
+    if path.exists() {
+        return Ok(());
+    }
+    let hive = load_hive(LAST)?.context("no hive `last`")?;
+    let session = hive
+        .sessions
+        .get(name)
+        .with_context(|| format!("{name} is not among the closed sessions"))?;
+    write(&path, &to_json(&session.layout)?)
+}
+
+/// Forgets session `name` that does not run: its state file and its place
+/// in the hive `last` go. False when there was nothing to forget.
+pub fn forget(name: &str) -> Result<bool> {
+    let path = path_for(name)?;
+    let mut found = false;
+    if path.exists() {
+        fs::remove_file(&path)?;
+        found = true;
+    }
+    if let Some(mut hive) = load_hive(LAST)?
+        && hive.sessions.remove(name).is_some()
+    {
+        write_hive(LAST, &hive)?;
+        found = true;
+    }
+    Ok(found)
+}
+
 /// A save file: the layouts of several sessions at once, like a
 /// tmux-resurrect save. `last` is kept up to date by every session that
 /// ends on purpose, others are made with `imkr save NAME`.

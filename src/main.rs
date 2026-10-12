@@ -55,6 +55,9 @@ Commands:
                 rename a hive
   save, restore short for `hive save` and `hive restore`
   plugins       list the plugins (~/.config/imkr/plugins/*.toml) and broken files
+  revive NAME   bring back a session that stopped (reboot, crash) or was
+                closed, without attaching; `ls` lists them with ◌
+  forget NAME   forget such a session: its saved layout is deleted
   template ls   list the session templates (~/.config/imkr/templates/*.toml)
   template save NAME
                 save this session's windows, splits and agents as template NAME
@@ -187,6 +190,8 @@ fn main() -> Result<()> {
         ["hosts", ..] => cli::hosts(&args[1..]),
         ["plugins"] => cli::plugins(),
         ["template", ..] => cli::template(&args[1..]),
+        ["revive", name] => cli::revive(name),
+        ["forget", name] => cli::forget(name),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks", ..] => cli::hooks(&args[1..]),

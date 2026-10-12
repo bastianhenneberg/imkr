@@ -32,7 +32,8 @@ missing, on whichever machine it belongs to.
 ## What sets imkr apart
 
 Agent status, several machines and agents messaging each other are what multiplexers for
-coding agents do now. What imkr adds on top:
+coding agents do now. What imkr adds on top, as far as the docs of herdr 0.9.3 and TUIOS 0.9.2
+show (checked on 12 October 2026):
 
 - **Hives, a map of every machine**: one save holds the sessions of all your machines. It is
   shared between them, and `imkr hive restore` brings everything back from any of them, also
@@ -41,10 +42,13 @@ coding agents do now. What imkr adds on top:
   session, the processes keep running, nothing restarts (the terminal itself passes over).
 - **You are the operator**: the machine you sit at (⌂) brings its plugins and session
   templates along to every machine you open, and every machine shows the same sidebar.
-- **Capitals show everything**: `S` sessions, `A` agents, `W` windows, `P` panes, `M` marks,
-  `H` hives, each across every session on every machine, and `Ctrl+B /` searches all of it.
-- **Live update without losing anything**: `imkr update` moves the running server to a new
-  binary, programs and screens stay, connected terminals stay connected.
+- **One search for everything**: `Ctrl+B /` finds panes, windows, sessions and agents on every
+  machine together with plugins, marks, hives and every command. The capitals list each kind
+  across all machines: `S` sessions, `A` agents, `W` windows, `P` panes, `M` marks, `H` hives
+  (TUIOS lists across hosts too, with commands in a palette of their own).
+- **Live update that keeps you connected**: `imkr update` execs the new binary in the running
+  server; programs and screens stay, and so do the attached terminals (herdr's experimental
+  handoff keeps programs but drops the clients).
 
 > **Status:** early prototype. imkr runs shells in split panes, including full-screen
 > programs like nvim, spread over windows, and keeps them running when you detach.
@@ -372,7 +376,17 @@ splits, floating panes and each pane's directory. If the server dies with the ma
 `imkr` brings the layout back, shells start in their old directories, and Claude Code and
 Codex sessions known from the hooks are resumed (`claude --resume <id>`). Processes and screen
 contents cannot survive a restart. Ending the session on purpose (`Ctrl+B Q`, `kill-server`, or
-exiting the last shell) deletes the file.
+exiting the last shell) deletes the file and keeps the layout in the hive `last`.
+
+Sessions that do not run are listed with `◌`, in `Ctrl+B S`, the sidebar and `imkr ls`:
+*stopped* ones (the machine restarted, or the server crashed) and *closed* ones (ended on
+purpose). Enter brings one back with its layout and agents, `x` forgets it. From a shell:
+
+```bash
+imkr ls              # ◌ deckbox   stopped 21:57, 2 panes in 2 windows
+imkr revive deckbox  # back, without attaching
+imkr forget deckbox  # its saved layout is deleted
+```
 
 ## Hives
 

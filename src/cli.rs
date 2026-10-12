@@ -72,7 +72,8 @@ fn ignore_hook(hook: &serde_json::Value, state: Option<AgentState>) -> bool {
     subagent && matches!(state, Some(AgentState::Idle) | None)
 }
 
-/// `imkr ls`: the running sessions with their panes and agents.
+/// `imkr ls`: the running sessions with their panes and agents, then
+/// those that stopped or were closed and can come back.
 pub fn ls(args: &[String]) -> Result<()> {
     let sessions = client::local_sessions();
     if args.iter().any(|a| a == "--json") {
@@ -85,6 +86,13 @@ pub fn ls(args: &[String]) -> Result<()> {
     }
     let current = protocol::session_name();
     for info in sessions {
+        if let Some(label) = info.dormant_label() {
+            println!(
+                "◌ {:<16} {label}, {} panes in {} windows · `imkr revive {}` brings it back",
+                info.name, info.panes, info.windows, info.name
+            );
+            continue;
+        }
         let marker = if info.name == current { "*" } else { " " };
         let mut agents = String::new();
         for state in [
@@ -896,6 +904,35 @@ pub fn plugins() -> Result<()> {
         println!("  {:<16} broken: {}", file.name, file.problem);
     }
     Ok(())
+}
+
+/// `imkr revive NAME`: starts a session that stopped with the machine or
+/// was closed, from its saved layout, without attaching to it.
+pub fn revive(name: &str) -> Result<()> {
+    let socket = protocol::session_socket(name)?;
+    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+        println!("{name} runs already");
+        return Ok(());
+    }
+    crate::persist::revive(name)?;
+    client::start_server(&socket, Some(name))?;
+    println!("{name} is back, attach with `imkr -s {name}` or Ctrl+B S");
+    Ok(())
+}
+
+/// `imkr forget NAME`: deletes the saved layout of a session that does
+/// not run, so it is no longer offered to come back.
+pub fn forget(name: &str) -> Result<()> {
+    let socket = protocol::session_socket(name)?;
+    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+        bail!("{name} runs, end it with Ctrl+B s x or `imkr -s {name} kill-server`");
+    }
+    if crate::persist::forget(name)? {
+        println!("{name} forgotten");
+        Ok(())
+    } else {
+        bail!("no stopped or closed session {name}, see `imkr ls`")
+    }
 }
 
 /// `imkr template <ls | save NAME | start NAME [SESSION]>`: session

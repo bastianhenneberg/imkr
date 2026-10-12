@@ -266,9 +266,10 @@ pub fn remembered_hosts() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The sessions running on this machine.
+/// The sessions on this machine: those running, then those stopped or
+/// closed that can come back (`SessionInfo::dormant`).
 pub fn local_sessions() -> Vec<SessionInfo> {
-    crate::protocol::sessions()
+    let mut sessions: Vec<SessionInfo> = crate::protocol::sessions()
         .into_iter()
         .map(|name| {
             let mut info = SessionInfo {
@@ -320,7 +321,20 @@ pub fn local_sessions() -> Vec<SessionInfo> {
             }
             info
         })
-        .collect()
+        .collect();
+    // Those that do not run but can come back, after them.
+    let running: Vec<String> = sessions.iter().map(|s| s.name.clone()).collect();
+    for dormant in crate::persist::dormant_sessions(&running) {
+        sessions.push(SessionInfo {
+            name: dormant.name,
+            panes: dormant.layout.panes.len(),
+            windows: dormant.layout.workspaces.len(),
+            dormant: Some(if dormant.closed { "closed" } else { "stopped" }.to_owned()),
+            dormant_since: dormant.since,
+            ..SessionInfo::default()
+        });
+    }
+    sessions
 }
 
 /// `names`, or the default session if none runs: there is always one to

@@ -116,6 +116,57 @@ pub struct SessionInfo {
     /// Empty from versions before.
     #[serde(default)]
     pub all_panes: Vec<AgentInfo>,
+    /// Not running: `stopped` with the machine or a crash, `closed` on
+    /// purpose. Going there brings it back. Versions before list neither.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dormant: Option<String>,
+    /// When it stopped or was closed, seconds since 1970.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub dormant_since: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+impl SessionInfo {
+    /// What a dormant session shows instead of its agents: "stopped 21:57"
+    /// or "closed 12.10.".
+    pub fn dormant_label(&self) -> Option<String> {
+        let kind = self.dormant.as_deref()?;
+        let when = chrono_like(self.dormant_since);
+        Some(match when {
+            Some(when) => format!("{kind} {when}"),
+            None => kind.to_owned(),
+        })
+    }
+}
+
+/// `since` (seconds since 1970) as local time: `21:57` today, `12.10.`
+/// before. `None` when unknown.
+fn chrono_like(since: u64) -> Option<String> {
+    if since == 0 {
+        return None;
+    }
+    let local = |secs: i64| {
+        let t = secs as libc::time_t;
+        // SAFETY: localtime_r only writes the `tm` it is given.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        let ok = !unsafe { libc::localtime_r(&t, &mut tm) }.is_null();
+        ok.then_some(tm)
+    };
+    let then = local(since as i64)?;
+    let now = local(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs() as i64,
+    )?;
+    if (then.tm_year, then.tm_yday) == (now.tm_year, now.tm_yday) {
+        Some(format!("{:02}:{:02}", then.tm_hour, then.tm_min))
+    } else {
+        Some(format!("{:02}.{:02}.", then.tm_mday, then.tm_mon + 1))
+    }
 }
 
 /// An agent of a session, as another session's sidebar lists it.

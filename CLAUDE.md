@@ -94,6 +94,12 @@ Projekt-Slug: `imkr`
   `~` bleibt bis `App::restore` (`template::home_dir`, Home des Zielrechners). Folgen dem Operator
   über `Origin::templates`. Splits ↔ Layout: `Layout::splits`/`split_at`. Laufende Sessions
   speichern nie `command` (nach einem Crash startet nichts von selbst).
+- Ruhende Sessions: `persist::dormant_sessions` (State-Dateien ohne laufenden Server = stopped,
+  Hive `last` = closed), `client::local_sessions` hängt sie mit `SessionInfo::dormant` an (also
+  auch in `ls --json` und für andere Rechner). `go_to` holt closed per `persist::revive` (remote
+  `imkr revive`) zurück, stopped stellt der startende Server selbst her. `imkr forget`, `x` in
+  `Ctrl+B S`. Server erben keine Claude-Sitzungsvariablen (`client::is_agent_session_var`), sonst
+  speichert Claude in den Panes keine Transcripts.
 - OSC 52 aus Panes: `clipboard::Osc52Scanner` im Pane-Reader (vor dem Grafik-Scanner, über
   Lesegrenzen), `AppEvent::Clipboard` → `send_active`. Clipboard-Abfragen (`?`) werden verworfen.
   Test verschachtelt: im Pane `ssh -t -- server <scratchpad>/bin/imkr` aufrufen, nicht `imkr`

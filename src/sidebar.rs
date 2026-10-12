@@ -61,6 +61,8 @@ pub struct SessionRow {
     pub problem: Option<String>,
     /// Last seen on a machine that is off now: shown, but not to go to.
     pub offline: bool,
+    /// Not running, but it can come back: stopped or closed.
+    pub dormant: bool,
 }
 
 pub struct AgentRow {
@@ -255,7 +257,13 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 ));
                 continue;
             }
-            let marker = if session.current { "▸ " } else { "  " };
+            let marker = if session.current {
+                "▸ "
+            } else if session.dormant {
+                "◌ "
+            } else {
+                "  "
+            };
             let right = session
                 .state
                 .map(|(state, n)| format!("{} {n}", state.symbol()))
@@ -265,7 +273,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 width.saturating_sub(right.chars().count() + 1),
             );
             let pad = width.saturating_sub(left.chars().count() + right.chars().count());
-            let style = if session.offline {
+            let style = if session.offline || session.dormant {
                 dim
             } else if session.current {
                 Style::new().add_modifier(Modifier::BOLD)
@@ -852,6 +860,7 @@ mod tests {
             state: None,
             problem: None,
             offline: false,
+            dormant: false,
         };
         let mut data = data();
         data.sessions = vec![
