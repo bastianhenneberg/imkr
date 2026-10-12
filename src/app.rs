@@ -103,6 +103,10 @@ enum Mode {
     Hives(usize),
     /// Choosing the session to move this window to, that entry selected.
     MoveTo(u8, usize),
+    /// The list of every agent, here and elsewhere, that one selected.
+    Agents(usize),
+    /// The marks, that one selected.
+    Marks(usize),
 }
 
 /// The pane picker: every pane in every workspace, filtered by what is
@@ -253,6 +257,42 @@ struct Popup {
     title: String,
 }
 
+/// A pane marked for Alt+1 … Alt+9, like Harpoon: where it runs and how
+/// to know it again after a restart gave it another id.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Mark {
+    /// The machine, `None` for this one.
+    host: Option<String>,
+    session: String,
+    pane: PaneId,
+    window: u8,
+    /// Its name or program then, e.g. `claude`.
+    label: String,
+    /// The agent's own session id, the surest way to find it again.
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+/// Where the marks are kept: next to the session files, per machine.
+fn marks_path() -> Option<PathBuf> {
+    Some(persist::saves_dir().ok()?.with_file_name("marks.json"))
+}
+
+fn load_marks() -> Vec<Mark> {
+    marks_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Where an agent in the agent list runs: a pane of this session, or the
+/// one at this index of `App::other_agents`.
+#[derive(Clone, Copy)]
+enum AgentAt {
+    Here(PaneId),
+    Other(usize),
+}
+
 /// How often the sessions here and on other machines are listed again.
 const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(5);
@@ -370,6 +410,8 @@ pub struct App {
     plugins: Arc<Mutex<Vec<crate::plugin::Plugin>>>,
     broken_plugins: Vec<crate::plugin::Broken>,
     plugin_status: crate::plugin::Statuses,
+    /// The panes marked for Alt+1 … Alt+9, in that order.
+    marks: Vec<Mark>,
     /// The other sessions, here and elsewhere, kept up to date by a thread.
     places: Arc<Mutex<Places>>,
     /// The hosts from the settings, for that thread.
@@ -473,6 +515,7 @@ impl App {
             socket,
             moved: HashMap::new(),
             places: Arc::default(),
+            marks: load_marks(),
             popups: BTreeMap::new(),
             popup: None,
             popup_shown: false,
@@ -1966,6 +2009,14 @@ impl App {
                 self.move_to_key(key, window, selected);
                 Ok(())
             }
+            Mode::Agents(selected) => {
+                self.agents_key(key, selected);
+                Ok(())
+            }
+            Mode::Marks(selected) => {
+                self.marks_key(key, selected);
+                Ok(())
+            }
             Mode::Confirm(action) => {
                 self.mode = Mode::Normal;
                 if matches!(key.code, KeyCode::Char('y' | 'Y')) {
@@ -1984,6 +2035,14 @@ impl App {
                 self.mode = Mode::Normal;
                 if is_prefix(key) {
                     self.mode = Mode::Prefix(Menu::Root);
+                    return Ok(());
+                }
+                // Alt+1 … Alt+9: straight to a marked pane, like Harpoon.
+                if self.config.marks_on_alt
+                    && key.modifiers == KeyModifiers::ALT
+                    && let KeyCode::Char(c @ '1'..='9') = key.code
+                {
+                    self.jump_to_mark(c as usize - '1' as usize);
                     return Ok(());
                 }
                 self.flash = None;
@@ -2121,6 +2180,9 @@ impl App {
             }
             Command::RenameWorkspace => self.start_prompt(RenameTarget::Workspace(self.workspace)),
             Command::MoveWorkspace => self.mode = Mode::MoveTo(self.workspace, 0),
+            Command::Agents => self.mode = Mode::Agents(0),
+            Command::Mark => self.mark_focused(),
+            Command::Marks => self.mode = Mode::Marks(0),
             Command::TogglePopup => match self.popup.clone() {
                 Some(_) => self.popup_shown = !self.popup_shown,
                 None => {
@@ -2968,6 +3030,318 @@ impl App {
             None => None,
         };
         client.or(self.clients.first()).map(|c| c.caps.clone())
+    }
+
+    /// Marks the focused pane for Alt+1 … Alt+9, after the marks there are.
+    fn mark_focused(&mut self) {
+        let id = self.ws.focus;
+        let Some(pane) = self.panes.get(&id) else {
+            return;
+        };
+        let session = protocol::session_name();
+        if self
+            .marks
+            .iter()
+            .any(|m| m.host.is_none() && m.session == session && m.pane == id)
+        {
+            self.flash = Some("marked already, Ctrl+B M lists the marks".into());
+            return;
+        }
+        if self.marks.len() >= 9 {
+            self.flash = Some("9 marks already, Ctrl+B M to remove one".into());
+            return;
+        }
+        let label = pane
+            .name
+            .clone()
+            .or_else(|| pane.program())
+            .unwrap_or_else(|| "pane".into());
+        self.marks.push(Mark {
+            host: None,
+            session,
+            pane: id,
+            window: self.workspace,
+            label: label.clone(),
+            agent: pane.session.clone(),
+        });
+        self.save_marks();
+        self.flash = Some(format!("{label} is Alt+{}", self.marks.len()));
+    }
+
+    /// Marks the agent chosen in the agent list, wherever it runs.
+    fn mark_agent(&mut self, at: Option<AgentAt>) {
+        let mark = match at {
+            Some(AgentAt::Here(id)) => {
+                let Some(pane) = self.panes.get(&id) else {
+                    return;
+                };
+                Mark {
+                    host: None,
+                    session: protocol::session_name(),
+                    pane: id,
+                    window: self.workspace_of(id).unwrap_or(self.workspace),
+                    label: pane
+                        .name
+                        .clone()
+                        .or_else(|| pane.program())
+                        .unwrap_or_default(),
+                    agent: pane.session.clone(),
+                }
+            }
+            Some(AgentAt::Other(i)) => {
+                let Some((place, agent)) = self.other_agents().into_iter().nth(i) else {
+                    return;
+                };
+                Mark {
+                    host: place.host,
+                    session: place.name,
+                    pane: agent.pane,
+                    window: agent.workspace,
+                    label: agent.program,
+                    agent: None,
+                }
+            }
+            None => return,
+        };
+        let known = self
+            .marks
+            .iter()
+            .any(|m| m.host == mark.host && m.session == mark.session && m.pane == mark.pane);
+        if known {
+            self.flash = Some("marked already".into());
+        } else if self.marks.len() >= 9 {
+            self.flash = Some("9 marks already, Ctrl+B M to remove one".into());
+        } else {
+            let label = mark.label.clone();
+            self.marks.push(mark);
+            self.save_marks();
+            self.flash = Some(format!("{label} is Alt+{}", self.marks.len()));
+        }
+    }
+
+    fn save_marks(&mut self) {
+        let Some(path) = marks_path() else {
+            return;
+        };
+        let written = serde_json::to_string_pretty(&self.marks)
+            .map_err(anyhow::Error::from)
+            .and_then(|json| persist::write(&path, &json));
+        if let Err(e) = written {
+            self.flash = Some(format!("marks not saved: {e:#}"));
+        }
+    }
+
+    /// Goes to mark `i`: a pane here, in another session or on another
+    /// machine. A pane here that got another id since, after a restart, is
+    /// found by its agent's session or by its name in its window.
+    fn jump_to_mark(&mut self, i: usize) {
+        let Some(mark) = self.marks.get(i).cloned() else {
+            self.flash = Some(format!("no mark {}, Ctrl+B m marks a pane", i + 1));
+            return;
+        };
+        let here = mark.host.is_none() && mark.session == protocol::session_name();
+        if !here {
+            let place = Place {
+                host: mark.host.clone(),
+                name: mark.session.clone(),
+            };
+            if place.host.is_some() && !self.active_caps().is_some_and(|caps| caps.hosts) {
+                self.flash =
+                    Some("this terminal's imkr is too old for other machines, reattach".into());
+                return;
+            }
+            self.switch_session(format!("{}#{}", place.target(), mark.pane));
+            return;
+        }
+        let found = if self.panes.contains_key(&mark.pane) && self.workspace_of(mark.pane).is_some()
+        {
+            Some(mark.pane)
+        } else {
+            let by_agent = mark.agent.as_ref().and_then(|agent| {
+                self.panes
+                    .iter()
+                    .find(|(_, p)| p.session.as_ref() == Some(agent))
+                    .map(|(&id, _)| id)
+            });
+            by_agent.or_else(|| {
+                self.panes
+                    .iter()
+                    .find(|&(&id, p)| {
+                        self.workspace_of(id) == Some(mark.window)
+                            && p.name.clone().or_else(|| p.program()).as_ref() == Some(&mark.label)
+                    })
+                    .map(|(&id, _)| id)
+            })
+        };
+        match found {
+            Some(id) => {
+                if id != mark.pane {
+                    self.marks[i].pane = id;
+                    self.save_marks();
+                }
+                self.reveal(id);
+            }
+            None => self.flash = Some(format!("{} is gone, Ctrl+B M to remove it", mark.label)),
+        }
+    }
+
+    /// The marks for their list, each with where it runs.
+    fn mark_items(&self) -> Vec<menu::MenuItem> {
+        self.marks
+            .iter()
+            .enumerate()
+            .map(|(i, mark)| {
+                let machine = match self.machine_label(mark.host.as_deref()) {
+                    Some(machine) => format!("{machine} · "),
+                    None => String::new(),
+                };
+                menu::MenuItem {
+                    key: char::from_digit(i as u32 + 1, 10).unwrap_or(' '),
+                    title: mark.label.clone(),
+                    hint: format!(
+                        "Alt+{} · {machine}{} · window {}",
+                        i + 1,
+                        mark.session,
+                        mark.window
+                    ),
+                    danger: false,
+                    apart: false,
+                }
+            })
+            .collect()
+    }
+
+    /// Enter or a digit goes to a mark, J and K move it, x removes it.
+    fn marks_key(&mut self, key: KeyEvent, selected: usize) {
+        let count = self.marks.len().max(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::Marks((selected + count - 1) % count);
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::Marks((selected + 1) % count);
+            }
+            KeyCode::Char('K') if selected > 0 && selected < self.marks.len() => {
+                self.marks.swap(selected, selected - 1);
+                self.save_marks();
+                self.mode = Mode::Marks(selected - 1);
+            }
+            KeyCode::Char('J') if selected + 1 < self.marks.len() => {
+                self.marks.swap(selected, selected + 1);
+                self.save_marks();
+                self.mode = Mode::Marks(selected + 1);
+            }
+            KeyCode::Char('x') if selected < self.marks.len() => {
+                self.marks.remove(selected);
+                self.save_marks();
+                let last = self.marks.len().saturating_sub(1);
+                self.mode = Mode::Marks(selected.min(last));
+            }
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+                self.jump_to_mark(selected);
+            }
+            KeyCode::Char(c @ '1'..='9') => {
+                self.mode = Mode::Normal;
+                self.jump_to_mark(c as usize - '1' as usize);
+            }
+            _ => {}
+        }
+    }
+
+    /// Every agent, those that need the user first and among them the
+    /// longest waiting: this session's, then by where they run. Each with
+    /// where it is, for `agents_key`.
+    fn agent_choices(&self) -> (Vec<AgentAt>, Vec<menu::MenuItem>) {
+        let now = Instant::now();
+        let mut all: Vec<(AgentState, Duration, AgentAt, String, String)> = Vec::new();
+        for (&id, &(_, since)) in &self.agents {
+            let (Some(pane), Some(state), Some(n)) = (
+                self.panes.get(&id),
+                self.shown_state(id),
+                self.workspace_of(id),
+            ) else {
+                continue;
+            };
+            let program = pane
+                .name
+                .clone()
+                .or_else(|| pane.program())
+                .unwrap_or_default();
+            let dir = pane
+                .cwd()
+                .and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_default();
+            let place = format!("this session · {n}·{dir}");
+            all.push((state, now - since, AgentAt::Here(id), program, place));
+        }
+        for (i, (place, agent)) in self.other_agents().into_iter().enumerate() {
+            let Some(state) = AgentState::from_name(&agent.state) else {
+                continue;
+            };
+            let machine = match self.machine_label(place.host.as_deref()) {
+                Some(machine) => format!("{machine} · "),
+                None => String::new(),
+            };
+            let at = format!(
+                "{machine}{} · {}·{}",
+                place.name, agent.workspace, agent.dir
+            );
+            let since = Duration::from_secs(agent.since);
+            all.push((state, since, AgentAt::Other(i), agent.program, at));
+        }
+        all.sort_by_key(|(state, since, ..)| (sidebar::urgency(*state), std::cmp::Reverse(*since)));
+        all.into_iter()
+            .enumerate()
+            .map(|(i, (state, since, at, program, place))| {
+                let item = menu::MenuItem {
+                    key: if i < 9 {
+                        char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
+                    } else {
+                        ' '
+                    },
+                    title: format!("{} {program}", state.symbol()),
+                    hint: format!("{place} · {}", sidebar::age(since)),
+                    danger: state == AgentState::Blocked,
+                    apart: false,
+                };
+                (at, item)
+            })
+            .unzip()
+    }
+
+    /// Enter or a digit goes to that agent, here or wherever it runs.
+    fn agents_key(&mut self, key: KeyEvent, selected: usize) {
+        let (targets, _) = self.agent_choices();
+        let count = targets.len().max(1);
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::Agents((selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::Agents((selected + 1) % count);
+                return;
+            }
+            KeyCode::Char('m') => {
+                self.mark_agent(targets.get(selected).copied());
+                return;
+            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => c as usize - '1' as usize,
+            _ => return,
+        };
+        self.mode = Mode::Normal;
+        match targets.get(pick) {
+            Some(AgentAt::Here(id)) => self.reveal(*id),
+            Some(AgentAt::Other(i)) => self.go_to_other_agent(*i),
+            None => {}
+        }
     }
 
     /// Where a window can move: every other running session, then a new
@@ -4815,6 +5189,8 @@ impl App {
                         | Mode::Sessions(_)
                         | Mode::Hives(_)
                         | Mode::MoveTo(..)
+                        | Mode::Agents(_)
+                        | Mode::Marks(_)
                 )
                 && (self.mode != Mode::Copy || copy_cursor.is_some())
                 && let Some(position) = cursor
@@ -4888,6 +5264,46 @@ impl App {
                     &items,
                     selected,
                     bindings::SESSION_LIST_KEYS,
+                );
+            }
+            Mode::Marks(selected) => {
+                let mut items = self.mark_items();
+                if items.is_empty() {
+                    items.push(menu::MenuItem {
+                        key: ' ',
+                        title: "no marks yet".into(),
+                        hint: "Ctrl+B m marks the focused pane".into(),
+                        danger: false,
+                        apart: false,
+                    });
+                }
+                menu::draw_choices(
+                    frame,
+                    body,
+                    " ⬢ Marks · Alt+1 … 9 ",
+                    &items,
+                    selected,
+                    bindings::MARK_LIST_KEYS,
+                );
+            }
+            Mode::Agents(selected) => {
+                let (_, mut items) = self.agent_choices();
+                if items.is_empty() {
+                    items.push(menu::MenuItem {
+                        key: ' ',
+                        title: "no agents running".into(),
+                        hint: "here or on any machine known".into(),
+                        danger: false,
+                        apart: false,
+                    });
+                }
+                menu::draw_choices(
+                    frame,
+                    body,
+                    " ⬢ Agents ",
+                    &items,
+                    selected,
+                    bindings::AGENT_LIST_KEYS,
                 );
             }
             Mode::MoveTo(window, selected) => {
@@ -5270,6 +5686,16 @@ impl App {
                 "SETTINGS",
                 t.cyan,
                 "↑↓ select · ←→ Enter change · Esc close",
+            ),
+            Mode::Marks(_) => (
+                "MARKS",
+                t.magenta,
+                "↑↓ choose · Enter or digit go there · J K move · x remove · Esc cancel",
+            ),
+            Mode::Agents(_) => (
+                "AGENTS",
+                t.magenta,
+                "↑↓ choose · Enter or digit go there · m mark for Alt+1-9 · Esc cancel",
             ),
             Mode::MoveTo(..) => (
                 "MOVE",

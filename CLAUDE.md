@@ -59,6 +59,10 @@ Projekt-Slug: `imkr`
   `pass_on` mit einfachem read/write. Test ohne sshd: Fake-`ssh` im Scratchpad vorn im PATH, der
   bis `--` überspringt und den Befehl mit `SHELL=/bin/sh sh -c` ausführt. Socket-Pfade max. 108
   Zeichen: für `XDG_RUNTIME_DIR` im Test ein kurzes Verzeichnis nehmen.
+- Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
+  neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
+  `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet
+  ihr Pane nach Neustart über Agent-Session-ID oder Name im Window. Test: tmux `send-keys M-1`.
 - Plugins: `src/plugin.rs` (TOML je Datei in `plugins/` neben der Config, `deny_unknown_fields`,
   kaputte → `Broken`), `App::plugins` (Arc, geteilt mit `watch_statuses`, das die `status`-Befehle
   mit 10 s Zeitlimit laufen lässt), `run_plugin` = Popup mit Namen des Plugins. Menü `Ctrl+B p`

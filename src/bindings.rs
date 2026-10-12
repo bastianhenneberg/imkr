@@ -54,6 +54,12 @@ pub enum Command {
     RenumberWorkspaces,
     /// Show or hide the popup used last.
     TogglePopup,
+    /// Every agent here and elsewhere, to jump to.
+    Agents,
+    /// Mark the focused pane for Alt+1 … Alt+9, like Harpoon.
+    Mark,
+    /// The marks, to jump to, reorder and remove.
+    Marks,
     /// Turn the shown popup into a pane of a window of its own, or the
     /// focused pane into a popup.
     BreakPopup,
@@ -346,6 +352,21 @@ pub const BINDINGS: &[Binding] = &[
         description: "waiting agent",
         group: Group::Navigate,
         keys: &[(Key::plain(Char('a')), C::JumpToWaiting)],
+    },
+    Binding {
+        label: "A",
+        description: "all agents…",
+        group: Group::Navigate,
+        keys: &[(Key::plain(Char('A')), C::Agents)],
+    },
+    Binding {
+        label: "m M",
+        description: "mark pane / marks…",
+        group: Group::Navigate,
+        keys: &[
+            (Key::plain(Char('m')), C::Mark),
+            (Key::plain(Char('M')), C::Marks),
+        ],
     },
     Binding {
         label: "1-9",
@@ -767,6 +788,23 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("Esc", "cancel"),
 ];
 
+/// The keys of the marks (`Ctrl+B M`).
+pub const MARK_LIST_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    ("Enter", "or key go there"),
+    ("J K", "move down/up"),
+    ("x", "remove"),
+    ("Esc", "cancel"),
+];
+
+/// The keys of the agent list (`Ctrl+B A`).
+pub const AGENT_LIST_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    ("Enter", "or key go there"),
+    ("m", "mark for Alt+1-9"),
+    ("Esc", "cancel"),
+];
+
 /// The keys of the list of sessions to move a window to (`Ctrl+B w m`).
 pub const MOVE_LIST_KEYS: &[KeyHint] = &[
     ("↑↓", "select"),
@@ -791,6 +829,8 @@ pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
     ("Session list", "S", SESSION_LIST_KEYS),
     ("Hives", "H", HIVE_LIST_KEYS),
     ("Move window", "w m", MOVE_LIST_KEYS),
+    ("Agents", "A", AGENT_LIST_KEYS),
+    ("Marks (Alt+1 … 9 jumps)", "M", MARK_LIST_KEYS),
 ];
 
 /// The command bound to `event` in `menu`.

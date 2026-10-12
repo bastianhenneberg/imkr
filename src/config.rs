@@ -178,6 +178,9 @@ pub struct Config {
     /// always numbered 1, 2, 3 …, as tmux's `renumber-windows`. Without
     /// it a window keeps its number for good.
     pub renumber_windows: bool,
+    /// Alt+1 … Alt+9 jump to the panes marked with `Ctrl+B m`, without the
+    /// prefix. Off leaves those keys to the programs.
+    pub marks_on_alt: bool,
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
@@ -251,6 +254,7 @@ impl Default for Config {
             }],
             images: true,
             renumber_windows: false,
+            marks_on_alt: true,
             sessions_on_start: false,
             hosts: Vec::new(),
         }
@@ -393,6 +397,11 @@ pub const SETTINGS: &[Setting] = &[
                 forward,
             )
         },
+    },
+    Setting {
+        name: "Marks on Alt+1-9",
+        value: |c| if c.marks_on_alt { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.marks_on_alt = !c.marks_on_alt,
     },
     Setting {
         name: "Renumber windows",
