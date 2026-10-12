@@ -9,6 +9,26 @@ the agents running in its panes: working, blocked, or idle.
 The names follow tmux: a session holds windows, a window holds panes. A *hive*, a saved group
 of sessions, is imkr's own, as tmux has nothing like it.
 
+```text
+Hive "work"                    saved, not running: a map of sessions on every machine
+├── ⌂ laptop                   the machine you sit at, the operator
+│   ├── Session "imkr"         one imkr server each, runs on when you detach
+│   │   ├── Window 1 "claude"
+│   │   │   ├── Pane           tiled in a split tree …
+│   │   │   └── Pane           … or floating on top
+│   │   ├── Window 2 "shell"
+│   │   │   └── Pane
+│   │   └── Popups             panes outside every window, plugins open here
+│   └── Session "notes"
+└── ⇄ server                   another machine, reached over ssh
+    └── Session "api"
+        └── Window 1
+            └── Pane
+```
+
+Sessions, windows and panes run; a hive only remembers them, so bringing it back starts what is
+missing, on whichever machine it belongs to.
+
 > **Status:** early prototype. imkr runs shells in split panes, including full-screen
 > programs like nvim, spread over windows, and keeps them running when you detach.
 
