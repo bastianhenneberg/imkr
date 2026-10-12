@@ -243,6 +243,7 @@ fn footer_lines(max_width: usize) -> Vec<Line<'static>> {
 }
 
 /// An entry of the quit menu.
+#[derive(Clone, Debug)]
 pub struct MenuItem {
     pub key: char,
     pub title: String,

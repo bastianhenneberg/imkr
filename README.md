@@ -75,9 +75,12 @@ others.
 
 Sessions are separate servers with their own panes, socket and saved layout. `imkr -s NAME`
 (or `attach -t NAME`) picks one, `Ctrl+B S` switches between them without leaving the terminal,
-and named sessions show their name in the control bar. In that menu `n` starts a new session,
+and named sessions show their name in the control bar. In that menu `n` starts a new session (on
+which machine, if others are known, is asked first),
 `x` ends the selected one, `r` renames it (like `imkr rename-session NAME`, `-s OLD` for
 another one), `s` saves all running sessions as a hive and `h` opens the hives.
+Every list (sessions, agents, hives, marks, machines) takes `/` to search: typing narrows it to
+what matches every word, in name, machine, session or directory, Esc clears the search.
 
 `Ctrl+B w m` moves the active window to another session: pick a running one, or `n` for a new
 one, started for it. E.g. to gather the windows of one project in a session of their own
@@ -98,6 +101,7 @@ state comes from what imkr sees on the screen.
 | `Ctrl+B` `f` … | Floating panes menu: `f` float/tile, `n` new, `o` next, arrows move |
 | `Ctrl+B` `Shift+←↑↓→` | Move a floating pane |
 | `Ctrl+B` `n` | New window, asks for its name right away (Esc closes it again) |
+| `Ctrl+B` `N` | New window in another session, on any machine: pick it, go there, name the window |
 | `Ctrl+B` `Space` | Show or hide the popup used last |
 | `Ctrl+B` `z` | Over a popup: fill everything but the bars, and back |
 | `Ctrl+B` `!` | Popup ⇄ pane: the shown popup becomes a window of its own, else the focused pane a popup |

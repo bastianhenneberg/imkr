@@ -105,6 +105,10 @@ enum Mode {
     MoveTo(u8, usize),
     /// The list of every agent, here and elsewhere, that one selected.
     Agents(usize),
+    /// Choosing the machine for a new session, that one selected.
+    NewSessionWhere(usize),
+    /// Choosing the session, on any machine, for a new window.
+    NewWindowWhere(usize),
     /// The marks, that one selected.
     Marks(usize),
 }
@@ -140,8 +144,9 @@ enum PromptFor {
     Search {
         forward: bool,
     },
-    /// The name of a session to start and switch to.
-    NewSession,
+    /// The name of a session to start and switch to, on that machine
+    /// (`None`: this one).
+    NewSession(Option<String>),
     /// The name to save the running sessions as a hive under.
     SaveHive,
     /// A new name for the hive called this.
@@ -399,6 +404,8 @@ pub struct App {
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
+    /// What is typed after `/` in a list, which then shows only matches.
+    list_query: Option<String>,
     /// The popups by name, and the one shown, if any, or shown last.
     popups: BTreeMap<String, Popup>,
     popup: Option<String>,
@@ -516,6 +523,7 @@ impl App {
             moved: HashMap::new(),
             places: Arc::default(),
             marks: load_marks(),
+            list_query: None,
             popups: BTreeMap::new(),
             popup: None,
             popup_shown: false,
@@ -1275,6 +1283,11 @@ impl App {
                 self.open_sessions();
                 Ok(serde_json::json!({}))
             }
+            Request::NewWindow => {
+                self.run_command(Command::NewWorkspace)
+                    .map_err(|e| format!("{e:#}"))?;
+                Ok(serde_json::json!({}))
+            }
             Request::Reveal { pane } => {
                 self.reveal(pane);
                 Ok(serde_json::json!({ "pane": pane }))
@@ -1953,6 +1966,9 @@ impl App {
         if key.kind == KeyEventKind::Release {
             return Ok(());
         }
+        if !self.list_key(key) {
+            return Ok(());
+        }
 
         match self.mode {
             Mode::Prefix(menu) => {
@@ -2011,6 +2027,14 @@ impl App {
             }
             Mode::Agents(selected) => {
                 self.agents_key(key, selected);
+                Ok(())
+            }
+            Mode::NewSessionWhere(selected) => {
+                self.new_session_where_key(key, selected);
+                Ok(())
+            }
+            Mode::NewWindowWhere(selected) => {
+                self.new_window_where_key(key, selected)?;
                 Ok(())
             }
             Mode::Marks(selected) => {
@@ -2127,13 +2151,8 @@ impl App {
             Command::BreakPopup => self.pane_to_popup(),
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
-            Command::NewSession => {
-                self.prompt = Some(Prompt {
-                    purpose: PromptFor::NewSession,
-                    text: String::new(),
-                });
-                self.mode = Mode::Prompt;
-            }
+            Command::NewSession => self.new_session(),
+            Command::NewWindowElsewhere => self.mode = Mode::NewWindowWhere(0),
             Command::RenameSession => {
                 let name = protocol::session_name();
                 self.prompt = Some(Prompt {
@@ -3048,6 +3067,125 @@ impl App {
         client.or(self.clients.first()).map(|c| c.caps.clone())
     }
 
+    /// Asks where a new session goes when other machines are known, else
+    /// straight for its name.
+    fn new_session(&mut self) {
+        let (machines, _) = self.machine_choices();
+        if machines.len() > 1 {
+            self.mode = Mode::NewSessionWhere(0);
+        } else {
+            self.ask_session_name(None);
+        }
+    }
+
+    fn ask_session_name(&mut self, host: Option<String>) {
+        self.prompt = Some(Prompt {
+            purpose: PromptFor::NewSession(host),
+            text: String::new(),
+        });
+        self.mode = Mode::Prompt;
+    }
+
+    /// The machines a session can be started on: this one, the one the
+    /// user sits at if that is another, and every other one that answers.
+    fn machine_choices(&self) -> (Vec<Option<String>>, Vec<menu::MenuItem>) {
+        let mut machines: Vec<Option<String>> = vec![None];
+        if let Some(origin) = &self.origin {
+            machines.push(Some(origin.host.clone()));
+        }
+        for (host, sessions) in self.known_hosts() {
+            if sessions.is_ok() && !machines.contains(&Some(host.clone())) {
+                machines.push(Some(host));
+            }
+        }
+        let items = machines
+            .iter()
+            .enumerate()
+            .map(|(i, host)| {
+                let label = self
+                    .machine_label(host.as_deref())
+                    .unwrap_or_else(|| format!("⌂ {}", protocol::machine_name()));
+                menu::MenuItem {
+                    key: char::from_digit((i as u32 + 1) % 10, 10).unwrap_or(' '),
+                    title: label,
+                    hint: if host.is_none() {
+                        "this machine".into()
+                    } else {
+                        String::new()
+                    },
+                    danger: false,
+                    apart: false,
+                }
+            })
+            .collect();
+        (machines, items)
+    }
+
+    /// A new window in the chosen session: here right away, elsewhere after
+    /// switching there, which the client asks for with `#new`.
+    fn new_window_where_key(&mut self, key: KeyEvent, selected: usize) -> Result<()> {
+        let (places, _) = self.session_items();
+        let count = places.len().max(1);
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return Ok(());
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::NewWindowWhere((selected + count - 1) % count);
+                return Ok(());
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::NewWindowWhere((selected + 1) % count);
+                return Ok(());
+            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
+            _ => return Ok(()),
+        };
+        self.mode = Mode::Normal;
+        let Some(place) = places.get(pick) else {
+            return Ok(());
+        };
+        if place.host.is_none() && place.name == protocol::session_name() {
+            return self.run_command(Command::NewWorkspace);
+        }
+        if !self.active_caps().is_some_and(|caps| caps.windows) {
+            self.flash = Some("this terminal's imkr is too old for that, it updates itself".into());
+            return Ok(());
+        }
+        if place.host.is_some() && !self.active_caps().is_some_and(|caps| caps.hosts) {
+            return Ok(());
+        }
+        self.switch_session(format!("{}#new", place.target()));
+        Ok(())
+    }
+
+    fn new_session_where_key(&mut self, key: KeyEvent, selected: usize) {
+        let (machines, _) = self.machine_choices();
+        let count = machines.len().max(1);
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::NewSessionWhere((selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::NewSessionWhere((selected + 1) % count);
+                return;
+            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
+            _ => return,
+        };
+        if let Some(host) = machines.get(pick).cloned() {
+            self.ask_session_name(host);
+        }
+    }
+
     /// Marks the focused pane for Alt+1 … Alt+9, after the marks there are.
     fn mark_focused(&mut self) {
         let id = self.ws.focus;
@@ -3542,11 +3680,7 @@ impl App {
             Some(place) if place.host.is_none() && place.name == protocol::session_name() => {}
             Some(place) => self.go_to(place),
             None if pick == places.len() => {
-                self.prompt = Some(Prompt {
-                    purpose: PromptFor::NewSession,
-                    text: String::new(),
-                });
-                self.mode = Mode::Prompt;
+                self.new_session();
             }
             None => {}
         }
@@ -4069,10 +4203,10 @@ impl App {
                             self.flash = Some(e);
                         }
                     }
-                    PromptFor::NewSession => {
+                    PromptFor::NewSession(host) => {
                         let name = text.trim().to_owned();
                         if protocol::valid_session_name(&name) {
-                            self.switch_session(name);
+                            self.go_to(&Place { host, name });
                         } else {
                             self.flash = Some("session names use letters, digits, - and _".into());
                         }
@@ -5206,6 +5340,8 @@ impl App {
                         | Mode::Hives(_)
                         | Mode::MoveTo(..)
                         | Mode::Agents(_)
+                        | Mode::NewSessionWhere(_)
+                        | Mode::NewWindowWhere(_)
                         | Mode::Marks(_)
                 )
                 && (self.mode != Mode::Copy || copy_cursor.is_some())
@@ -5273,13 +5409,36 @@ impl App {
             Mode::Picker => self.draw_picker(frame, body),
             Mode::Sessions(selected) => {
                 let (_, items) = self.session_items();
-                menu::draw_choices(
+                self.draw_list(
                     frame,
                     body,
                     " ⬢ Sessions ",
                     &items,
                     selected,
                     bindings::SESSION_LIST_KEYS,
+                );
+            }
+            Mode::NewWindowWhere(selected) => {
+                let (_, mut items) = self.session_items();
+                items.retain(|item| !item.apart);
+                self.draw_list(
+                    frame,
+                    body,
+                    " ⬢ New window in ",
+                    &items,
+                    selected,
+                    bindings::CHOOSE_LIST_KEYS,
+                );
+            }
+            Mode::NewSessionWhere(selected) => {
+                let (_, items) = self.machine_choices();
+                self.draw_list(
+                    frame,
+                    body,
+                    " ⬢ New session on ",
+                    &items,
+                    selected,
+                    bindings::CHOOSE_LIST_KEYS,
                 );
             }
             Mode::Marks(selected) => {
@@ -5293,7 +5452,7 @@ impl App {
                         apart: false,
                     });
                 }
-                menu::draw_choices(
+                self.draw_list(
                     frame,
                     body,
                     " ⬢ Marks · Alt+1 … 9 ",
@@ -5313,7 +5472,7 @@ impl App {
                         apart: false,
                     });
                 }
-                menu::draw_choices(
+                self.draw_list(
                     frame,
                     body,
                     " ⬢ Agents ",
@@ -5324,7 +5483,7 @@ impl App {
             }
             Mode::MoveTo(window, selected) => {
                 let (_, items) = self.move_to_items();
-                menu::draw_choices(
+                self.draw_list(
                     frame,
                     body,
                     &format!(" ⬢ Move window {window} to "),
@@ -5344,7 +5503,7 @@ impl App {
                         apart: false,
                     });
                 }
-                menu::draw_choices(
+                self.draw_list(
                     frame,
                     body,
                     " ⬢ Hives ",
@@ -5355,6 +5514,141 @@ impl App {
             }
             Mode::Prefix(_) | Mode::Normal | Mode::Repeat(..) | Mode::Copy | Mode::Sidebar(_) => {}
         }
+    }
+
+    /// The list shown now, if one is: its items and the one selected.
+    fn list_state(&self) -> Option<(Vec<menu::MenuItem>, usize)> {
+        Some(match self.mode {
+            Mode::Sessions(s) => (self.session_items().1, s),
+            Mode::Agents(s) => (self.agent_choices().1, s),
+            Mode::Hives(s) => (self.hive_items().1, s),
+            Mode::MoveTo(_, s) => (self.move_to_items().1, s),
+            Mode::Marks(s) => (self.mark_items(), s),
+            Mode::NewWindowWhere(s) => {
+                let mut items = self.session_items().1;
+                items.retain(|item| !item.apart);
+                (items, s)
+            }
+            Mode::NewSessionWhere(s) => (self.machine_choices().1, s),
+            _ => return None,
+        })
+    }
+
+    fn set_list_selected(&mut self, i: usize) {
+        match &mut self.mode {
+            Mode::Sessions(s)
+            | Mode::Agents(s)
+            | Mode::Hives(s)
+            | Mode::Marks(s)
+            | Mode::NewWindowWhere(s)
+            | Mode::NewSessionWhere(s)
+            | Mode::MoveTo(_, s) => *s = i,
+            _ => {}
+        }
+    }
+
+    /// The search in every list: `/` starts it, typing narrows the list,
+    /// the arrows move through what matches, Enter picks, Esc clears the
+    /// search and then closes the list. False when the key is handled.
+    fn list_key(&mut self, key: KeyEvent) -> bool {
+        let Some((items, selected)) = self.list_state() else {
+            self.list_query = None;
+            return true;
+        };
+        let Some(mut query) = self.list_query.clone() else {
+            if key.code == KeyCode::Char('/') {
+                self.list_query = Some(String::new());
+                return false;
+            }
+            return true;
+        };
+        let visible: Vec<usize> = (0..items.len())
+            .filter(|&i| list_matches(&items[i], &query))
+            .collect();
+        let at = visible.iter().position(|&i| i == selected);
+        match key.code {
+            KeyCode::Esc if query.is_empty() => {
+                self.list_query = None;
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Esc => self.list_query = Some(String::new()),
+            KeyCode::Up | KeyCode::Down | KeyCode::Tab if !visible.is_empty() => {
+                let n = visible.len();
+                let next = match (key.code, at) {
+                    (KeyCode::Up, Some(at)) => (at + n - 1) % n,
+                    (_, Some(at)) => (at + 1) % n,
+                    (_, None) => 0,
+                };
+                self.set_list_selected(visible[next]);
+            }
+            KeyCode::Enter => {
+                let Some(&pick) = at.map(|at| &visible[at]).or(visible.first()) else {
+                    return false;
+                };
+                self.set_list_selected(pick);
+                self.list_query = None;
+                // The list itself takes it from here.
+                return true;
+            }
+            KeyCode::Backspace => {
+                query.pop();
+                self.list_query = Some(query);
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                query.push(c);
+                if let Some(&first) = (0..items.len())
+                    .filter(|&i| list_matches(&items[i], &query))
+                    .collect::<Vec<_>>()
+                    .first()
+                {
+                    self.set_list_selected(first);
+                }
+                self.list_query = Some(query);
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// Draws a list, narrowed to what matches the search if there is one,
+    /// with `/` among its keys.
+    fn draw_list(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        items: &[menu::MenuItem],
+        selected: usize,
+        keys: &[bindings::KeyHint],
+    ) {
+        let mut keys = keys.to_vec();
+        keys.insert(keys.len().saturating_sub(1), ("/", "search"));
+        let Some(query) = &self.list_query else {
+            let selected = selected.min(items.len().saturating_sub(1));
+            menu::draw_choices(frame, area, title, items, selected, &keys);
+            return;
+        };
+        let mut shown = Vec::new();
+        let mut at = 0;
+        for (i, item) in items.iter().enumerate() {
+            if list_matches(item, query) {
+                if i == selected {
+                    at = shown.len();
+                }
+                shown.push(item.clone());
+            }
+        }
+        if shown.is_empty() {
+            shown.push(menu::MenuItem {
+                key: ' ',
+                title: "no match".into(),
+                hint: "Esc clears the search".into(),
+                danger: false,
+                apart: false,
+            });
+        }
+        let title = format!("{title}· /{query}▏ ");
+        menu::draw_choices(frame, area, &title, &shown, at, &keys);
     }
 
     fn menu_items(&self) -> Vec<menu::MenuItem> {
@@ -5399,7 +5693,8 @@ impl App {
             PromptFor::NewWindow { window, .. } => format!(" Name new window {window} "),
             PromptFor::Search { forward: true } => " Search down ".to_owned(),
             PromptFor::Search { forward: false } => " Search up ".to_owned(),
-            PromptFor::NewSession => " New session ".to_owned(),
+            PromptFor::NewSession(None) => " New session ".to_owned(),
+            PromptFor::NewSession(Some(host)) => format!(" New session on {host} "),
             PromptFor::MoveWindow(n) => format!(" Move window {n} to session "),
             PromptFor::SaveHive => " Save running sessions as hive ".to_owned(),
             PromptFor::RenameHive(old) => format!(" Rename hive {old} "),
@@ -5418,7 +5713,7 @@ impl App {
                     PromptFor::Rename(_) => "Enter save · empty clears the name · Esc cancel",
                     PromptFor::NewWindow { .. } => "Enter save · Esc closes the window again",
                     PromptFor::Search { .. } => "Enter find · then n next, N previous · Esc cancel",
-                    PromptFor::NewSession => "Enter start and switch · letters, digits, - and _",
+                    PromptFor::NewSession(_) => "Enter start and switch · letters, digits, - and _",
                     PromptFor::MoveWindow(_) => "Enter move · a new name starts it · Esc cancel",
                     PromptFor::RenameSession(_) => "Enter rename · letters, digits, - and _",
                     PromptFor::SaveHive => "Enter save · letters, digits, - and _ · Esc cancel",
@@ -5702,6 +5997,16 @@ impl App {
                 "SETTINGS",
                 t.cyan,
                 "↑↓ select · ←→ Enter change · Esc close",
+            ),
+            Mode::NewWindowWhere(_) => (
+                "NEW WINDOW",
+                t.magenta,
+                "↑↓ choose the session, on any machine · Enter or digit · Esc cancel",
+            ),
+            Mode::NewSessionWhere(_) => (
+                "NEW SESSION",
+                t.magenta,
+                "↑↓ choose the machine · Enter or digit · Esc cancel",
             ),
             Mode::Marks(_) => (
                 "MARKS",
@@ -6024,6 +6329,16 @@ fn sessions_in_hives(host: &str) -> Option<Vec<String>> {
         })
         .max_by_key(|(time, _)| *time)
         .map(|(_, names)| names)
+}
+
+/// Whether a list item matches a search: every word of it somewhere in
+/// its title or hint, ignoring case.
+fn list_matches(item: &menu::MenuItem, query: &str) -> bool {
+    let text = format!("{} {}", item.title, item.hint).to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|word| text.contains(word))
 }
 
 /// What an agent elsewhere did since it was last seen `before`: came to
@@ -6419,6 +6734,21 @@ mod tests {
         let layout = screen_layout(screen, &Bars::default(), &spacing);
         assert_eq!(layout.bottom, Some(Rect::new(0, 23, 80, 1)));
         assert_eq!(layout.body, Rect::new(2, 1, 76, 21));
+    }
+
+    #[test]
+    fn search_matches_every_word_in_title_or_hint() {
+        let item = menu::MenuItem {
+            key: '1',
+            title: "brain".into(),
+            hint: "⇄ codingmachine".into(),
+            danger: false,
+            apart: false,
+        };
+        assert!(list_matches(&item, ""));
+        assert!(list_matches(&item, "BRA"));
+        assert!(list_matches(&item, "coding brain"));
+        assert!(!list_matches(&item, "brain laptop"));
     }
 
     #[test]

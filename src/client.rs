@@ -470,11 +470,20 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
     let pick = last && crate::config::Config::load().0.sessions_on_start;
     let mut hello = last.then_some((pick, flash));
     let mut reveal = None;
+    let mut window = false;
     let outcome = loop {
-        match session(conn, &writer, alone, hello.take(), reveal.take()) {
+        match session(
+            conn,
+            &writer,
+            alone,
+            hello.take(),
+            reveal.take(),
+            std::mem::take(&mut window),
+        ) {
             // Another session, on this machine, the one shown or another.
             Ok(Outcome::Switch(target)) => {
                 reveal = crate::protocol::target_pane(&target);
+                window = crate::protocol::target_wants_window(&target);
                 let (to_host, to_name) = crate::protocol::split_target(&target);
                 let to_host = match to_host {
                     Some(h) if h == crate::protocol::machine_name() => None,
@@ -493,6 +502,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                     // Back to where it was, which then tells why.
                     Err(e) => {
                         reveal = None;
+                        window = false;
                         *SHOWN_HOST.lock().unwrap() = host.clone();
                         match connect(host.as_deref(), &name) {
                             Ok(back) => {
@@ -582,6 +592,7 @@ fn caps() -> Caps {
         cell_height,
         hosts: true,
         panes: true,
+        windows: true,
         origin,
     }
 }
@@ -652,6 +663,7 @@ fn session(
     alone: bool,
     hello: Option<(bool, Option<String>)>,
     reveal: Option<crate::layout::PaneId>,
+    window: bool,
 ) -> Result<Outcome> {
     let mut to_server = std::mem::replace(&mut conn.writer, Box::new(io::sink()));
     let stream = &mut conn.reader;
@@ -661,6 +673,9 @@ fn session(
     ClientMsg::Caps(caps()).write_to(&mut to_server)?;
     if let Some(pane) = reveal {
         ClientMsg::Request(Request::Reveal { pane }).write_to(&mut to_server)?;
+    }
+    if window {
+        ClientMsg::Request(Request::NewWindow).write_to(&mut to_server)?;
     }
     if let Some((pick, flash)) = hello {
         if pick {

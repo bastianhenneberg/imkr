@@ -55,6 +55,9 @@ pub struct Caps {
     /// Follows `ServerMsg::Switch` to `…#pane`, showing that pane there.
     #[serde(default)]
     pub panes: bool,
+    /// Follows `ServerMsg::Switch` to `…#new`, opening a window there.
+    #[serde(default)]
+    pub windows: bool,
     /// The machine the client runs on, when that is not the server's: where
     /// it can switch back to, with the sessions running there.
     #[serde(default)]
@@ -196,6 +199,13 @@ pub fn target_pane(target: &str) -> Option<PaneId> {
     target.split_once('#')?.1.parse().ok()
 }
 
+/// Whether a switch target ends in `#new`: a new window there.
+pub fn target_wants_window(target: &str) -> bool {
+    target
+        .split_once('#')
+        .is_some_and(|(_, what)| what == "new")
+}
+
 /// Commands for scripts and agents, sent by `imkr status`, `list`,
 /// `send` and `new`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -240,6 +250,9 @@ pub enum Request {
     Flash { text: String },
     /// Show pane `pane` and focus it, e.g. after switching to its session.
     Reveal { pane: PaneId },
+    /// Open a new window and ask for its name, as `Ctrl+B n` does, e.g.
+    /// after switching to the session it is for.
+    NewWindow,
     /// The other machines this server knows, with their sessions, as
     /// `Vec<HostInfo>`.
     Places,
@@ -503,6 +516,7 @@ mod tests {
                 cell_height: 19,
                 hosts: true,
                 panes: true,
+                windows: true,
                 origin: Some(Origin {
                     host: "omarchy".into(),
                     sessions: vec!["default".into()],

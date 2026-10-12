@@ -56,6 +56,8 @@ pub enum Command {
     TogglePopup,
     /// Every agent here and elsewhere, to jump to.
     Agents,
+    /// A new window in a session chosen from all, on any machine.
+    NewWindowElsewhere,
     /// Mark the focused pane for Alt+1 … Alt+9, like Harpoon.
     Mark,
     /// The marks, to jump to, reorder and remove.
@@ -391,10 +393,13 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Char('w')), C::Open(Menu::Workspaces))],
     },
     Binding {
-        label: "n",
-        description: "new window",
+        label: "n N",
+        description: "new window / elsewhere…",
         group: Group::Navigate,
-        keys: &[(Key::plain(Char('n')), C::NewWorkspace)],
+        keys: &[
+            (Key::plain(Char('n')), C::NewWorkspace),
+            (Key::plain(Char('N')), C::NewWindowElsewhere),
+        ],
     },
     Binding {
         label: "[",
@@ -794,6 +799,13 @@ pub const MARK_LIST_KEYS: &[KeyHint] = &[
     ("Enter", "or key go there"),
     ("J K", "move down/up"),
     ("x", "remove"),
+    ("Esc", "cancel"),
+];
+
+/// The keys of the lists that only pick a place: machine, session.
+pub const CHOOSE_LIST_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    ("Enter", "or key choose"),
     ("Esc", "cancel"),
 ];
 
