@@ -811,6 +811,7 @@ impl App {
         };
 
         let template = saved.template.clone();
+        let resume_commands = self.config.resume_commands();
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
             for (id, rect) in ws.rects(self.body) {
@@ -835,8 +836,21 @@ impl App {
                 );
                 match spawned {
                     Ok(mut pane) => {
-                        if let Some(command) = spec.resume_command().or(spec.command.clone()) {
-                            let _ = pane.write(format!("{command}\r").as_bytes());
+                        let resume = match self.config.resume {
+                            config::Resume::Off => None,
+                            _ => spec.resume_command(&resume_commands),
+                        };
+                        // A template's command always starts; a resume only
+                        // with the user's Enter when they asked for that.
+                        if let Some(command) = resume.clone().or(spec.command.clone()) {
+                            let enter =
+                                resume.is_none() || self.config.resume == config::Resume::Auto;
+                            let line = if enter {
+                                format!("{command}\r")
+                            } else {
+                                command
+                            };
+                            let _ = pane.write(line.as_bytes());
                         }
                         pane.session = spec.session.clone();
                         pane.name = spec.name.clone();

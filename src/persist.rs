@@ -63,8 +63,14 @@ impl Saved {
 
 impl SavedPane {
     /// The command that picks the agent's conversation up again, typed into
-    /// the fresh shell.
-    pub fn resume_command(&self) -> Option<String> {
+    /// the fresh shell: the agent's one of `commands`, with `{session}`
+    /// replaced by the session id its hooks reported. One that needs an id
+    /// is left out without one.
+    pub fn resume_command(&self, commands: &BTreeMap<String, String>) -> Option<String> {
+        let template = commands.get(self.agent.as_deref()?)?;
+        if !template.contains("{session}") {
+            return Some(template.clone());
+        }
         let session = self.session.as_deref()?;
         // Session ids are uuids. Anything else is not typed into a shell.
         if session.is_empty()
@@ -74,11 +80,7 @@ impl SavedPane {
         {
             return None;
         }
-        match self.agent.as_deref()? {
-            "claude" => Some(format!("claude --resume {session}")),
-            "codex" => Some(format!("codex resume {session}")),
-            _ => None,
-        }
+        Some(template.replace("{session}", session))
     }
 }
 
@@ -597,18 +599,27 @@ mod tests {
             session: Some(session.into()),
             ..Default::default()
         };
+        let commands = crate::config::Config::default().resume_commands();
         assert_eq!(
-            claude("9f1c-77ab").resume_command().as_deref(),
+            claude("9f1c-77ab").resume_command(&commands).as_deref(),
             Some("claude --resume 9f1c-77ab")
         );
-        assert_eq!(claude("x; rm -rf ~").resume_command(), None);
-        assert_eq!(claude("").resume_command(), None);
+        assert_eq!(claude("x; rm -rf ~").resume_command(&commands), None);
+        assert_eq!(claude("").resume_command(&commands), None);
+        // Agents without session ids continue their last conversation.
         let aider = SavedPane {
             agent: Some("aider".into()),
-            session: Some("abc".into()),
             ..Default::default()
         };
-        assert_eq!(aider.resume_command(), None);
+        assert_eq!(
+            aider.resume_command(&commands).as_deref(),
+            Some("aider --restore-chat-history")
+        );
+        let kilo = SavedPane {
+            agent: Some("kilo".into()),
+            ..Default::default()
+        };
+        assert_eq!(kilo.resume_command(&commands), None);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! The server loads them at start. The settings menu changes them live and
 //! writes them back right away.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -171,6 +172,14 @@ pub struct Config {
     pub notifications: Notifications,
     /// The user's own commands, in the `Ctrl+B c` menu.
     pub commands: Vec<UserCommand>,
+    /// Whether agents are resumed after a restart: typed in and started,
+    /// typed in for the user to start with Enter, or not at all.
+    pub resume: Resume,
+    /// The command that resumes each agent, `{session}` for the session id
+    /// its hooks report; over `DEFAULT_RESUME`, an empty one turns an agent
+    /// off.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub resume_commands: BTreeMap<String, String>,
     /// Shell commands run when something happens, see `Hook`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<Hook>,
@@ -223,7 +232,41 @@ pub const HOOK_EVENTS: &[&str] = &[
     "detach",
 ];
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Resume {
+    /// Typed in and started.
+    #[default]
+    Auto,
+    /// Typed in, Enter is the user's.
+    Ask,
+    Off,
+}
+
+/// How agents pick up their conversation again: by the session id their
+/// hooks report (Claude Code, Codex), else the last one in the directory.
+pub const DEFAULT_RESUME: &[(&str, &str)] = &[
+    ("claude", "claude --resume {session}"),
+    ("codex", "codex resume {session}"),
+    ("opencode", "opencode --continue"),
+    ("aider", "aider --restore-chat-history"),
+    ("goose", "goose session --resume"),
+    ("cursor-agent", "cursor-agent resume"),
+];
+
 impl Config {
+    /// The resume command of every agent: the defaults with the user's own
+    /// over them, empty ones left out.
+    pub fn resume_commands(&self) -> BTreeMap<String, String> {
+        let mut all: BTreeMap<String, String> = DEFAULT_RESUME
+            .iter()
+            .map(|(agent, command)| ((*agent).to_owned(), (*command).to_owned()))
+            .collect();
+        all.extend(self.resume_commands.clone());
+        all.retain(|_, command| !command.trim().is_empty());
+        all
+    }
+
     /// Hooks on events there are none of, e.g. misspelt, as a note.
     pub fn hook_problems(&self) -> Option<String> {
         let unknown: Vec<&str> = self
@@ -305,6 +348,8 @@ impl Default for Config {
                 float: true,
             }],
             hooks: Vec::new(),
+            resume: Resume::default(),
+            resume_commands: BTreeMap::new(),
             images: true,
             renumber_windows: false,
             marks_on_alt: true,
@@ -448,6 +493,24 @@ pub const SETTINGS: &[Setting] = &[
                     Notifications::Off,
                 ],
                 &c.notifications,
+                forward,
+            )
+        },
+    },
+    Setting {
+        name: "Resume agents after a restart",
+        value: |c| {
+            match c.resume {
+                Resume::Auto => "start them",
+                Resume::Ask => "type, Enter starts",
+                Resume::Off => "off",
+            }
+            .to_owned()
+        },
+        step: |c, forward| {
+            c.resume = step_in(
+                &[Resume::Auto, Resume::Ask, Resume::Off],
+                &c.resume,
                 forward,
             )
         },

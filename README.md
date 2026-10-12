@@ -394,8 +394,12 @@ machine included (clients from before 0.7 keep their old code until they attach 
 
 imkr saves the layout to `~/.local/state/imkr/session.json` while it runs: windows,
 splits, floating panes and each pane's directory. If the server dies with the machine, the next
-`imkr` brings the layout back, shells start in their old directories, and Claude Code and
-Codex sessions known from the hooks are resumed (`claude --resume <id>`). Each pane's history
+`imkr` brings the layout back, shells start in their old directories, and agents are resumed:
+Claude Code and Codex by the session id their hooks report (`claude --resume <id>`), opencode,
+aider, goose and cursor-agent with their last conversation in that directory. *Resume agents
+after a restart* in the settings starts them, only types the command for you to start with
+Enter, or leaves them off; `[resume_commands]` in the config sets the command per agent
+(`{session}` for the id, `""` turns one off), e.g. `gemini = "gemini --resume latest"`. Each pane's history
 comes back too, as text above a line *restored after a restart*: the last 3000 lines are kept
 every 20 seconds in `<session>.scrollback/` next to the file, readable by you only. Processes
 cannot survive a restart. Ending the session on purpose (`Ctrl+B Q`, `kill-server`, or
