@@ -515,6 +515,9 @@ The terminal's title shows the window and the focused pane, e.g. `imkr · 2 api 
 - Drag a floating pane by its title bar, resize it by its bottom right corner.
 - Drag over text to select it, it is copied when you let go. A double click copies a word.
 - The wheel scrolls back through the history, typing jumps back to the live screen.
+- `Ctrl`+click opens a link: a URL written as text, or a hyperlink a program marks (OSC 8, like
+  `ls --hyperlink` or Claude Code's file links). It opens on the machine you sit at, also when
+  the session runs on another one; only `http(s)`, `mailto` and `file` links.
 - Programs that use the mouse themselves, like nvim or htop, get the events. Hold Shift to
   select text in them anyway.
 

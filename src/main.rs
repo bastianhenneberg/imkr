@@ -10,6 +10,7 @@ mod filetree;
 mod graphics;
 mod keys;
 mod layout;
+mod links;
 mod menu;
 mod mouse;
 mod pane;

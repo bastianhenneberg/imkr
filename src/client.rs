@@ -699,8 +699,29 @@ fn caps() -> Caps {
         hosts: true,
         panes: true,
         windows: true,
+        open: true,
         origin,
     }
+}
+
+/// Opens `url` with the desktop's handler, on this machine, unseen.
+fn open_url(url: &str) {
+    if !crate::links::openable(url) {
+        return;
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let _ = Command::new(opener)
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(|mut child| thread::spawn(move || child.wait()));
 }
 
 /// Tells a running server to shut down.
@@ -804,6 +825,7 @@ fn session(
             Ok(Some(ServerMsg::Exited)) => return Ok(Outcome::Exited),
             Ok(Some(ServerMsg::Reply(_))) => {}
             Ok(Some(ServerMsg::Switch(name))) => return Ok(Outcome::Switch(name)),
+            Ok(Some(ServerMsg::Open(url))) => open_url(&url),
             Ok(None) | Err(_) => return Ok(Outcome::ConnectionLost),
         }
     }

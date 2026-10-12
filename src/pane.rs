@@ -31,6 +31,8 @@ pub struct Pane {
     last_output: Arc<Mutex<Instant>>,
     /// Images the program shows with the kitty graphics protocol.
     pub graphics: Arc<Mutex<PaneGraphics>>,
+    /// Hyperlinks the program marked with OSC 8, the newest last.
+    links: Arc<Mutex<Vec<crate::links::Link>>>,
     /// The agent state the program reported with `imkr status`.
     pub reported: Option<AgentState>,
     /// The agent's session id from its hooks, e.g. for `claude --resume`.
@@ -217,6 +219,7 @@ impl Pane {
             size: (rows, cols),
             last_output: Arc::new(Mutex::new(Instant::now())),
             graphics: Arc::new(Mutex::new(PaneGraphics::default())),
+            links: Arc::new(Mutex::new(Vec::new())),
             reported: None,
             session: None,
             name: None,
@@ -243,6 +246,7 @@ impl Pane {
         let reader_parser = Arc::clone(&self.parser);
         let reader_last_output = Arc::clone(&self.last_output);
         let reader_graphics = Arc::clone(&self.graphics);
+        let reader_links = Arc::clone(&self.links);
         let events = self.events.clone();
         let thread = thread::Builder::new()
             .name("pty-reader".into())
@@ -250,6 +254,8 @@ impl Pane {
                 let mut buf = [0u8; 8192];
                 let mut scanner = Scanner::default();
                 let mut copies = crate::clipboard::Osc52Scanner::default();
+                let mut hyperlinks = crate::links::LinkScanner::default();
+                let mut open: Option<(String, (usize, u16))> = None;
                 loop {
                     // Stopped: the pty is someone else's from here on, not a
                     // byte more is read.
@@ -277,7 +283,37 @@ impl Pane {
                                                 .unwrap()
                                                 .clear_screen(history, all);
                                         }
-                                        parser.process(&text);
+                                        for piece in hyperlinks.feed(&text) {
+                                            let cursor = |parser: &mut vt100::Parser| {
+                                                let history = history_len(parser);
+                                                let (row, col) = parser.screen().cursor_position();
+                                                (history + usize::from(row), col)
+                                            };
+                                            match piece {
+                                                crate::links::Piece::Text(text) => {
+                                                    parser.process(&text);
+                                                }
+                                                crate::links::Piece::Start(url) => {
+                                                    open = Some((url, cursor(&mut parser)));
+                                                }
+                                                crate::links::Piece::End => {
+                                                    let Some((url, from)) = open.take() else {
+                                                        continue;
+                                                    };
+                                                    let to = cursor(&mut parser);
+                                                    let mut links = reader_links.lock().unwrap();
+                                                    links.push(crate::links::Link {
+                                                        url,
+                                                        from,
+                                                        to,
+                                                    });
+                                                    let over = links
+                                                        .len()
+                                                        .saturating_sub(crate::links::KEPT);
+                                                    links.drain(..over);
+                                                }
+                                            }
+                                        }
                                     }
                                     Chunk::Graphics(body) => {
                                         let history = history_len(&mut parser);
@@ -478,6 +514,23 @@ impl Pane {
         let all = self.text((0, 0), (total - 1, cols));
         let all: Vec<&str> = all.trim_end().lines().collect();
         all[all.len().saturating_sub(lines)..].join("\n")
+    }
+
+    /// The link at absolute cell `at`: a hyperlink the program marked, else
+    /// a URL written there as text, also one that wraps onto the next row.
+    pub fn link_at(&self, at: (usize, u16)) -> Option<String> {
+        if let Some(url) = crate::links::link_at(&self.links.lock().unwrap(), at) {
+            return crate::links::openable(url).then(|| url.to_owned());
+        }
+        let cols = self.size.1;
+        let (row, col) = at;
+        let mut line = self.text((row, 0), (row, cols));
+        // A URL to the end of the row may go on in the next.
+        if line.chars().count() >= usize::from(cols) && !line.ends_with(' ') {
+            let next = self.text((row + 1, 0), (row + 1, cols));
+            line.extend(next.chars().take_while(|c| !c.is_whitespace()));
+        }
+        crate::links::url_in(&line, usize::from(col))
     }
 
     /// When the program last wrote something.

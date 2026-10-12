@@ -100,6 +100,11 @@ Projekt-Slug: `imkr`
   `imkr revive`) zurück, stopped stellt der startende Server selbst her. `imkr forget`, `x` in
   `Ctrl+B S`. Server erben keine Claude-Sitzungsvariablen (`client::is_agent_session_var`), sonst
   speichert Claude in den Panes keine Transcripts.
+- Links: `src/links.rs` (`LinkScanner` trennt OSC 8 aus der Ausgabe, im Pane-Reader nach dem
+  Grafik-Scanner; Start/Ende mit Cursorposition als `Link` in `Pane::links`, max. 500; `url_in`
+  für Klartext-URLs). Ctrl+Klick in `App::mouse` vor `forward_mouse` → `Pane::link_at` →
+  `ServerMsg::Open` (Tag 6, nur an Clients mit `Caps::open`) → Client `open_url` (xdg-open).
+  Test: Fake-`xdg-open` im Scratchpad, Klick als `tmux send-keys -l $'\e[<16;x;yM'` (16 = Ctrl).
 - OSC 52 aus Panes: `clipboard::Osc52Scanner` im Pane-Reader (vor dem Grafik-Scanner, über
   Lesegrenzen), `AppEvent::Clipboard` → `send_active`. Clipboard-Abfragen (`?`) werden verworfen.
   Test verschachtelt: im Pane `ssh -t -- server <scratchpad>/bin/imkr` aufrufen, nicht `imkr`

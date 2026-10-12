@@ -58,6 +58,9 @@ pub struct Caps {
     /// Follows `ServerMsg::Switch` to `…#new`, opening a window there.
     #[serde(default)]
     pub windows: bool,
+    /// Opens URLs it is sent with `ServerMsg::Open`.
+    #[serde(default)]
+    pub open: bool,
     /// The machine the client runs on, when that is not the server's: where
     /// it can switch back to, with the sessions running there.
     #[serde(default)]
@@ -388,6 +391,9 @@ pub enum ServerMsg {
     /// Leave this server and attach to the session with this name instead,
     /// starting it if needed.
     Switch(String),
+    /// Open this URL on the client's machine, e.g. after a `Ctrl`+click on
+    /// a link. Only to clients with `Caps::open`.
+    Open(String),
 }
 
 impl ClientMsg {
@@ -431,6 +437,7 @@ impl ServerMsg {
             ServerMsg::Exited => write_frame(w, 3, &[]),
             ServerMsg::Reply(reply) => write_frame(w, 4, &serde_json::to_vec(reply)?),
             ServerMsg::Switch(name) => write_frame(w, 5, name.as_bytes()),
+            ServerMsg::Open(url) => write_frame(w, 6, url.as_bytes()),
         }
     }
 
@@ -445,6 +452,9 @@ impl ServerMsg {
             3 => Ok(Some(ServerMsg::Exited)),
             4 => Ok(Some(ServerMsg::Reply(serde_json::from_slice(&payload)?))),
             5 => Ok(Some(ServerMsg::Switch(
+                String::from_utf8(payload).map_err(|e| invalid(e.to_string()))?,
+            ))),
+            6 => Ok(Some(ServerMsg::Open(
                 String::from_utf8(payload).map_err(|e| invalid(e.to_string()))?,
             ))),
             _ => Err(invalid(format!("unknown server message {tag}"))),
@@ -597,6 +607,7 @@ mod tests {
                 hosts: true,
                 panes: true,
                 windows: true,
+                open: true,
                 origin: Some(Origin {
                     host: "omarchy".into(),
                     sessions: vec!["default".into()],
@@ -645,6 +656,7 @@ mod tests {
             ServerMsg::Reply(Ok(serde_json::json!({"pane": 4}))),
             ServerMsg::Reply(Err("no pane 9".into())),
             ServerMsg::Switch("work".into()),
+            ServerMsg::Open("https://example.com".into()),
         ];
         let mut wire = Vec::new();
         for msg in &msgs {

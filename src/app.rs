@@ -1352,6 +1352,20 @@ impl App {
 
     /// Sends `bytes` to the client whose input is handled now, or to all if
     /// that one is gone.
+    /// Has the user's terminal open `url`, on the machine it runs on.
+    fn open_link(&mut self, url: String) {
+        let active = self.active;
+        let Some(client) = self.clients.iter_mut().find(|c| Some(c.id) == active) else {
+            return;
+        };
+        if !client.caps.open {
+            self.flash = Some("this terminal's imkr cannot open links yet, reattach".into());
+            return;
+        }
+        let _ = client.send(&ServerMsg::Open(url.clone()));
+        self.flash = Some(format!("opening {url}"));
+    }
+
     fn send_active(&mut self, bytes: &[u8]) {
         let active = self.active;
         match self.clients.iter_mut().find(|c| Some(c.id) == active) {
@@ -3061,6 +3075,14 @@ impl App {
                     }
                 }
                 let inner = self.inner(rect);
+                // Ctrl+click opens a link, before the program sees the click.
+                if event.modifiers.contains(KeyModifiers::CONTROL) && inner.contains(pos) {
+                    let at = self.to_abs(id, pos.y - inner.y, pos.x - inner.x);
+                    if let Some(url) = self.panes.get(&id).and_then(|pane| pane.link_at(at)) {
+                        self.open_link(url);
+                        return Ok(());
+                    }
+                }
                 if !inner.contains(pos) || self.forward_mouse(id, event, inner)? {
                     return Ok(());
                 }
