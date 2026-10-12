@@ -133,8 +133,14 @@ impl SessionInfo {
     }
 }
 
-/// This machine's name, as `hostname` prints it.
+/// This machine's name, as `hostname` prints it, or `$IMKR_HOSTNAME`,
+/// which tests use to play several machines on one.
 pub fn hostname() -> String {
+    if let Ok(name) = std::env::var("IMKR_HOSTNAME")
+        && !name.is_empty()
+    {
+        return name;
+    }
     fs::read_to_string("/proc/sys/kernel/hostname")
         .map(|name| name.trim().to_owned())
         .unwrap_or_else(|_| "here".into())

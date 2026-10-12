@@ -224,6 +224,9 @@ struct Places {
     /// Agents on other machines that came to need the user or finished,
     /// as notification title and text, for the server to pass on.
     alerts: Vec<(String, String)>,
+    /// The sessions each host had when it last answered, to show them
+    /// while it is off.
+    last_seen: HashMap<String, Vec<String>>,
 }
 
 /// A session to switch to: on this machine (`host` is `None`) or another.
@@ -253,6 +256,8 @@ struct Popup {
 /// How often the sessions here and on other machines are listed again.
 const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(5);
+/// How often hives saved on other machines are fetched.
+const HIVES_EVERY: Duration = Duration::from_secs(60);
 
 /// Where images are placed, by (image, placement): column, row, columns
 /// and rows.
@@ -1627,6 +1632,7 @@ impl App {
             name: info.name.clone(),
             state: info.urgent(),
             problem: None,
+            offline: false,
         };
         let mut rows: Vec<sidebar::SessionRow> = here.iter().map(|info| row(None, info)).collect();
         if let Some(origin) = self.origin.clone() {
@@ -1639,14 +1645,30 @@ impl App {
                 Ok(sessions) => {
                     rows.extend(sessions.iter().map(|info| row(Some(host.clone()), info)));
                 }
-                Err(e) => rows.push(sidebar::SessionRow {
-                    host: Some(host.clone()),
-                    machine: self.machine_label(Some(host)),
-                    name: String::new(),
-                    current: false,
-                    state: None,
-                    problem: Some(short_problem(e)),
-                }),
+                Err(e) => {
+                    rows.push(sidebar::SessionRow {
+                        host: Some(host.clone()),
+                        machine: self.machine_label(Some(host)),
+                        name: String::new(),
+                        current: false,
+                        state: None,
+                        problem: Some(short_problem(e)),
+                        offline: true,
+                    });
+                    // What ran there when it last answered, greyed out.
+                    let seen = places.last_seen.get(host).cloned().unwrap_or_default();
+                    for name in seen {
+                        rows.push(sidebar::SessionRow {
+                            host: Some(host.clone()),
+                            machine: self.machine_label(Some(host)),
+                            name,
+                            current: false,
+                            state: None,
+                            problem: None,
+                            offline: true,
+                        });
+                    }
+                }
             }
         }
         rows
@@ -2907,6 +2929,7 @@ impl App {
                     title: place.name.clone(),
                     hint,
                     danger: false,
+                    apart: false,
                 };
                 (place, item)
             })
@@ -2916,6 +2939,7 @@ impl App {
             title: "new session…".into(),
             hint: "`imkr -s NAME` does the same".into(),
             danger: false,
+            apart: true,
         });
         (places, items)
     }
@@ -2945,6 +2969,7 @@ impl App {
                 title: name.clone(),
                 hint: String::new(),
                 danger: false,
+                apart: false,
             })
             .collect();
         items.push(menu::MenuItem {
@@ -2952,6 +2977,7 @@ impl App {
             title: "new session…".into(),
             hint: "started for this window".into(),
             danger: false,
+            apart: true,
         });
         (names, items)
     }
@@ -2960,7 +2986,8 @@ impl App {
     /// the name of a new one.
     fn move_to_key(&mut self, key: KeyEvent, window: u8, selected: usize) {
         let (names, items) = self.move_to_items();
-        let count = items.len();
+        // The arrows stay on the running sessions: a new one takes n.
+        let count = items.iter().filter(|item| !item.apart).count().max(1);
         let pick = match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
@@ -3008,7 +3035,7 @@ impl App {
             .map(|(i, info)| {
                 let age = persist::now().saturating_sub(info.saved_at);
                 let age = crate::sidebar::age(Duration::from_secs(age));
-                let sessions: Vec<String> = info
+                let mut sessions: Vec<String> = info
                     .sessions
                     .iter()
                     .map(|s| {
@@ -3019,6 +3046,9 @@ impl App {
                         }
                     })
                     .collect();
+                if !info.elsewhere.is_empty() {
+                    sessions.push(format!("⇄ {}", info.elsewhere.join(", ")));
+                }
                 let auto = if info.name == persist::LAST {
                     " · ended sessions"
                 } else {
@@ -3029,6 +3059,7 @@ impl App {
                     title: info.name.clone(),
                     hint: format!("{} · {age} ago{auto}", sessions.join(", ")),
                     danger: false,
+                    apart: false,
                 }
             })
             .collect();
@@ -3047,7 +3078,8 @@ impl App {
                 Some(_) => String::new(),
             })
             .collect();
-        let count = items.len();
+        // The arrows stay on what runs: a new session takes n or a click.
+        let count = items.iter().filter(|item| !item.apart).count().max(1);
         let pick = match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
@@ -3176,29 +3208,57 @@ impl App {
         }
     }
 
-    /// Starts the sessions of hive `name` that do not run.
+    /// Brings hive `name` back on every machine in it, see
+    /// `client::restore_hive`. Machines take a moment to answer, so it runs
+    /// on a thread, which says how it went through the socket.
     fn restore_hive(&mut self, name: &str) {
-        self.flash = Some(match crate::client::restore_hive(name) {
-            Ok(started) if started.is_empty() => {
-                format!("every session of hive {name} runs already")
-            }
-            Ok(started) => format!("hive {name}: started {}, ^B S switches", started.join(", ")),
-            Err(e) => format!("not restored: {e:#}"),
+        let socket = self.socket.clone();
+        let name = name.to_owned();
+        self.flash = Some(format!("bringing back hive {name}…"));
+        thread::spawn(move || {
+            let text = match crate::client::restore_hive(&name, None, None) {
+                Ok(lines) => format!("hive {name}: {}", lines.join(" · ")),
+                Err(e) => format!("not restored: {e:#}"),
+            };
+            let _ = crate::client::request_at(&socket, Request::Flash { text });
         });
     }
 
-    /// Saves every running session as hive `name`, this one from memory:
-    /// asking its own socket would wait on itself.
+    /// Saves every running session as hive `name`, here and on every known
+    /// machine, this one from memory: asking its own socket would wait on
+    /// itself. Asking the other machines takes a moment, so it happens on
+    /// a thread, which says how it went through the socket.
     fn save_hive(&mut self, name: &str) {
         let own = (protocol::session_name(), self.saved());
-        let result =
-            crate::client::snapshot_all_but(Some((own.0.as_str(), own.1))).and_then(|hive| {
-                persist::write_hive(name, &hive)?;
-                Ok(hive.sessions.into_keys().collect::<Vec<_>>())
+        let socket = self.socket.clone();
+        let name = name.to_owned();
+        self.flash = Some(format!("saving hive {name}…"));
+        thread::spawn(move || {
+            let previous = persist::load_hive(&name).ok().flatten();
+            let result = crate::client::snapshot_everywhere(
+                Some((own.0.as_str(), own.1)),
+                previous.as_ref(),
+            )
+            .and_then(|hive| {
+                persist::write_hive(&name, &hive)?;
+                // Every machine gets it, to bring back from anywhere.
+                if name != persist::LAST {
+                    crate::client::push_hive(&name, &hive);
+                }
+                Ok(hive)
             });
-        self.flash = Some(match result {
-            Ok(sessions) => format!("hive {name} saved: {}", sessions.join(", ")),
-            Err(e) => format!("not saved: {e:#}"),
+            let text = match result {
+                Ok(hive) => {
+                    let elsewhere: usize = hive.machines.iter().map(|m| m.sessions.len()).sum();
+                    format!(
+                        "hive {name} saved: {} here, {elsewhere} on {} other machines",
+                        hive.sessions.len(),
+                        hive.machines.len()
+                    )
+                }
+                Err(e) => format!("not saved: {e:#}"),
+            };
+            let _ = crate::client::request_at(&socket, Request::Flash { text });
         });
     }
 
@@ -4736,6 +4796,7 @@ impl App {
                         title: "no hives yet".into(),
                         hint: "s saves the running sessions as one".into(),
                         danger: false,
+                        apart: false,
                     });
                 }
                 menu::draw_choices(
@@ -4760,12 +4821,14 @@ impl App {
                     title: "Detach".into(),
                     hint: "shells keep running, `imkr` brings you back".into(),
                     danger: false,
+                    apart: false,
                 },
                 MenuEntry::ClosePane => menu::MenuItem {
                     key,
                     title: format!("Close pane {}", self.ws.focus),
                     hint: "ends the program running in it".into(),
                     danger: true,
+                    apart: false,
                 },
                 MenuEntry::EndSession => menu::MenuItem {
                     key,
@@ -4775,6 +4838,7 @@ impl App {
                         if shells == 1 { "shell" } else { "shells" }
                     ),
                     danger: true,
+                    apart: false,
                 },
             })
             .collect()
@@ -5283,7 +5347,7 @@ fn short_problem(error: &str) -> String {
     } else if error.contains("no sessions") {
         "no sessions".into()
     } else {
-        "not reachable".into()
+        "offline".into()
     }
 }
 
@@ -5294,6 +5358,7 @@ fn short_problem(error: &str) -> String {
 fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
     let _ = thread::Builder::new().name("places".into()).spawn(move || {
         let mut hosts_at: Option<Instant> = None;
+        let mut hives_at: Option<Instant> = None;
         // The state each agent elsewhere was last seen in, by host, session
         // and pane.
         let mut states: HashMap<(String, String, PaneId), String> = HashMap::new();
@@ -5340,7 +5405,31 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                     }
                 }
                 states = now;
+                // Hives saved elsewhere come here too, from those that answer.
+                if hives_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {
+                    hives_at = Some(Instant::now());
+                    for (host, sessions) in &found {
+                        if sessions.is_ok() {
+                            let _ = crate::client::pull_hives(host);
+                        }
+                    }
+                }
                 let mut places = places.lock().unwrap();
+                for (host, sessions) in &found {
+                    match sessions {
+                        Ok(sessions) => {
+                            let names = sessions.iter().map(|s| s.name.clone()).collect();
+                            places.last_seen.insert(host.clone(), names);
+                        }
+                        // Never seen from here: what the newest hive knows.
+                        Err(_) if !places.last_seen.contains_key(host) => {
+                            if let Some(names) = sessions_in_hives(host) {
+                                places.last_seen.insert(host.clone(), names);
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
                 places.hosts = found;
                 places.alerts.extend(alerts);
             }
@@ -5363,6 +5452,23 @@ fn origin_infos(origin: &protocol::Origin) -> Vec<protocol::SessionInfo> {
             ..Default::default()
         })
         .collect()
+}
+
+/// The sessions machine `host` had in the newest hive that has it.
+fn sessions_in_hives(host: &str) -> Option<Vec<String>> {
+    persist::shared_hives()
+        .into_values()
+        .filter_map(|hive| {
+            let time = persist::hive_time(&hive);
+            let sessions = if hive.machine == host {
+                hive.sessions
+            } else {
+                hive.machines.into_iter().find(|m| m.name == host)?.sessions
+            };
+            Some((time, sessions.into_keys().collect()))
+        })
+        .max_by_key(|(time, _)| *time)
+        .map(|(_, names)| names)
 }
 
 /// What an agent elsewhere did since it was last seen `before`: came to

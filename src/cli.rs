@@ -417,18 +417,37 @@ pub fn save(args: &[String]) -> Result<()> {
         [name] => name.as_str(),
         _ => bail!("usage: imkr save [NAME]"),
     };
-    let hive = client::snapshot_all()?;
-    if hive.sessions.is_empty() {
+    let previous = crate::persist::load_hive(name).ok().flatten();
+    let hive = client::snapshot_everywhere(None, previous.as_ref())?;
+    if hive.sessions.is_empty() && hive.machines.is_empty() {
         bail!("no session is running");
     }
     let path = crate::persist::write_hive(name, &hive)?;
-    let names: Vec<&str> = hive.sessions.keys().map(String::as_str).collect();
-    println!(
-        "hive {name}: saved {} to {}",
-        names.join(", "),
-        path.display()
-    );
+    println!("hive {name}: saved to {}", path.display());
+    print_hive(&hive);
+    if name != crate::persist::LAST {
+        let to = client::push_hive(name, &hive);
+        if !to.is_empty() {
+            println!("  given to {}", to.join(", "));
+        }
+    }
     Ok(())
+}
+
+/// What a hive holds, machine by machine.
+fn print_hive(hive: &crate::persist::Hive) {
+    let names = |sessions: &std::collections::BTreeMap<String, crate::persist::HiveSession>| {
+        sessions.keys().cloned().collect::<Vec<_>>().join(", ")
+    };
+    let here = if hive.machine.is_empty() {
+        "here"
+    } else {
+        &hive.machine
+    };
+    println!("  ⌂ {here}: {}", names(&hive.sessions));
+    for machine in &hive.machines {
+        println!("  ⇄ {}: {}", machine.name, names(&machine.sessions));
+    }
 }
 
 /// `imkr restore [NAME]`: starts the sessions of a save file that do
@@ -440,33 +459,44 @@ pub fn restore(args: &[String]) -> Result<()> {
                 let Ok(Some(hive)) = crate::persist::load_hive(&name) else {
                     continue;
                 };
-                let sessions: Vec<String> = hive
+                let age = |saved_at: u64| {
+                    let age = crate::persist::now().saturating_sub(saved_at);
+                    crate::sidebar::age(std::time::Duration::from_secs(age))
+                };
+                let mut sessions: Vec<String> = hive
                     .sessions
                     .iter()
-                    .map(|(session, saved)| {
-                        let age = crate::persist::now().saturating_sub(saved.saved_at);
-                        let age = crate::sidebar::age(std::time::Duration::from_secs(age));
-                        format!("{session} ({age} ago)")
-                    })
+                    .map(|(session, saved)| format!("{session} ({} ago)", age(saved.saved_at)))
                     .collect();
+                for machine in &hive.machines {
+                    for (session, saved) in &machine.sessions {
+                        sessions.push(format!(
+                            "⇄ {}:{session} ({} ago)",
+                            machine.name,
+                            age(saved.saved_at)
+                        ));
+                    }
+                }
                 println!("{name:<12} {}", sessions.join(", "));
             }
             Ok(())
         }
-        [] | [_] => {
-            let name = args.first().map_or(crate::persist::LAST, String::as_str);
-            let started = client::restore_hive(name)?;
-            if started.is_empty() {
-                println!("every session of {name} runs already");
-            } else {
-                println!(
-                    "started {}; attach with `imkr -s NAME` or switch with Ctrl+B S",
-                    started.join(", ")
-                );
+        _ if !args.iter().any(|a| a == "--list") => {
+            let mut rest = args.to_vec();
+            let from = take_value(&mut rest, "--from")?;
+            let take = take_value(&mut rest, "--take")?;
+            let name = match rest.as_slice() {
+                [] => crate::persist::LAST,
+                [name] => name.as_str(),
+                _ => bail!("usage: imkr restore [NAME] [--from HOST] [--take MACHINE]"),
+            };
+            for line in client::restore_hive(name, from.as_deref(), take.as_deref())? {
+                println!("{line}");
             }
+            println!("switch with Ctrl+B S, or attach with `imkr -s NAME`");
             Ok(())
         }
-        _ => bail!("usage: imkr restore [NAME | --list]"),
+        _ => bail!("usage: imkr restore [NAME | --list] [--from HOST] [--take MACHINE]"),
     }
 }
 
@@ -479,6 +509,38 @@ pub fn hive(args: &[String]) -> Result<()> {
         [] => bail!(USAGE),
         [cmd] if cmd == "ls" => restore(&["--list".to_owned()]),
         [cmd, rest @ ..] if cmd == "save" => save(rest),
+        // Hives between machines: all shared ones out as JSON, and in from
+        // stdin, each only if newer.
+        [cmd] if cmd == "export" => {
+            println!(
+                "{}",
+                serde_json::to_string(&crate::persist::shared_hives())?
+            );
+            Ok(())
+        }
+        [cmd] if cmd == "import" => {
+            let hives = serde_json::from_reader(std::io::stdin())?;
+            let taken = crate::persist::import_hives(hives)?;
+            if !taken.is_empty() {
+                eprintln!("took {}", taken.join(", "));
+            }
+            Ok(())
+        }
+        // Another machine bringing a hive back: start these sessions here
+        // (JSON on stdin), print those started.
+        [cmd] if cmd == "start" => {
+            let sessions = serde_json::from_reader(std::io::stdin())?;
+            println!(
+                "{}",
+                serde_json::to_string(&client::restore_sessions(sessions)?)?
+            );
+            Ok(())
+        }
+        // For a hive saved elsewhere: this machine's sessions as JSON.
+        [cmd] if cmd == "snapshot" => {
+            println!("{}", serde_json::to_string(&client::snapshot_all()?)?);
+            Ok(())
+        }
         [cmd, rest @ ..] if cmd == "restore" => restore(rest),
         [cmd, name] if cmd == "rm" => {
             crate::persist::delete_hive(name)?;
@@ -491,6 +553,38 @@ pub fn hive(args: &[String]) -> Result<()> {
             Ok(())
         }
         _ => bail!(USAGE),
+    }
+}
+
+/// `imkr hosts [add NAME | rm NAME]`: the other machines this one shows,
+/// from the settings and remembered.
+pub fn hosts(args: &[String]) -> Result<()> {
+    match args {
+        [] => {
+            let config = crate::config::Config::load().0.hosts;
+            for host in &config {
+                println!("{host:<24} settings");
+            }
+            for host in client::remembered_hosts() {
+                if !config.contains(&host) {
+                    println!("{host:<24} remembered");
+                }
+            }
+            Ok(())
+        }
+        [cmd, name] if cmd == "add" => {
+            if *name != crate::protocol::hostname() {
+                client::remember_host(name);
+            }
+            Ok(())
+        }
+        [cmd, name] if cmd == "rm" => {
+            if !client::forget_host(name) {
+                bail!("{name} is not remembered; hosts from the settings go there");
+            }
+            Ok(())
+        }
+        _ => bail!("usage: imkr hosts [add NAME | rm NAME]"),
     }
 }
 

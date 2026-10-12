@@ -56,6 +56,12 @@ Projekt-Slug: `imkr`
   `pass_on` mit einfachem read/write. Test ohne sshd: Fake-`ssh` im Scratchpad vorn im PATH, der
   bis `--` überspringt und den Befehl mit `SHELL=/bin/sh sh -c` ausführt. Socket-Pfade max. 108
   Zeichen: für `XDG_RUNTIME_DIR` im Test ein kurzes Verzeichnis nehmen.
+- Hives über Rechner: `Hive::machine` + `machines` (`HiveMachine`: ssh-Name, Hostname, Sessions);
+  `client::snapshot_everywhere` (per ssh `imkr hive snapshot`), `push_hive` (`hive import`, nur wenn
+  neuer) und `pull_hives` (`hive export`, minütlich im `watch_places`), `last` bleibt lokal.
+  `restore_hive(name, from, take)`: eigener Rechner lokal, andere per `hive start` + `hosts add`
+  (Einklinken), offline bleibt offline. Test mit mehreren Welten: `IMKR_HOSTNAME` je Welt setzen,
+  sonst halten sich alle für denselben Rechner.
 - Popups (`App::popups`, `popup`, `popup_shown`): Panes in `panes`, aber in keinem Workspace;
   `input_pane()` statt `ws.focus` für Tasten/Paste, `popup_rect()` für Größe/Maus, `draw_popup`
   nach den Leisten. Nicht in `saved()` (Persistenz), aber im Handover (`popups`, `popup`), sonst

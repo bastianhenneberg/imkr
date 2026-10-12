@@ -208,6 +208,10 @@ Plugins build on this.
 
 ## Other machines
 
+The machine you sit at is the **operator**: like the beekeeper with their hives, it looks after
+every machine and their sessions, and every connection starts there, with your ssh keys. Any of
+your machines can be the operator, whichever you sit at.
+
 One imkr for the sessions here and on other machines, without an imkr inside an imkr: the
 sidebar and the session list (`Ctrl+B S`) show every machine's sessions, and picking one switches
 this terminal over to it. imkr runs on that machine and keeps its shells and agents going when the
@@ -299,6 +303,30 @@ imkr hive rm api
 
 `imkr save` and `imkr restore` are short for `hive save` and `hive restore`. Hives live in
 `~/.local/state/imkr/saves/`, plain JSON, easy to copy or back up.
+
+### Hives across machines
+
+A hive is a map of every machine: saving it takes the sessions here and, through ssh, those of
+every other machine known (see *Other machines*); one that is off keeps what the hive had of it.
+The hive is then given to every machine that answers, and every imkr fetches the hives of the
+others once a minute, the newest of a name winning. So a hive saved on the laptop is there on
+the desktop at home and on the server, and `last`, each machine's own ended sessions, stays
+where it is.
+
+Bringing it back works from any machine in it: this machine's missing sessions start here, the
+other machines are made known, start their missing sessions if they answer, and show as
+*offline* with their last sessions greyed out if they do not. Each of them learns of this
+machine too, so a new one joins by restoring a hive:
+
+```bash
+imkr hive restore work --from codingmachine               # a new machine: fetch it from there first
+imkr hive restore work --from codingmachine --take laptop # and bring the broken laptop's sessions here
+imkr hosts                                               # the other machines this one shows
+imkr hosts add desktop                                   # or forget one with `rm`
+```
+
+ssh between the machines has to work without a password (keys, an agent) and they have to reach
+each other, e.g. over a VPN like NetBird or Tailscale; imkr only uses it.
 
 ## Images
 

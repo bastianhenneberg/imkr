@@ -43,9 +43,13 @@ Commands:
   hive ls       list the hives: saved groups of sessions
   hive save [NAME]
                 save every running session as a hive (default `last`)
-  hive restore [NAME]
-                start the sessions of a hive that do not run (default `last`,
-                which every session ending on purpose updates)
+  hive restore [NAME] [--from HOST] [--take MACHINE]
+                bring a hive back on every machine in it: missing sessions
+                start, machines that are off show as offline. --from fetches
+                it first (a new machine), --take restores that machine's
+                sessions here (one that replaces it)
+  hosts [add NAME | rm NAME]
+                the other machines shown, from the settings and remembered
   hive rm NAME  delete a hive, running sessions keep running
   hive rename OLD NEW
                 rename a hive
@@ -150,6 +154,7 @@ fn main() -> Result<()> {
         ["rename", ..] => cli::rename(&args[1..]),
         ["move-window", ..] => cli::move_window(&args[1..]),
         ["popup", ..] => cli::popup(&args[1..]),
+        ["hosts", ..] => cli::hosts(&args[1..]),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks"] => cli::hooks(),

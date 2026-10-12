@@ -51,6 +51,8 @@ pub struct SessionRow {
     pub state: Option<(AgentState, usize)>,
     /// Why the host's sessions are unknown; the row is then about the host.
     pub problem: Option<String>,
+    /// Last seen on a machine that is off now: shown, but not to go to.
+    pub offline: bool,
 }
 
 pub struct AgentRow {
@@ -223,7 +225,9 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 width.saturating_sub(right.chars().count() + 1),
             );
             let pad = width.saturating_sub(left.chars().count() + right.chars().count());
-            let style = if session.current {
+            let style = if session.offline {
+                dim
+            } else if session.current {
                 Style::new().add_modifier(Modifier::BOLD)
             } else {
                 Style::new()
@@ -232,7 +236,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             if let Some((state, _)) = session.state {
                 spans.push(Span::styled(right, state_style(state)));
             }
-            let target = (!session.current).then_some(Target::Session(i));
+            let target = (!session.current && !session.offline).then_some(Target::Session(i));
             out.push((Line::from(spans), target));
         }
     }
@@ -699,6 +703,7 @@ mod tests {
             current,
             state: None,
             problem: None,
+            offline: false,
         };
         let mut data = data();
         data.sessions = vec![

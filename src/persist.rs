@@ -115,6 +115,24 @@ pub fn state_dir() -> Result<PathBuf> {
 /// ends on purpose, others are made with `imkr save NAME`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Hive {
+    /// The sessions of the machine it was saved on.
+    pub sessions: BTreeMap<String, HiveSession>,
+    /// That machine's hostname; empty in hives from before.
+    #[serde(default)]
+    pub machine: String,
+    /// Every other machine known then, with its sessions: a map of where
+    /// everything runs, to bring back and to show machines that are off.
+    #[serde(default)]
+    pub machines: Vec<HiveMachine>,
+}
+
+/// Another machine in a hive.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HiveMachine {
+    /// How it was reached, the name for ssh.
+    pub name: String,
+    /// Its own hostname, to know it again from wherever the hive is used.
+    pub hostname: String,
     pub sessions: BTreeMap<String, HiveSession>,
 }
 
@@ -186,6 +204,8 @@ pub fn keep_in_last(session: &str, layout: Saved) -> Result<()> {
 pub struct HiveInfo {
     pub name: String,
     pub sessions: Vec<String>,
+    /// The other machines' sessions, as `machine:session`.
+    pub elsewhere: Vec<String>,
     /// When its newest session was saved, in seconds since 1970.
     pub saved_at: u64,
 }
@@ -204,6 +224,11 @@ pub fn hive_infos() -> Vec<HiveInfo> {
                     .map(|s| s.saved_at)
                     .max()
                     .unwrap_or(0),
+                elsewhere: hive
+                    .machines
+                    .iter()
+                    .flat_map(|m| m.sessions.keys().map(move |s| format!("{}:{s}", m.name)))
+                    .collect(),
                 sessions: hive.sessions.into_keys().collect(),
                 name,
             })
@@ -211,6 +236,46 @@ pub fn hive_infos() -> Vec<HiveInfo> {
         .collect();
     infos.sort_by_key(|info| (info.name != LAST, info.name.clone()));
     infos
+}
+
+/// When a hive was saved: its newest session, on any machine.
+pub fn hive_time(hive: &Hive) -> u64 {
+    hive.sessions
+        .values()
+        .chain(hive.machines.iter().flat_map(|m| m.sessions.values()))
+        .map(|s| s.saved_at)
+        .max()
+        .unwrap_or(0)
+}
+
+/// The hives to share with other machines, by name: all but `last`, which
+/// every machine keeps of its own ended sessions.
+pub fn shared_hives() -> BTreeMap<String, Hive> {
+    saves()
+        .into_iter()
+        .filter(|name| name != LAST)
+        .filter_map(|name| Some((name.clone(), load_hive(&name).ok()??)))
+        .collect()
+}
+
+/// Takes in hives from another machine, each only if it is newer than the
+/// one here of that name. Returns the names taken.
+pub fn import_hives(hives: BTreeMap<String, Hive>) -> Result<Vec<String>> {
+    let mut taken = Vec::new();
+    for (name, hive) in hives {
+        if name == LAST {
+            continue;
+        }
+        let newer = match load_hive(&name)? {
+            Some(here) => hive_time(&hive) > hive_time(&here),
+            None => true,
+        };
+        if newer {
+            write_hive(&name, &hive)?;
+            taken.push(name);
+        }
+    }
+    Ok(taken)
 }
 
 pub fn delete_hive(name: &str) -> Result<()> {

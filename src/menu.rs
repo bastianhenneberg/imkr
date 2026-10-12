@@ -240,6 +240,10 @@ pub struct MenuItem {
     pub hint: String,
     /// Destroys something, shown in red.
     pub danger: bool,
+    /// Set apart from the items before it, e.g. starting something new
+    /// after a list of what runs: a line above, quieter, and out of the
+    /// arrow keys' way.
+    pub apart: bool,
 }
 
 /// The quit menu in the middle of `area`, `selected` highlighted.
@@ -283,8 +287,16 @@ pub fn draw_choices(
 
     let mut lines = Vec::new();
     for (i, item) in items.iter().enumerate() {
+        if item.apart && i > 0 {
+            lines.push(Line::styled(
+                "─".repeat(row_width),
+                Style::new().fg(theme::current().subtle),
+            ));
+        }
         let color = if item.danger {
             theme::current().danger
+        } else if item.apart {
+            theme::current().muted
         } else {
             theme::current().accent
         };
@@ -552,6 +564,7 @@ mod tests {
             title: "default".into(),
             hint: String::new(),
             danger: false,
+            apart: false,
         }];
         let keys = [("Enter", "switch"), ("r", "rename"), ("Esc", "cancel")];
         let screen = render(80, 20, |f, a| {

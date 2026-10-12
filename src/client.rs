@@ -171,7 +171,7 @@ fn last_place() -> Option<(Option<String>, String)> {
 }
 
 /// Notes `host` for the session list, once it was reached.
-fn remember_host(host: &str) {
+pub fn remember_host(host: &str) {
     let mut hosts = remembered_hosts();
     if hosts.iter().any(|h| h == host) {
         return;
@@ -183,6 +183,25 @@ fn remember_host(host: &str) {
         }
         let _ = std::fs::write(path, hosts.join("\n") + "\n");
     }
+}
+
+/// Forgets `host` again. False if it was not remembered.
+pub fn forget_host(host: &str) -> bool {
+    let mut hosts = remembered_hosts();
+    let before = hosts.len();
+    hosts.retain(|h| h != host);
+    if hosts.len() == before {
+        return false;
+    }
+    if let Ok(path) = hosts_file() {
+        let text = if hosts.is_empty() {
+            String::new()
+        } else {
+            hosts.join("\n") + "\n"
+        };
+        let _ = std::fs::write(path, text);
+    }
+    true
 }
 
 /// The hosts `imkr --host` reached before.
@@ -625,7 +644,10 @@ pub fn snapshot_all() -> Result<crate::persist::Hive> {
 pub fn snapshot_all_but(
     own: Option<(&str, crate::persist::Saved)>,
 ) -> Result<crate::persist::Hive> {
-    let mut hive = crate::persist::Hive::default();
+    let mut hive = crate::persist::Hive {
+        machine: crate::protocol::hostname(),
+        ..Default::default()
+    };
     for name in crate::protocol::sessions() {
         let layout = match &own {
             Some((own_name, saved)) if *own_name == name => saved.clone(),
@@ -657,17 +679,215 @@ pub fn snapshot_all_but(
     Ok(hive)
 }
 
-/// Starts every session of save file `name` that does not run, each
-/// brought back from its layout there. Returns the sessions started.
-pub fn restore_hive(name: &str) -> Result<Vec<String>> {
+/// The hosts this machine knows: from the settings and from `--host`.
+pub fn known_hosts() -> Vec<String> {
+    let mut hosts = crate::config::Config::load().0.hosts;
+    hosts.extend(remembered_hosts());
+    let here = crate::protocol::hostname();
+    let mut seen = std::collections::HashSet::new();
+    hosts.retain(|h| *h != here && seen.insert(h.clone()));
+    hosts
+}
+
+/// Everything for a hive: this machine's sessions as `snapshot_all_but`
+/// takes them, and those of every known host, asked through ssh. A host
+/// that does not answer keeps what `previous` had of it, so a machine
+/// that is off stays on the map with its last known sessions.
+pub fn snapshot_everywhere(
+    own: Option<(&str, crate::persist::Saved)>,
+    previous: Option<&crate::persist::Hive>,
+) -> Result<crate::persist::Hive> {
+    let mut hive = snapshot_all_but(own)?;
+    for host in known_hosts() {
+        match remote_snapshot(&host) {
+            Ok(there) => hive.machines.push(crate::persist::HiveMachine {
+                name: host,
+                hostname: there.machine,
+                sessions: there.sessions,
+            }),
+            Err(_) => {
+                let before = previous.and_then(|p| p.machines.iter().find(|m| m.name == host));
+                if let Some(before) = before {
+                    hive.machines.push(before.clone());
+                }
+            }
+        }
+    }
+    Ok(hive)
+}
+
+/// The layouts of the sessions on `host`, asked through ssh without
+/// prompting.
+fn remote_snapshot(host: &str) -> Result<crate::persist::Hive> {
+    let output = Command::new("ssh")
+        .args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "--",
+            host,
+        ])
+        .arg(remote_command(&["hive", "snapshot"]))
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("could not run ssh")?;
+    if !output.status.success() {
+        bail!("{host} did not answer");
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+/// Gives hive `name` to every known host that answers, which keeps it if
+/// it is newer than its own. Returns the hosts that took it.
+pub fn push_hive(name: &str, hive: &crate::persist::Hive) -> Vec<String> {
+    let json = match serde_json::to_vec(&std::collections::BTreeMap::from([(name, hive)])) {
+        Ok(json) => json,
+        Err(_) => return Vec::new(),
+    };
+    known_hosts()
+        .into_iter()
+        .filter(|host| {
+            let child = Command::new("ssh")
+                .args([
+                    "-T",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=5",
+                    "--",
+                    host,
+                ])
+                .arg(remote_command(&["hive", "import"]))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            let Ok(mut child) = child else {
+                return false;
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(&json);
+            }
+            child.wait().is_ok_and(|status| status.success())
+        })
+        .collect()
+}
+
+/// Takes the hives of `host` that are newer than those here. Returns the
+/// names taken.
+pub fn pull_hives(host: &str) -> Result<Vec<String>> {
+    let output = Command::new("ssh")
+        .args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "--",
+            host,
+        ])
+        .arg(remote_command(&["hive", "export"]))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .context("could not run ssh")?;
+    if !output.status.success() {
+        bail!("{host} did not answer");
+    }
+    crate::persist::import_hives(serde_json::from_slice(&output.stdout)?)
+}
+
+/// Brings hive `name` back, as a map of every machine in it: this
+/// machine's sessions that do not run are started from their layouts; every
+/// other machine is made known (the sidebar shows it, or that it is off)
+/// and, if it answers, starts its missing sessions too. Returns what
+/// happened, a line per machine.
+///
+/// `from` is a machine to fetch the hive from first, for a machine that
+/// has none yet, e.g. one that replaces a broken one. `take` names a
+/// machine of the hive whose sessions come back here instead of there.
+pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Result<Vec<String>> {
     if std::env::var_os("IMKR_SOCKET").is_some() {
         bail!("restoring sessions needs their names, unset IMKR_SOCKET");
+    }
+    if let Some(from) = from {
+        pull_hives(from).with_context(|| format!("no hives from {from}"))?;
+        remember_host(from);
     }
     let Some(hive) = crate::persist::load_hive(name)? else {
         bail!("there is no hive called {name}");
     };
+    let here = crate::protocol::hostname();
+    // The machine it was saved on, then the others; hives from before
+    // know only the one.
+    let saver = if hive.machine.is_empty() {
+        here.clone()
+    } else {
+        hive.machine.clone()
+    };
+    let mut machines = vec![crate::persist::HiveMachine {
+        name: saver.clone(),
+        hostname: saver,
+        sessions: hive.sessions,
+    }];
+    machines.extend(hive.machines);
+
+    if let Some(take) = take
+        && !machines
+            .iter()
+            .any(|m| m.name == take || m.hostname == take)
+    {
+        bail!("hive {name} has no machine {take}");
+    }
+    let mut report = Vec::new();
+    for machine in machines {
+        let taken = take.is_some_and(|t| machine.name == t || machine.hostname == t);
+        if taken {
+            let started = restore_sessions(machine.sessions)?;
+            report.push(format!(
+                "⌂ {here} takes over {}: started {}",
+                machine.name,
+                if started.is_empty() {
+                    "nothing new".to_owned()
+                } else {
+                    started.join(", ")
+                }
+            ));
+            continue;
+        }
+        if machine.hostname == here {
+            let started = restore_sessions(machine.sessions)?;
+            report.push(match started.as_slice() {
+                [] => format!("⌂ {here}: all running"),
+                started => format!("⌂ {here}: started {}", started.join(", ")),
+            });
+            continue;
+        }
+        remember_host(&machine.name);
+        let restored = remote_restore(&machine.name, &machine.sessions);
+        // It knows this machine from now on, a new one included.
+        if restored.is_ok() {
+            let _ = remote_run(&machine.name, &["hosts", "add", &here]);
+        }
+        report.push(match restored {
+            Ok(started) if started.is_empty() => format!("⇄ {}: all running", machine.name),
+            Ok(started) => format!("⇄ {}: started {}", machine.name, started.join(", ")),
+            Err(_) => format!("⇄ {}: offline, shown as such", machine.name),
+        });
+    }
+    Ok(report)
+}
+
+/// Starts each of `sessions` that does not run here, from its layout.
+/// Returns those started.
+pub fn restore_sessions(
+    sessions: std::collections::BTreeMap<String, crate::persist::HiveSession>,
+) -> Result<Vec<String>> {
     let mut started = Vec::new();
-    for (session, saved) in hive.sessions {
+    for (session, saved) in sessions {
         let socket = session_socket(&session)?;
         if UnixStream::connect(&socket).is_ok() {
             continue;
@@ -679,6 +899,61 @@ pub fn restore_hive(name: &str) -> Result<Vec<String>> {
         started.push(session);
     }
     Ok(started)
+}
+
+/// Runs `imkr args...` on `host` through ssh without prompting.
+fn remote_run(host: &str, args: &[&str]) -> Result<()> {
+    let status = Command::new("ssh")
+        .args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "--",
+            host,
+        ])
+        .arg(remote_command(args))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("could not run ssh")?;
+    if !status.success() {
+        bail!("{host} did not do it");
+    }
+    Ok(())
+}
+
+/// Has `host` start those of `sessions` that do not run there.
+fn remote_restore(
+    host: &str,
+    sessions: &std::collections::BTreeMap<String, crate::persist::HiveSession>,
+) -> Result<Vec<String>> {
+    let mut child = Command::new("ssh")
+        .args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "--",
+            host,
+        ])
+        .arg(remote_command(&["hive", "start"]))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("could not run ssh")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&serde_json::to_vec(sessions)?)?;
+    }
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        bail!("{host} did not answer");
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 /// Starts a server in the background and connects to it. With `session`,
