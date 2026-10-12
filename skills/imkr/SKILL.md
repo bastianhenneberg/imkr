@@ -14,6 +14,8 @@ session.
 ```bash
 imkr agents            # every agent on this machine, with its address and state
 imkr agents --all      # also on the user's other machines
+imkr run --pane 3 -- cargo test   # run it in pane 3's shell, get its output and exit code
+imkr wait --pane 3     # wait for the command running in pane 3's shell
 imkr subscribe         # what changes from now on, as JSON lines (e.g. pipe into
                        # `grep -m1 '"pane":3,.*"state":"idle"'` to wait for pane 3)
 ```

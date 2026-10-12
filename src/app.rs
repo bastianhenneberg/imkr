@@ -1838,6 +1838,11 @@ impl App {
                 cwd,
             } => self.new_pane(&command, float, workspace, cwd),
             Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
+            Request::LastCommand { pane } => self
+                .panes
+                .get(&pane)
+                .map(Pane::last_command)
+                .ok_or(format!("no pane {pane}")),
             Request::Explain { pane } => self
                 .panes
                 .get(&pane)

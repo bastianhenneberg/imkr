@@ -297,6 +297,22 @@ accepted and do nothing, `kill-session` and `kill-server` are refused. It is off
 since programs that see `$TMUX` act as if inside tmux. Tested with scripts that use these
 commands, not yet with every program that drives tmux.
 
+### Running commands in a pane
+
+With shell integration (OSC 133), imkr knows where a command's output starts and ends and how it
+ended. Many prompts send it already; otherwise add one line to the shell's rc file:
+
+```bash
+eval "$(imkr shell-integration zsh)"   # or bash; does nothing outside imkr
+```
+
+Then a script or an agent can use a shell in another pane like its own:
+
+```bash
+imkr run --pane 3 -- cargo test   # types it in, waits, prints the output, exits with its code
+imkr wait --pane 3                # waits for the command running there (--timeout S)
+```
+
 ### Events
 
 `imkr subscribe` prints what changes in the sessions on this machine, one JSON object per line,

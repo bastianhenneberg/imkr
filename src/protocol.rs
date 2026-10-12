@@ -372,6 +372,9 @@ pub enum Request {
         command: Vec<String>,
         cwd: Option<PathBuf>,
     },
+    /// What the shell in pane `pane` told of its commands (OSC 133): how
+    /// many finished, whether one runs, the last one's output and exit.
+    LastCommand { pane: PaneId },
     /// Why pane `pane` counts as the agent it is, in its state, or as none.
     Explain { pane: PaneId },
     /// Close pane `pane`, ending its program, as `Ctrl+B x` does. Not the

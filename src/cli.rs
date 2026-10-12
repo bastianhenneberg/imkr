@@ -565,6 +565,9 @@ pub fn read(args: &[String]) -> Result<()> {
 /// that hand work to another agent. `ready` means idle or done. Exits with
 /// an error on timeout, or when the pane is gone.
 pub fn wait(args: &[String]) -> Result<()> {
+    if !args.iter().any(|a| a == "--until") {
+        return wait_command(args);
+    }
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
     let until = take_value(&mut rest, "--until")?.context(
@@ -673,6 +676,130 @@ pub fn move_window(args: &[String]) -> Result<()> {
         reply["to"].as_str().unwrap_or_default()
     );
     Ok(())
+}
+
+/// Shell integration (OSC 133) for zsh: marks where prompts, commands and
+/// their output are, and how commands ended. Only inside imkr.
+const ZSH_INTEGRATION: &str = r#"# imkr shell integration: `eval "$(imkr shell-integration zsh)"` in ~/.zshrc
+if [[ -n "$IMKR" ]]; then
+  _imkr_precmd() { local code=$?; print -n "\e]133;D;$code\a\e]133;A\a"; }
+  _imkr_preexec() { print -n "\e]133;C\a"; }
+  precmd_functions+=(_imkr_precmd)
+  preexec_functions+=(_imkr_preexec)
+fi
+"#;
+
+/// The same for bash, with a DEBUG trap for the start of a command.
+const BASH_INTEGRATION: &str = r#"# imkr shell integration: `eval "$(imkr shell-integration bash)"` in ~/.bashrc
+if [[ -n "$IMKR" ]]; then
+  _imkr_ran=
+  _imkr_preexec() {
+    [[ -n "$_imkr_ran" || "$BASH_COMMAND" == _imkr_prompt* ]] && return
+    _imkr_ran=1; printf '\e]133;C\a'
+  }
+  _imkr_prompt() { local code=$?; [[ -n "$_imkr_ran" ]] && printf '\e]133;D;%s\a' "$code"; _imkr_ran=; printf '\e]133;A\a'; }
+  trap _imkr_preexec DEBUG
+  PROMPT_COMMAND="_imkr_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
+"#;
+
+/// `imkr shell-integration zsh|bash`: what to eval in the shell's rc file.
+pub fn shell_integration(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("zsh") => print!("{ZSH_INTEGRATION}"),
+        Some("bash") => print!("{BASH_INTEGRATION}"),
+        _ => bail!("usage: imkr shell-integration zsh|bash"),
+    }
+    Ok(())
+}
+
+/// The last command of `pane` as its shell told it, failing with how to
+/// set the integration up when the shell tells nothing.
+fn last_command(pane: PaneId) -> Result<serde_json::Value> {
+    let last = client::request(Request::LastCommand { pane })?;
+    if last["integration"] != serde_json::json!(true) {
+        bail!(
+            "the shell in pane {pane} has no imkr integration yet: add\n  \
+             eval \"$(imkr shell-integration zsh)\"   (or bash)\n\
+             to its rc file and start a new shell"
+        );
+    }
+    Ok(last)
+}
+
+/// Waits until the shell of `pane` finished more than `finished` commands
+/// and none runs, then prints the last one's output and exits with its
+/// code. Gives up after `timeout`.
+fn finish(pane: PaneId, finished: u64, timeout: Option<std::time::Duration>) -> Result<()> {
+    let started = std::time::Instant::now();
+    loop {
+        let last = last_command(pane)?;
+        let done = last["finished"].as_u64().unwrap_or(0) > finished
+            && last["running"] != serde_json::json!(true);
+        if done {
+            let output = last["output"].as_str().unwrap_or_default();
+            if !output.is_empty() {
+                println!("{output}");
+            }
+            std::process::exit(last["exit"].as_i64().unwrap_or(0) as i32);
+        }
+        if timeout.is_some_and(|t| started.elapsed() > t) {
+            bail!("still running after {}s", started.elapsed().as_secs());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn take_timeout(args: &mut Vec<String>) -> Result<Option<std::time::Duration>> {
+    take_value(args, "--timeout")?
+        .map(|v| {
+            v.parse::<u64>()
+                .map(std::time::Duration::from_secs)
+                .with_context(|| format!("{v:?} is no number of seconds"))
+        })
+        .transpose()
+}
+
+/// `imkr run [--pane N] [--timeout S] -- command…`: types the command into
+/// the pane's shell, waits until it ends, prints its output and exits with
+/// its code. Needs the shell integration.
+pub fn run(args: &[String]) -> Result<()> {
+    let (options, command) = match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (Vec::new(), args.to_vec()),
+    };
+    let mut options = options;
+    let pane = take_pane(&mut options)?.context("which pane? use --pane N")?;
+    let timeout = take_timeout(&mut options)?;
+    if command.is_empty() || !options.is_empty() {
+        bail!("usage: imkr run [--pane N] [--timeout S] -- command…");
+    }
+    let before = last_command(pane)?;
+    if before["running"] == serde_json::json!(true) {
+        bail!("a command runs in pane {pane} already; `imkr wait --pane {pane}` waits for it");
+    }
+    client::request(Request::Send {
+        pane,
+        text: command.join(" "),
+        enter: true,
+    })?;
+    finish(pane, before["finished"].as_u64().unwrap_or(0), timeout)
+}
+
+/// `imkr wait [--pane N] [--timeout S]` without `--until`: waits until
+/// the command running in the pane's shell ends, prints its output and
+/// exits with its code.
+fn wait_command(args: &[String]) -> Result<()> {
+    let mut rest = args.to_vec();
+    let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
+    let timeout = take_timeout(&mut rest)?;
+    let now = last_command(pane)?;
+    let finished = now["finished"].as_u64().unwrap_or(0);
+    if now["running"] != serde_json::json!(true) {
+        // Nothing runs: the last one's result.
+        return finish(pane, finished.saturating_sub(1), timeout);
+    }
+    finish(pane, finished, timeout)
 }
 
 /// `imkr explain [--pane N] [--json]`: why a pane counts as the agent it

@@ -33,6 +33,8 @@ pub struct Pane {
     pub graphics: Arc<Mutex<PaneGraphics>>,
     /// Hyperlinks the program marked with OSC 8, the newest last.
     links: Arc<Mutex<Vec<crate::links::Link>>>,
+    /// What the shell's integration (OSC 133) told about its commands.
+    shell: Arc<Mutex<Shell>>,
     /// The agent state the program reported with `imkr status`.
     pub reported: Option<AgentState>,
     /// The agent's session id from its hooks, e.g. for `claude --resume`.
@@ -52,6 +54,40 @@ pub struct Pane {
     /// The process went to another session with the pty: it is not ended
     /// with the pane.
     released: bool,
+}
+
+/// A finished command: where its output starts and ends, its exit code.
+type Finished = ((usize, u16), (usize, u16), Option<i32>);
+
+/// The commands of a shell with integration (OSC 133): whether one runs,
+/// and where the output of the last one is, as (absolute row, column).
+#[derive(Default)]
+struct Shell {
+    /// The shell sends marks at all.
+    seen: bool,
+    /// Commands finished so far.
+    finished: u64,
+    /// Where the output of the command running now starts.
+    running: Option<(usize, u16)>,
+    /// The last finished: its output and exit code.
+    last: Option<Finished>,
+}
+
+impl Shell {
+    fn mark(&mut self, mark: char, exit: Option<i32>, at: (usize, u16)) {
+        self.seen = true;
+        match mark {
+            'C' => self.running = Some(at),
+            'D' => {
+                // A `D` without `C` is the first prompt's: no command ran.
+                if let Some(from) = self.running.take() {
+                    self.last = Some((from, at, exit));
+                    self.finished += 1;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The thread reading a pane's pty, and the way to stop it.
@@ -241,6 +277,7 @@ impl Pane {
             last_output: Arc::new(Mutex::new(Instant::now())),
             graphics: Arc::new(Mutex::new(PaneGraphics::default())),
             links: Arc::new(Mutex::new(Vec::new())),
+            shell: Arc::new(Mutex::new(Shell::default())),
             reported: None,
             session: None,
             transcript: None,
@@ -270,6 +307,7 @@ impl Pane {
         let reader_last_output = Arc::clone(&self.last_output);
         let reader_graphics = Arc::clone(&self.graphics);
         let reader_links = Arc::clone(&self.links);
+        let reader_shell = Arc::clone(&self.shell);
         let events = self.events.clone();
         let thread = thread::Builder::new()
             .name("pty-reader".into())
@@ -334,6 +372,13 @@ impl Pane {
                                                         .len()
                                                         .saturating_sub(crate::links::KEPT);
                                                     links.drain(..over);
+                                                }
+                                                crate::links::Piece::Mark(mark, exit) => {
+                                                    let at = cursor(&mut parser);
+                                                    reader_shell
+                                                        .lock()
+                                                        .unwrap()
+                                                        .mark(mark, exit, at);
                                                 }
                                             }
                                         }
@@ -428,6 +473,40 @@ impl Pane {
             self.answered.set(false);
         }
         agent::state(&argv, self.reported, since, asking && !self.answered.get())
+    }
+
+    /// The shell's commands as its integration tells them: whether it has
+    /// one, how many finished, whether one runs, and the output and exit
+    /// code of the last.
+    pub fn last_command(&self) -> serde_json::Value {
+        let (seen, finished, running, last) = {
+            let shell = self.shell.lock().unwrap();
+            (
+                shell.seen,
+                shell.finished,
+                shell.running.is_some(),
+                shell.last,
+            )
+        };
+        let (output, exit) = match last {
+            // Up to the cell before the mark: `text` takes its end with it.
+            Some((from, (row, col), exit)) if (row, col) > from => {
+                let end = match col {
+                    0 => (row - 1, self.size.1),
+                    col => (row, col - 1),
+                };
+                (self.text(from, end).trim_end().to_owned(), exit)
+            }
+            Some((_, _, exit)) => (String::new(), exit),
+            None => (String::new(), None),
+        };
+        serde_json::json!({
+            "integration": seen,
+            "finished": finished,
+            "running": running,
+            "exit": exit,
+            "output": output,
+        })
     }
 
     /// Why the pane counts as an agent in its state, or as none, step by

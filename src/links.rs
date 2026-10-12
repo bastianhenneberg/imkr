@@ -4,23 +4,30 @@
 /// What `LinkScanner` splits pane output into.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Piece {
-    /// Output for the terminal, without the OSC 8 sequences.
+    /// Output for the terminal, without the sequences taken out.
     Text(Vec<u8>),
     /// A hyperlink to this URL starts at the cursor.
     Start(String),
     /// The hyperlink ends at the cursor.
     End,
+    /// A shell integration mark (OSC 133) at the cursor: `A` prompt, `B`
+    /// command typed, `C` its output starts, `D` it ended, with its exit
+    /// code if the shell said.
+    Mark(char, Option<i32>),
 }
 
-/// Finds `ESC ] 8 ; params ; URI` (ended by BEL or `ESC \`) in pane output,
-/// also across reads.
+/// Finds hyperlinks, `ESC ] 8 ; params ; URI`, and shell marks,
+/// `ESC ] 133 ; X [; exit]`, ended by BEL or `ESC \`, in pane output, also
+/// across reads.
 #[derive(Default)]
 pub struct LinkScanner {
     /// The start of a sequence that the last read cut off.
     pending: Vec<u8>,
 }
 
-const START: &[u8] = b"\x1b]8;";
+const OSC: &[u8] = b"\x1b]";
+/// What follows `OSC` in the sequences taken out.
+const KINDS: [&[u8]; 2] = [b"8;", b"133;"];
 /// Longer is no link but garbage, passed on as text.
 const MAX_SEQUENCE: usize = 8 * 1024;
 
@@ -32,19 +39,31 @@ impl LinkScanner {
         let mut text = Vec::new();
         let mut i = 0;
         while i < data.len() {
-            let Some(at) = find(&data[i..], START) else {
-                // A sequence may begin in the last bytes.
+            let Some(at) = find(&data[i..], OSC) else {
+                // A sequence may begin with the last byte.
                 let rest = &data[i..];
-                let keep = (1..START.len())
-                    .rev()
-                    .find(|&n| rest.len() >= n && rest.ends_with(&START[..n]))
-                    .unwrap_or(0);
+                let keep = usize::from(rest.ends_with(b"\x1b"));
                 text.extend_from_slice(&rest[..rest.len() - keep]);
                 self.pending = rest[rest.len() - keep..].to_vec();
                 break;
             };
-            text.extend_from_slice(&data[i..i + at]);
-            let body_start = i + at + START.len();
+            let start = i + at;
+            let after = &data[start + OSC.len()..];
+            let kind = KINDS.iter().find(|k| after.starts_with(k));
+            // Cut off before it can be told what it is: wait for more.
+            if kind.is_none() && KINDS.iter().any(|k| k.starts_with(after)) {
+                text.extend_from_slice(&data[i..start]);
+                self.pending = data[start..].to_vec();
+                break;
+            }
+            let Some(kind) = kind else {
+                // Another OSC, e.g. a title: the terminal's.
+                text.extend_from_slice(&data[i..start + OSC.len()]);
+                i = start + OSC.len();
+                continue;
+            };
+            text.extend_from_slice(&data[i..start]);
+            let body_start = start + OSC.len() + kind.len();
             let end = data[body_start..]
                 .iter()
                 .enumerate()
@@ -54,10 +73,10 @@ impl LinkScanner {
                     _ => None,
                 });
             let Some((len, terminator)) = end else {
-                if data.len() - (i + at) > MAX_SEQUENCE {
-                    text.extend_from_slice(&data[i + at..]);
+                if data.len() - start > MAX_SEQUENCE {
+                    text.extend_from_slice(&data[start..]);
                 } else {
-                    self.pending = data[i + at..].to_vec();
+                    self.pending = data[start..].to_vec();
                 }
                 break;
             };
@@ -65,11 +84,17 @@ impl LinkScanner {
                 pieces.push(Piece::Text(std::mem::take(&mut text)));
             }
             let body = String::from_utf8_lossy(&data[body_start..body_start + len]);
-            let uri = body.split_once(';').map(|(_, uri)| uri).unwrap_or("");
-            pieces.push(if uri.is_empty() {
-                Piece::End
+            pieces.push(if *kind == b"8;" {
+                let uri = body.split_once(';').map(|(_, uri)| uri).unwrap_or("");
+                if uri.is_empty() {
+                    Piece::End
+                } else {
+                    Piece::Start(uri.to_owned())
+                }
             } else {
-                Piece::Start(uri.to_owned())
+                let mut parts = body.split(';');
+                let mark = parts.next().and_then(|m| m.chars().next()).unwrap_or('?');
+                Piece::Mark(mark, parts.next().and_then(|code| code.parse().ok()))
             });
             i = body_start + len + terminator;
         }
@@ -198,6 +223,23 @@ mod tests {
             scanner.feed(b"\x1b]0;title\x07"),
             [Piece::Text(b"\x1b]0;title\x07".to_vec())]
         );
+    }
+
+    #[test]
+    fn takes_out_shell_marks() {
+        let mut scanner = LinkScanner::default();
+        let pieces = scanner.feed(b"$ \x1b]133;B\x07ls\r\n\x1b]133;C\x07a b\r\n\x1b]13");
+        assert_eq!(
+            pieces,
+            [
+                Piece::Text(b"$ ".to_vec()),
+                Piece::Mark('B', None),
+                Piece::Text(b"ls\r\n".to_vec()),
+                Piece::Mark('C', None),
+                Piece::Text(b"a b\r\n".to_vec()),
+            ]
+        );
+        assert_eq!(scanner.feed(b"3;D;2\x1b\\"), [Piece::Mark('D', Some(2))]);
     }
 
     #[test]

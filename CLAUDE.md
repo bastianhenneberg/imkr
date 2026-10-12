@@ -106,6 +106,10 @@ Projekt-Slug: `imkr`
   `imkr revive`) zurück, stopped stellt der startende Server selbst her. `imkr forget`, `x` in
   `Ctrl+B S`. Server erben keine Claude-Sitzungsvariablen (`client::is_agent_session_var`), sonst
   speichert Claude in den Panes keine Transcripts.
+- Shell-Integration (OSC 133): `LinkScanner` liefert auch `Piece::Mark` (A/B/C/D;exit), `Pane::shell`
+  (`Shell::mark`: C = Ausgabe beginnt, D = fertig), `Pane::last_command` (Ende exklusiv: `text`
+  nimmt die Endzelle mit), `Request::LastCommand`; CLI `run`, `wait` ohne `--until`,
+  `shell-integration zsh|bash`. Die zsh des Users sendet OSC 133 schon selbst.
 - Links: `src/links.rs` (`LinkScanner` trennt OSC 8 aus der Ausgabe, im Pane-Reader nach dem
   Grafik-Scanner; Start/Ende mit Cursorposition als `Link` in `Pane::links`, max. 500; `url_in`
   für Klartext-URLs). Ctrl+Klick in `App::mouse` vor `forward_mouse` → `Pane::link_at` →
