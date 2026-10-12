@@ -85,7 +85,8 @@ Projekt-Slug: `imkr`
   `input_pane()` statt `ws.focus` für Tasten/Paste, `popup_rect()` für Größe/Maus, `draw_popup`
   nach den Leisten. Nicht in `saved()` (Persistenz), aber im Handover (`popups`, `popup`), sonst
   enden sie beim Update wie ein Pane ohne Platz. `close()` entfernt sie. `popup_full` (Ctrl+B z
-  über einem Popup) = Panes + Sidebar, `break_popup` (Ctrl+B !) macht ein Window daraus. Basis
+  über einem Popup) = Panes + Sidebar, `break_popup` (Ctrl+B !) macht ein Window daraus; auf einem Vollbild-Popup verkleinert `!`
+  erst (wie z). Basis
   für Plugins.
 - OSC 52 aus Panes: `clipboard::Osc52Scanner` im Pane-Reader (vor dem Grafik-Scanner, über
   Lesegrenzen), `AppEvent::Clipboard` → `send_active`. Clipboard-Abfragen (`?`) werden verworfen.

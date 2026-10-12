@@ -448,7 +448,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         label: "!",
-        description: "popup ⇄ pane",
+        description: "popup ⇄ window",
         group: Group::View,
         keys: &[(Key::plain(Char('!')), C::BreakPopup)],
     },

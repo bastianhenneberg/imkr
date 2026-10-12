@@ -2154,6 +2154,11 @@ impl App {
             // Over a popup, zoom makes it fill everything but the bars.
             Command::Zoom if self.shown_popup().is_some() => self.popup_full = !self.popup_full,
             Command::Zoom => self.ws.toggle_zoom(),
+            // From full size, ! is the way back to the popup: what fills the
+            // screen already looks like the window it would become.
+            Command::BreakPopup if self.shown_popup().is_some() && self.popup_full => {
+                self.popup_full = false
+            }
             Command::BreakPopup if self.shown_popup().is_some() => self.break_popup(),
             Command::BreakPopup => self.pane_to_popup(),
             Command::Sessions => self.open_sessions(),
@@ -5227,7 +5232,7 @@ impl App {
             .title_bottom(
                 Line::styled(
                     if self.popup_full {
-                        " ^B Space hide · z smaller · ! window "
+                        " ^B Space hide · z/! smaller "
                     } else {
                         " ^B Space hide · z full · ! window "
                     },

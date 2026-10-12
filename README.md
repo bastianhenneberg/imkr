@@ -213,9 +213,10 @@ without giving it a pane or a window. `imkr popup --name pm -- peppermint-tui` s
 first time and shows it; the same command, or `Ctrl+B Space`, hides it and shows it again. It
 keeps running while hidden, so the program keeps its state, and it survives `imkr update`. Keys,
 pastes and the mouse go to it while it is shown; a click outside hides it. `Ctrl+B z` makes it
-fill everything but the bars, sidebar included, and back. `Ctrl+B !` turns it into the pane of a
-window of its own, named after it, for when it should stay, and back: on a pane without a popup
-shown, `Ctrl+B !` makes the pane a popup. The sidebar lists the popups under *Popups*: a click
+fill everything but the bars, sidebar included, and back; its frame then says `popup · full`.
+`Ctrl+B !` turns a popup into the pane of a window of its own, named after it, for when it should
+stay, and back: on a pane without a popup shown, `Ctrl+B !` makes the pane a popup. On a full
+popup `Ctrl+B !` makes it small again first, like `z`, as a full popup already looks like a window. The sidebar lists the popups under *Popups*: a click
 shows one, or hides it, `x` in the sidebar (`Ctrl+B e`) ends it. It closes when its program ends.
 Plugins build on this.
 
