@@ -40,6 +40,8 @@ pub enum Command {
     EndSession,
     /// Save every running session as a hive, asking for its name.
     SaveHive,
+    /// What the agents did while no terminal was attached.
+    Recap,
     PickPane,
     /// The list of every window, in every session on every machine.
     Windows,
@@ -863,6 +865,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "save all as hive…",
         group: Group::Sessions,
         keys: &[(Key::plain(Char('a')), C::SaveHive)],
+    },
+    Binding {
+        label: "l",
+        description: "while you were away…",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('l')), C::Recap)],
     },
     Binding {
         label: "⌫",

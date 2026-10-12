@@ -147,7 +147,7 @@ impl SessionInfo {
 
 /// `since` (seconds since 1970) as local time: `21:57` today, `12.10.`
 /// before. `None` when unknown.
-fn chrono_like(since: u64) -> Option<String> {
+pub fn chrono_like(since: u64) -> Option<String> {
     if since == 0 {
         return None;
     }

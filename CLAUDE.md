@@ -203,6 +203,9 @@ Projekt-Slug: `imkr`
   Panes stehen überall hinter ihrem Window: `1 api › claude` (`window_name_of`).
   Listen gruppieren nach Rechner: `MenuItem::group` (Überschrift über dem ersten Eintrag jeder
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
+- Recap: `App::activity` (Zustandswechsel aus `update_agents`, max. 500), `away_since` (gesetzt in
+  `take_client`, wenn der letzte Client geht), `attach` öffnet `Mode::Recap` nach ≥ 60 s mit
+  Aktivität, `Ctrl+B s l` (`open_recap`) später. Test: abhängen, Fake-Agent starten, 66 s warten.
 - Review `Ctrl+B v`: `src/review.rs` (`diff` liest nur: `git diff HEAD` plus `--no-index` je neuer
   Datei, nie `add -N`; `parse` nummeriert je Datei; `Note` hängt an Datei/Nummer/Code, nicht am
   Index; `prompt`). `App::review` (`Review`), `open_review`, `review_key`, `draw_review`, Notiz per

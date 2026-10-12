@@ -54,6 +54,14 @@ const FRAME: Duration = Duration::from_millis(8);
 /// How often agents, hooks, git and files are looked at while busy.
 const UPKEEP: Duration = Duration::from_millis(100);
 
+/// Seconds since 1970.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Whether `event` comes from the user or a client, to be drawn at once.
 fn is_input(event: &AppEvent) -> bool {
     !matches!(event, AppEvent::PtyOutput)
@@ -131,6 +139,8 @@ enum Mode {
     Marks(usize),
     /// Reviewing the changes in `App::review`.
     Review,
+    /// What agents did since then (seconds since 1970), that one selected.
+    Recap(u64, usize),
 }
 
 /// A review open with `Ctrl+B v`: the diff, where the cursor is, the
@@ -561,6 +571,13 @@ pub struct App {
     list_query: Option<String>,
     /// The answer typed in the inbox for the agent selected there.
     inbox_answer: String,
+    /// Agents' state changes as (seconds since 1970, pane, new state), the
+    /// newest last, for the recap. `Done` stands for finishing a turn.
+    activity: std::collections::VecDeque<(u64, PaneId, AgentState)>,
+    /// Since when no terminal is attached, and since when the last recap
+    /// looked.
+    away_since: Option<u64>,
+    recap_since: Option<u64>,
     /// The review, kept with its notes while closed until they are sent.
     review: Option<Review>,
     /// The agent selected in the inbox. The list changes while it is open,
@@ -706,6 +723,9 @@ impl App {
             list_query: None,
             inbox_answer: String::new(),
             review: None,
+            activity: Default::default(),
+            away_since: None,
+            recap_since: None,
             inbox_on: None,
             popups: BTreeMap::new(),
             popup: None,
@@ -1398,6 +1418,16 @@ impl App {
             resend_images: true,
         });
         self.run_hooks("attach", Vec::new());
+        // Back after a while: what the agents did meanwhile.
+        if self.clients.len() == 1
+            && let Some(since) = self.away_since.take()
+            && unix_now().saturating_sub(since) >= 60
+        {
+            self.recap_since = Some(since);
+            if !self.recap_items(since).0.is_empty() {
+                self.mode = Mode::Recap(since, 0);
+            }
+        }
         Ok(())
     }
 
@@ -1508,7 +1538,98 @@ impl App {
 
     fn take_client(&mut self, id: ClientId) -> Option<Client> {
         let i = self.clients.iter().position(|c| c.id == id)?;
-        Some(self.clients.remove(i))
+        let client = self.clients.remove(i);
+        if self.clients.is_empty() {
+            self.away_since = Some(unix_now());
+        }
+        Some(client)
+    }
+
+    /// The agents that did something since `since`, waiting ones first:
+    /// each with its panes and what it did when, as `13:02 ● · 13:20 ✦`.
+    fn recap_items(&self, since: u64) -> (Vec<PaneId>, Vec<menu::MenuItem>) {
+        let mut panes: Vec<PaneId> = Vec::new();
+        for &(at, id, _) in &self.activity {
+            if at >= since && !panes.contains(&id) && self.panes.contains_key(&id) {
+                panes.push(id);
+            }
+        }
+        panes.sort_by_key(|id| self.shown_state(*id).map(sidebar::urgency));
+        let items = panes
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| {
+                let state = self.shown_state(id);
+                let program = self.pane_who(id).unwrap_or_default();
+                let window = self.window_name_of(id).unwrap_or_default();
+                let n = self.workspace_of(id).unwrap_or(0);
+                let what: Vec<String> = self
+                    .activity
+                    .iter()
+                    .filter(|&&(at, pane, _)| pane == id && at >= since)
+                    .map(|&(at, _, state)| {
+                        let time = protocol::chrono_like(at).unwrap_or_default();
+                        format!("{time} {}", state.symbol())
+                    })
+                    .collect();
+                // The last few, the line has room for no more.
+                let what = what[what.len().saturating_sub(6)..].join(" · ");
+                menu::MenuItem {
+                    key: list_key_char(i),
+                    title: format!(
+                        "{} {n} {window} › {program}",
+                        state.map_or(" ", AgentState::symbol)
+                    ),
+                    hint: what,
+                    danger: state == Some(AgentState::Blocked),
+                    apart: false,
+                    color: state.and_then(|s| sidebar::state_style(s).fg),
+                    group: None,
+                }
+            })
+            .collect();
+        (panes, items)
+    }
+
+    /// Enter or a digit goes to that agent.
+    fn recap_key(&mut self, key: KeyEvent, since: u64, selected: usize) {
+        let (panes, _) = self.recap_items(since);
+        let count = panes.len().max(1);
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::Recap(since, (selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::Recap(since, (selected + 1) % count);
+                return;
+            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => c as usize - '1' as usize,
+            _ => return,
+        };
+        self.mode = Mode::Normal;
+        if let Some(&id) = panes.get(pick) {
+            self.reveal(id);
+        }
+    }
+
+    /// Opens the recap of what happened since the last time away, if
+    /// anything did.
+    fn open_recap(&mut self) {
+        let Some(since) = self.recap_since.or(self.away_since) else {
+            self.flash = Some("no time away yet to look back on".into());
+            return;
+        };
+        if self.recap_items(since).0.is_empty() {
+            self.flash = Some("no agent did anything while you were away".into());
+            return;
+        }
+        self.mode = Mode::Recap(since, 0);
     }
 
     /// Sends `bytes` to every attached client, e.g. a bell.
@@ -2184,6 +2305,21 @@ impl App {
         }
         for (&id, &(state, _)) in &seen {
             let was = self.agents.get(&id).map(|(s, _)| *s);
+            let kept = match state {
+                AgentState::Idle
+                    if matches!(was, Some(AgentState::Working | AgentState::Blocked)) =>
+                {
+                    Some(AgentState::Done)
+                }
+                AgentState::Working | AgentState::Blocked if was != Some(state) => Some(state),
+                _ => None,
+            };
+            if let Some(kept) = kept {
+                self.activity.push_back((unix_now(), id, kept));
+                if self.activity.len() > 500 {
+                    self.activity.pop_front();
+                }
+            }
             // Nobody looks at anything while detached.
             let in_view = !self.clients.is_empty() && self.ws.contains(id) && self.ws.focus == id;
             if state == AgentState::Idle
@@ -2781,6 +2917,10 @@ impl App {
                 self.review_key(key);
                 Ok(())
             }
+            Mode::Recap(since, selected) => {
+                self.recap_key(key, since, selected);
+                Ok(())
+            }
             Mode::Windows(selected) => {
                 self.spot_list_key(key, selected, false);
                 Ok(())
@@ -2921,6 +3061,7 @@ impl App {
             Command::PaneToWindow(n) => self.pane_to_window(Some(n)),
             Command::PaneToNewWindow => self.pane_to_window(None),
             Command::Review => self.open_review(),
+            Command::Recap => self.open_recap(),
             Command::WorktreeWindow => {
                 self.prompt = Some(Prompt {
                     purpose: PromptFor::Worktree,
@@ -7236,6 +7377,7 @@ impl App {
                         | Mode::Agents(_)
                         | Mode::Inbox(_)
                         | Mode::Review
+                        | Mode::Recap(..)
                         | Mode::Windows(_)
                         | Mode::Panes(_)
                         | Mode::NewSessionWhere(_)
@@ -7429,6 +7571,20 @@ impl App {
             }
             Mode::Inbox(selected) => self.draw_inbox(frame, body, selected),
             Mode::Review => self.draw_review(frame, body),
+            Mode::Recap(since, selected) => {
+                let (_, items) = self.recap_items(since);
+                let when = protocol::chrono_like(since).unwrap_or_default();
+                if !items.is_empty() {
+                    self.draw_list(
+                        frame,
+                        body,
+                        &format!(" ⬢ While you were away, since {when} "),
+                        &items,
+                        selected.min(items.len() - 1),
+                        bindings::CHOOSE_LIST_KEYS,
+                    );
+                }
+            }
             Mode::MoveTo(window, selected) => {
                 let (_, items) = self.move_to_items();
                 self.draw_list(
@@ -8107,6 +8263,11 @@ impl App {
                 "MARKS",
                 t.magenta,
                 "↑↓ choose · Enter or digit go there · J K move · x remove · Esc cancel",
+            ),
+            Mode::Recap(..) => (
+                "AWAY",
+                t.magenta,
+                "● started · ◆ asked · ✦ finished · Enter or digit go there · Esc close",
             ),
             Mode::Review => (
                 "REVIEW",
