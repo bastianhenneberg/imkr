@@ -182,6 +182,10 @@ pub struct AgentInfo {
     /// Seconds in this state.
     #[serde(default)]
     pub since: u64,
+    /// For a waiting or finished agent, the bottom of its screen: its
+    /// question, or what it said last (`agent::tail`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tail: String,
 }
 
 impl SessionInfo {

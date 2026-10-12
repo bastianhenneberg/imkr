@@ -165,6 +165,14 @@ Projekt-Slug: `imkr`
   `deliver_mail` (je Tick) tippt nur bei idle/done/ohne Agent, nie bei blocked, 3 s Abstand je Pane.
   `imkr agents [--all]`, Skill-Text in `skills/imkr/SKILL.md` (`imkr skill [--install]`).
   Test-Falle: `imkr status` liest stdin (Hook-JSON) – in Heredoc-Tests `</dev/null` anhängen.
+- Inbox `Ctrl+B i` (`inbox_items`, `inbox_key`, `draw_inbox`): blocked/done Agents aus
+  `agent_entries` mit `agent::tail` (Server liefert es in `list()` als `tail`, über
+  `AgentInfo::tail` auch für andere Sessions/Rechner). Antwort per `App::answer`: lokal
+  `type_into`, andere Session `Request::Send` an ihren Socket, fremder Rechner `imkr send --stdin`
+  per ssh. Auswahl hängt an `InboxId` (Rechner, Session, Pane), nicht am Index: die Liste
+  sortiert sich um, während sie offen ist. `asks_question`/`tail` lesen bis zur letzten
+  beschriebenen Zeile, nicht bis zum Bildschirmende. Test-Agent: bash mit `read -n 1`, nicht
+  `head` (sonst ist das Kind im Vordergrund und kein Agent erkannt).
 - Großbuchstaben zeigen alles, über alle Sessions und Rechner: `S` Sessions, `A` Agents, `W` Windows,
   `P` Panes, `M` Marken, `H` Hives. W/P: `window_items`/`pane_items` → `Spot` (`go_spot`), andere
   Sessions über `other_panes` aus `SessionInfo::all_panes` (ältere Versionen: nur `agent_panes`).

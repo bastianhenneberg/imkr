@@ -63,6 +63,9 @@ pub enum Command {
     TogglePopup,
     /// Every agent here and elsewhere, to jump to.
     Agents,
+    /// The agents everywhere that wait for the user or are done, with what
+    /// they ask, to answer from the list.
+    Inbox,
     /// A new window in a session chosen from all, on any machine.
     NewWindowElsewhere,
     /// Mark the focused pane for Alt+1 … Alt+9, like Harpoon.
@@ -367,6 +370,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "waiting agent",
         group: Group::Navigate,
         keys: &[(Key::plain(Char('a')), C::JumpToWaiting)],
+    },
+    Binding {
+        label: "i",
+        description: "inbox: answer waiting agents…",
+        group: Group::Navigate,
+        keys: &[(Key::plain(Char('i')), C::Inbox)],
     },
     Binding {
         label: "A",
@@ -842,6 +851,15 @@ pub const AGENT_LIST_KEYS: &[KeyHint] = &[
     ("Esc", "cancel"),
 ];
 
+/// The keys of the inbox (`Ctrl+B i`).
+pub const INBOX_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    ("digit", "choose that option"),
+    ("text Enter", "answer"),
+    ("Enter", "go there"),
+    ("Esc", "cancel"),
+];
+
 /// The keys of the list of sessions to move a window to (`Ctrl+B w m`).
 pub const MOVE_LIST_KEYS: &[KeyHint] = &[
     ("↑↓", "select"),
@@ -867,6 +885,7 @@ pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
     ("Hives", "H", HIVE_LIST_KEYS),
     ("Move window", "w m", MOVE_LIST_KEYS),
     ("Agents", "A", AGENT_LIST_KEYS),
+    ("Inbox (answer waiting agents)", "i", INBOX_KEYS),
     ("Windows everywhere", "W", CHOOSE_LIST_KEYS),
     ("Panes everywhere", "P", CHOOSE_LIST_KEYS),
     ("Marks (Alt+1 … 9 jumps)", "M", MARK_LIST_KEYS),

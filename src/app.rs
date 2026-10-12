@@ -105,6 +105,9 @@ enum Mode {
     MoveTo(u8, usize),
     /// The list of every agent, here and elsewhere, that one selected.
     Agents(usize),
+    /// The agents waiting for the user or done, that one selected, its
+    /// question below with the answer typed so far (`App::inbox_answer`).
+    Inbox(usize),
     /// Choosing the machine for a new session, that one selected.
     NewSessionWhere(usize),
     /// Choosing the session, on any machine, for a new window.
@@ -398,6 +401,13 @@ enum AgentAt {
     Other(usize),
 }
 
+/// An agent in the inbox, kept across the list's changes: its machine
+/// (`None` for this one), session and pane.
+type InboxId = (Option<String>, String, PaneId);
+
+/// How many lines of a waiting agent's screen the inbox shows.
+const INBOX_LINES: usize = 12;
+
 /// How often the sessions here and on other machines are listed again.
 const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(5);
@@ -506,6 +516,11 @@ pub struct App {
     socket: PathBuf,
     /// What is typed after `/` in a list, which then shows only matches.
     list_query: Option<String>,
+    /// The answer typed in the inbox for the agent selected there.
+    inbox_answer: String,
+    /// The agent selected in the inbox. The list changes while it is open,
+    /// answers must not go to whichever agent moved into its place.
+    inbox_on: Option<InboxId>,
     /// The popups by name, and the one shown, if any, or shown last.
     popups: BTreeMap<String, Popup>,
     popup: Option<String>,
@@ -634,6 +649,8 @@ impl App {
             places: Arc::default(),
             marks: load_marks(),
             list_query: None,
+            inbox_answer: String::new(),
+            inbox_on: None,
             popups: BTreeMap::new(),
             popup: None,
             popup_shown: false,
@@ -1441,24 +1458,7 @@ impl App {
                 Ok(serde_json::json!({ "pane": pane, "text": p.read(lines) }))
             }
             Request::Send { pane, text, enter } => {
-                let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
-                p.note_input();
-                let bracketed = p.screen().screen().bracketed_paste();
-                let mut bytes = Vec::new();
-                if bracketed && text.contains('\n') {
-                    bytes.extend_from_slice(b"\x1b[200~");
-                    bytes.extend_from_slice(text.as_bytes());
-                    bytes.extend_from_slice(b"\x1b[201~");
-                } else {
-                    bytes.extend_from_slice(text.as_bytes());
-                }
-                p.write(&bytes).map_err(|e| e.to_string())?;
-                if enter {
-                    // A separate write, so programs see Enter as a key and
-                    // not as part of a paste.
-                    thread::sleep(Duration::from_millis(20));
-                    p.write(b"\r").map_err(|e| e.to_string())?;
-                }
+                self.type_into(pane, &text, enter)?;
                 Ok(serde_json::json!({ "pane": pane }))
             }
             Request::New {
@@ -1505,10 +1505,39 @@ impl App {
                     "session": pane.session,
                     "name": pane.name,
                     "workspace_name": ws.name,
+                    "tail": matches!(
+                        self.shown_state(id),
+                        Some(AgentState::Blocked | AgentState::Done)
+                    )
+                    .then(|| agent::tail(pane.screen().screen(), INBOX_LINES)),
                 }));
             }
         }
         serde_json::Value::Array(panes)
+    }
+
+    /// Types `text` into pane `pane`, then Enter if `enter`, as a paste if
+    /// it has several lines and the program takes pastes.
+    fn type_into(&mut self, pane: PaneId, text: &str, enter: bool) -> Result<(), String> {
+        let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
+        p.note_input();
+        let bracketed = p.screen().screen().bracketed_paste();
+        let mut bytes = Vec::new();
+        if bracketed && text.contains('\n') {
+            bytes.extend_from_slice(b"\x1b[200~");
+            bytes.extend_from_slice(text.as_bytes());
+            bytes.extend_from_slice(b"\x1b[201~");
+        } else {
+            bytes.extend_from_slice(text.as_bytes());
+        }
+        p.write(&bytes).map_err(|e| e.to_string())?;
+        if enter {
+            // A separate write, so programs see Enter as a key and
+            // not as part of a paste.
+            thread::sleep(Duration::from_millis(20));
+            p.write(b"\r").map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     /// The pane a message `to` means: its number, or the one pane with that
@@ -2267,6 +2296,10 @@ impl App {
                 self.agents_key(key, selected);
                 Ok(())
             }
+            Mode::Inbox(selected) => {
+                self.inbox_key(key, selected);
+                Ok(())
+            }
             Mode::Windows(selected) => {
                 self.spot_list_key(key, selected, false);
                 Ok(())
@@ -2461,6 +2494,11 @@ impl App {
             Command::RenameWorkspace => self.start_prompt(RenameTarget::Workspace(self.workspace)),
             Command::MoveWorkspace => self.mode = Mode::MoveTo(self.workspace, 0),
             Command::Agents => self.mode = Mode::Agents(0),
+            Command::Inbox => {
+                self.inbox_answer.clear();
+                self.inbox_on = self.inbox_items().0.first().map(|(_, _, id)| id.clone());
+                self.mode = Mode::Inbox(0);
+            }
             Command::Windows => {
                 let at = self.workspaces().iter().position(|&n| n == self.workspace);
                 self.mode = Mode::Windows(at.unwrap_or(0));
@@ -3935,6 +3973,14 @@ impl App {
     /// longest waiting: this session's, then by where they run. Each with
     /// where it is, for `agents_key`.
     fn agent_choices(&self) -> (Vec<AgentAt>, Vec<menu::MenuItem>) {
+        self.agent_entries()
+            .into_iter()
+            .map(|(_, at, item)| (at, item))
+            .unzip()
+    }
+
+    /// `agent_choices` with each agent's state.
+    fn agent_entries(&self) -> Vec<(AgentState, AgentAt, menu::MenuItem)> {
         let now = Instant::now();
         let mut all: Vec<AgentEntry> = Vec::new();
         let here = self.machine_label(None);
@@ -4005,9 +4051,171 @@ impl App {
                     color: sidebar::state_style(state).fg,
                     group,
                 };
-                (at, item)
+                (state, at, item)
+            })
+            .collect()
+    }
+
+    /// The inbox: the agents everywhere that wait for the user, then those
+    /// done, by machine like `agent_choices`, each with the bottom of its
+    /// screen.
+    fn inbox_items(&self) -> (Vec<(AgentAt, String, InboxId)>, Vec<menu::MenuItem>) {
+        let others = self.other_agents();
+        let mut entries: Vec<_> = self
+            .agent_entries()
+            .into_iter()
+            .filter(|(state, ..)| matches!(state, AgentState::Blocked | AgentState::Done))
+            .collect();
+        // Machines in the order of `agent_entries`, those waiting first in
+        // each.
+        let mut groups: Vec<Option<String>> = Vec::new();
+        for (_, _, item) in &entries {
+            if !groups.contains(&item.group) {
+                groups.push(item.group.clone());
+            }
+        }
+        entries.sort_by_key(|(state, _, item)| {
+            (
+                groups.iter().position(|g| *g == item.group),
+                *state != AgentState::Blocked,
+            )
+        });
+        entries
+            .into_iter()
+            .map(|(_, at, mut item)| {
+                let (tail, id) = match at {
+                    AgentAt::Here(id) => (
+                        self.panes
+                            .get(&id)
+                            .map(|pane| agent::tail(pane.screen().screen(), INBOX_LINES))
+                            .unwrap_or_default(),
+                        (None, protocol::session_name(), id),
+                    ),
+                    AgentAt::Other(i) => match others.get(i) {
+                        Some((place, agent)) => (
+                            agent.tail.clone(),
+                            (place.host.clone(), place.name.clone(), agent.pane),
+                        ),
+                        None => (String::new(), (None, String::new(), 0)),
+                    },
+                };
+                item.key = ' ';
+                ((at, tail, id), item)
             })
             .unzip()
+    }
+
+    /// Where the agent selected in the inbox is now, `None` once it left
+    /// the list; the one at `fallback` before anything was selected.
+    fn inbox_selected(
+        &self,
+        targets: &[(AgentAt, String, InboxId)],
+        fallback: usize,
+    ) -> Option<usize> {
+        match &self.inbox_on {
+            Some(on) => targets.iter().position(|(_, _, id)| id == on),
+            None => (!targets.is_empty()).then(|| fallback.min(targets.len() - 1)),
+        }
+    }
+
+    /// Up and down choose an agent, a digit chooses that option of its
+    /// question, typed text and Enter answer it, Enter alone goes there.
+    /// Answers are always the user's own: the inbox only carries them, and
+    /// only to the agent whose question is shown.
+    fn inbox_key(&mut self, key: KeyEvent, fallback: usize) {
+        let (targets, items) = self.inbox_items();
+        let count = targets.len().max(1);
+        let selected = self.inbox_selected(&targets, fallback);
+        let at = selected.map(|i| targets[i].0);
+        let waiting = selected.is_some_and(|i| items[i].danger);
+        let select = |app: &mut Self, i: usize| {
+            app.inbox_answer.clear();
+            app.inbox_on = targets.get(i).map(|(_, _, id)| id.clone());
+            app.mode = Mode::Inbox(i);
+        };
+        let here = selected.unwrap_or(fallback.min(count - 1));
+        match key.code {
+            KeyCode::Esc if !self.inbox_answer.is_empty() => self.inbox_answer.clear(),
+            KeyCode::Esc => self.mode = Mode::Normal,
+            KeyCode::Up | KeyCode::BackTab => select(self, (here + count - 1) % count),
+            KeyCode::Down | KeyCode::Tab => select(self, (here + 1) % count),
+            KeyCode::Backspace => {
+                self.inbox_answer.pop();
+            }
+            // Gone from the list: say so, and show the one now in its place.
+            KeyCode::Enter | KeyCode::Char('1'..='9') if at.is_none() && !targets.is_empty() => {
+                select(self, here);
+                self.flash = Some("that agent no longer waits, nothing sent".into());
+            }
+            KeyCode::Enter if self.inbox_answer.is_empty() => {
+                self.mode = Mode::Normal;
+                match at {
+                    Some(AgentAt::Here(id)) => self.reveal(id),
+                    Some(AgentAt::Other(i)) => self.go_to_other_agent(i),
+                    None => {}
+                }
+            }
+            KeyCode::Enter => {
+                let text = std::mem::take(&mut self.inbox_answer);
+                if let Some(at) = at {
+                    self.answer(at, &text, true);
+                }
+            }
+            KeyCode::Char(c @ '1'..='9') if waiting && self.inbox_answer.is_empty() => {
+                if let Some(at) = at {
+                    self.answer(at, &c.to_string(), false);
+                }
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.inbox_answer.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    /// Types `text` into the agent at `at`, then Enter if `enter`: here
+    /// directly, in another session through its socket, on another machine
+    /// through ssh. Waits for neither, failures show in the control bar.
+    fn answer(&mut self, at: AgentAt, text: &str, enter: bool) {
+        let (place, pane) = match at {
+            AgentAt::Here(id) => {
+                if let Err(e) = self.type_into(id, text, enter) {
+                    self.flash = Some(format!("could not answer: {e}"));
+                }
+                return;
+            }
+            AgentAt::Other(i) => match self.other_agents().into_iter().nth(i) {
+                Some((place, agent)) => (place, agent.pane),
+                None => return,
+            },
+        };
+        self.flash = Some(format!("answered {}", place.name));
+        let text = text.to_owned();
+        let socket = self.socket.clone();
+        thread::spawn(move || {
+            let result = match &place.host {
+                None => protocol::session_socket(&place.name).and_then(|path| {
+                    crate::client::request_at(&path, Request::Send { pane, text, enter })
+                }),
+                Some(host) => {
+                    let pane = pane.to_string();
+                    let mut args = vec!["-s", &place.name, "send", "--stdin", "--pane", &pane];
+                    if !enter {
+                        args.push("--no-enter");
+                    }
+                    crate::client::remote_output(host, &args, &text)
+                        .map(|_| serde_json::Value::Null)
+                }
+            };
+            if let Err(e) = result {
+                let text = format!("could not answer {}: {e:#}", place.name);
+                let _ = crate::client::request_at(&socket, Request::Flash { text });
+            }
+        });
     }
 
     /// The panes of every other session, here and on the other machines,
@@ -6444,6 +6652,7 @@ impl App {
                         | Mode::Hives(_)
                         | Mode::MoveTo(..)
                         | Mode::Agents(_)
+                        | Mode::Inbox(_)
                         | Mode::Windows(_)
                         | Mode::Panes(_)
                         | Mode::NewSessionWhere(_)
@@ -6626,6 +6835,7 @@ impl App {
                     bindings::AGENT_LIST_KEYS,
                 );
             }
+            Mode::Inbox(selected) => self.draw_inbox(frame, body, selected),
             Mode::MoveTo(window, selected) => {
                 let (_, items) = self.move_to_items();
                 self.draw_list(
@@ -6765,6 +6975,96 @@ impl App {
 
     /// Draws a list, narrowed to what matches the search if there is one,
     /// with `/` among its keys.
+    /// The inbox: the list above, the selected agent's question below
+    /// with the answer typed so far.
+    fn draw_inbox(&self, frame: &mut Frame, body: Rect, selected: usize) {
+        let (targets, mut items) = self.inbox_items();
+        if items.is_empty() {
+            items.push(menu::MenuItem {
+                key: ' ',
+                title: "nothing waits for you".into(),
+                hint: "no agent asks or is done, here or elsewhere".into(),
+                danger: false,
+                apart: false,
+                color: None,
+                group: None,
+            });
+        }
+        // Once the agent selected left the list, the one in its place, but
+        // `inbox_key` sends nothing until it is chosen.
+        let selected = self
+            .inbox_selected(&targets, selected)
+            .unwrap_or(selected)
+            .min(items.len() - 1);
+        let tail = targets
+            .get(selected)
+            .map(|(_, tail, _)| tail.as_str())
+            .unwrap_or_default();
+        let lines = tail.lines().count() as u16;
+        let ask = if targets.is_empty() { 0 } else { lines + 3 };
+        let ask = ask.min(body.height / 2);
+        let list = Rect {
+            height: body.height - ask,
+            ..body
+        };
+        let body = Rect {
+            height: body.height.saturating_sub(1),
+            ..body
+        };
+        menu::draw_choices(
+            frame,
+            list,
+            " ⬢ Inbox ",
+            &items,
+            selected,
+            bindings::INBOX_KEYS,
+        );
+        if ask == 0 {
+            return;
+        }
+        let t = theme::current();
+        let width = body.width.saturating_sub(4).min(110);
+        let area = Rect {
+            x: body.x + (body.width - width) / 2,
+            y: body.y + body.height - ask,
+            width,
+            height: ask,
+        };
+        let title = items[selected].title.clone();
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(if items[selected].danger {
+                t.danger
+            } else {
+                t.accent
+            }))
+            .title(format!(" {title} "))
+            .padding(Padding::horizontal(1));
+        let mut text: Vec<Line> = tail
+            .lines()
+            .map(|line| Line::from(line.to_owned()))
+            .collect();
+        let answer = if self.inbox_answer.is_empty() {
+            Span::styled(
+                if items[selected].danger {
+                    "type the answer, or a digit for that option"
+                } else {
+                    "type the next prompt"
+                },
+                Style::new().fg(t.subtle),
+            )
+        } else {
+            Span::raw(self.inbox_answer.clone())
+        };
+        text.push(Line::from(vec![
+            Span::styled("› ", Style::new().fg(t.accent)),
+            answer,
+        ]));
+        let skip = (text.len() as u16).saturating_sub(ask.saturating_sub(2));
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(text).block(block).scroll((skip, 0)), area);
+    }
+
     fn draw_list(
         &self,
         frame: &mut Frame,
@@ -7208,6 +7508,11 @@ impl App {
                 "MARKS",
                 t.magenta,
                 "↑↓ choose · Enter or digit go there · J K move · x remove · Esc cancel",
+            ),
+            Mode::Inbox(_) => (
+                "INBOX",
+                t.magenta,
+                "↑↓ choose · digit option · type + Enter answer · Enter go there · Esc cancel",
             ),
             Mode::Agents(_) => (
                 "AGENTS",

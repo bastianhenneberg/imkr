@@ -78,7 +78,7 @@ Commands:
 For scripts and agents:
   list [--json]                         list the panes with program and agent state
   status <working|blocked|idle|clear>   report this pane's agent state (for hooks)
-  send [--pane N] [--no-enter] <text>   type text into a pane
+  send [--pane N] [--no-enter] [--stdin] <text>   type text into a pane
   agents [--all] [--json]               every agent in every session here, with
                                         --all also on the other machines, and
                                         its address for msg

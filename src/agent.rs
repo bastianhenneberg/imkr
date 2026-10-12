@@ -100,12 +100,42 @@ const QUESTIONS: &[&str] = &[
     "Waiting for your approval",
 ];
 
-/// Whether the bottom of the screen shows a question.
+/// Whether the last lines written show a question: the bottom of the
+/// screen, or above the empty rows of a screen not yet full.
 pub fn asks_question(screen: &vt100::Screen) -> bool {
-    let (rows, cols) = screen.size();
-    let from = rows.saturating_sub(15);
-    let text = screen.contents_between(from, 0, rows - 1, cols);
+    let (_, cols) = screen.size();
+    let last = last_row(screen);
+    let text = screen.contents_between(last.saturating_sub(14), 0, last, cols);
     QUESTIONS.iter().any(|q| text.contains(q))
+}
+
+/// The last row of the screen with text on it.
+fn last_row(screen: &vt100::Screen) -> u16 {
+    let (rows, cols) = screen.size();
+    screen
+        .rows(0, cols)
+        .take(rows as usize)
+        .enumerate()
+        .filter(|(_, row)| !row.trim().is_empty())
+        .map(|(i, _)| i as u16)
+        .last()
+        .unwrap_or(rows.saturating_sub(1))
+}
+
+/// The last `max` lines with text at the bottom of the screen, without
+/// the frames agents draw around them: what a waiting agent asks, or what
+/// a finished one said last.
+pub fn tail(screen: &vt100::Screen, max: usize) -> String {
+    let (_, cols) = screen.size();
+    let last = last_row(screen);
+    let text = screen.contents_between(last.saturating_sub(29), 0, last, cols);
+    let frame: &[char] = &['│', '╭', '╮', '╰', '╯', '─', '┃', '|'];
+    let lines: Vec<&str> = text
+        .lines()
+        .map(|line| line.trim_end().trim_matches(frame).trim_end())
+        .filter(|line| !line.trim().is_empty() && !line.chars().all(|c| frame.contains(&c)))
+        .collect();
+    lines[lines.len().saturating_sub(max)..].join("\n")
 }
 
 /// The state to show, from what is known about a pane. `reported` comes
@@ -151,10 +181,26 @@ mod tests {
     }
 
     #[test]
+    fn tail_drops_frames_and_blank_lines() {
+        let parser = screen(
+            "one\r\n\r\n╭────╮\r\n│ Do you want to proceed? │\r\n│ ❯ 1. Yes │\r\n╰────╯\r\n",
+        );
+        assert_eq!(
+            tail(parser.screen(), 2),
+            " Do you want to proceed?\n ❯ 1. Yes"
+        );
+        assert_eq!(tail(parser.screen(), 10).lines().count(), 3);
+    }
+
+    #[test]
     fn spots_questions_at_the_bottom() {
         let asking = screen("Edit file src/main.rs\r\nDo you want to make this edit?\r\n❯ 1. Yes");
         assert!(asks_question(asking.screen()));
         assert!(!asks_question(screen("Here is the plan.\r\n> ").screen()));
+        // A question on a screen not yet full, above its empty rows.
+        let mut tall = vt100::Parser::new(40, 80, 0);
+        tall.process(b"Edit main.rs\r\nDo you want to proceed?\r\n 1. Yes\r\n");
+        assert!(asks_question(tall.screen()));
     }
 
     #[test]

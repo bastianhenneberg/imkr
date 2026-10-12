@@ -149,19 +149,23 @@ pub fn list(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `imkr send [--pane N] [--no-enter] <text>...`
+/// `imkr send [--pane N] [--no-enter] [--stdin] <text>...`, with
+/// `--stdin` the text as it comes, e.g. an answer sent through ssh.
 pub fn send(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
     let enter = !take_flag(&mut rest, "--no-enter");
-    if rest.is_empty() {
-        bail!("usage: imkr send [--pane N] [--no-enter] <text>...");
+    let text = if take_flag(&mut rest, "--stdin") {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text)?;
+        text
+    } else {
+        rest.join(" ")
+    };
+    if text.is_empty() && !enter {
+        bail!("usage: imkr send [--pane N] [--no-enter] [--stdin] <text>...");
     }
-    client::request(Request::Send {
-        pane,
-        text: rest.join(" "),
-        enter,
-    })?;
+    client::request(Request::Send { pane, text, enter })?;
     Ok(())
 }
 
