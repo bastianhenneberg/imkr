@@ -211,6 +211,10 @@ Projekt-Slug: `imkr`
   Datei, nie `add -N`; `parse` nummeriert je Datei; `Note` hängt an Datei/Nummer/Code, nicht am
   Index; `prompt`). `App::review` (`Review`), `open_review`, `review_key`, `draw_review`, Notiz per
   `PromptFor::ReviewNote` (Esc/Enter zurück in `Mode::Review`), Senden über `mailbox`.
+- Checkpoints: `src/checkpoint.rs` (`take`: Kopie des Index als `GIT_INDEX_FILE`, `add --all`,
+  `write-tree`, `commit-tree` auf `refs/imkr/checkpoints/<session>-<pane>`, nur bei neuem Tree;
+  `list`). Ausgelöst in `update_agents` beim Übergang zu Done, Einstellung `checkpoints`, im
+  Hintergrund-Thread (`App::checkpoint`).
 - tmux-Shim: `src/tmux.rs` (`run` übersetzt tmux-Befehle in Requests, `Options::parse`,
   `target_pane`, `expand` für `#{…}`, `key_bytes`), `main` erkennt argv0 `tmux`. Einstellung
   `tmux_shim` → `pane::set_tmux_shim(tmux::shim_dir())` in `apply_theme` (Link in

@@ -141,6 +141,12 @@ imkr worktree fix-login -- claude     # window "fix-login" in ../api--fix-login,
 
 Worktrees stay when the window closes; `git worktree remove` deletes one once its work is merged.
 
+With *Git checkpoint after each agent turn* on in the settings, imkr keeps the state of an
+agent's repository each time it finishes a turn: a commit of every file, new ones too, on
+`refs/imkr/checkpoints/<session>-<pane>`, only when something changed. Your branch, index and
+files stay as they are. `imkr checkpoints` lists them; `git diff <id>` shows what changed since
+one and `git restore --source=<id> -- <path>` brings a file back as it was.
+
 | Key | Action |
 |---|---|
 | `Ctrl+B` `%` | Split the pane side by side |

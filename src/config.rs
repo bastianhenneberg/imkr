@@ -205,6 +205,10 @@ pub struct Config {
     /// Code's agent teams, open imkr panes. Off by default: with `$TMUX`
     /// set, programs act as inside tmux.
     pub tmux_shim: bool,
+    /// After each agent turn, its repository's state as a commit on
+    /// `refs/imkr/checkpoints/…`, to go back to; branch, index and files
+    /// stay as they are.
+    pub checkpoints: bool,
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
@@ -368,6 +372,7 @@ impl Default for Config {
             renumber_windows: false,
             marks_on_alt: true,
             tmux_shim: false,
+            checkpoints: false,
             sessions_on_start: false,
             name: None,
             hosts: Vec::new(),
@@ -529,6 +534,11 @@ pub const SETTINGS: &[Setting] = &[
                 forward,
             )
         },
+    },
+    Setting {
+        name: "Git checkpoint after each agent turn",
+        value: |c| if c.checkpoints { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.checkpoints = !c.checkpoints,
     },
     Setting {
         name: "tmux for agent teams (new panes)",

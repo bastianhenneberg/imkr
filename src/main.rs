@@ -1,6 +1,7 @@
 mod agent;
 mod app;
 mod bindings;
+mod checkpoint;
 mod cli;
 mod client;
 mod clipboard;
@@ -86,6 +87,8 @@ For scripts and agents:
   list [--json]                         list the panes with program and agent state
   status <working|blocked|idle|clear>   report this pane's agent state (for hooks)
   send [--pane N] [--no-enter] [--stdin] <text>   type text into a pane
+  checkpoints   the checkpoints of the repository here: its state after
+                each agent turn, with the setting on
   explain [--pane N] [--json]
                 why a pane counts as the agent it is, in its state
   worktree NAME [-- command]
@@ -206,6 +209,10 @@ fn main() -> Result<()> {
         ["subscribe", ..] => cli::subscribe(&args[1..], chosen),
         ["worktree", ..] => cli::worktree(&args[1..]),
         ["explain", ..] => cli::explain(&args[1..]),
+        ["checkpoints"] => {
+            print!("{}", checkpoint::list(&std::env::current_dir()?)?);
+            Ok(())
+        }
         ["skill", ..] => cli::skill(&args[1..]),
         ["--skill"] => cli::skill(&[]),
         ["notify", ..] => cli::notify(&args[1..]),

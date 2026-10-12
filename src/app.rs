@@ -2319,6 +2319,9 @@ impl App {
                 AgentState::Working | AgentState::Blocked if was != Some(state) => Some(state),
                 _ => None,
             };
+            if kept == Some(AgentState::Done) && self.config.checkpoints {
+                self.checkpoint(id);
+            }
             if let Some(kept) = kept {
                 self.activity.push_back((unix_now(), id, kept));
                 if self.activity.len() > 500 {
@@ -2346,6 +2349,29 @@ impl App {
             self.unseen.remove(&self.ws.focus);
         }
         self.agents = seen;
+    }
+
+    /// Takes a checkpoint of the repository the agent in pane `id` works
+    /// in, in the background; outside a repository nothing happens.
+    fn checkpoint(&self, id: PaneId) {
+        let Some(cwd) = self.panes.get(&id).and_then(|pane| pane.cwd()) else {
+            return;
+        };
+        let name = format!("{}-{id}", protocol::session_name());
+        let who = format!(
+            "{} › {}",
+            self.window_name_of(id).unwrap_or_default(),
+            self.pane_who(id).unwrap_or_default()
+        );
+        let time = protocol::chrono_like(unix_now()).unwrap_or_default();
+        let message = format!("imkr: {who}, turn done at {time}");
+        thread::spawn(move || {
+            if let Err(e) = crate::checkpoint::take(&cwd, &name, &message)
+                && !e.to_string().contains("not a git repository")
+            {
+                eprintln!("checkpoint of pane {id}: {e:#}");
+            }
+        });
     }
 
     /// Tells the user outside imkr that the agent in pane `id` `what`,

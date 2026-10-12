@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn settings_show_every_setting_with_its_value() {
         let config = Config::default();
-        let screen = render(80, 30, |f, a| {
+        let screen = render(80, 40, |f, a| {
             draw_settings(f, a, &config, 0, Some("saved"))
         });
         for setting in SETTINGS {
