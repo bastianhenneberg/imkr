@@ -17,6 +17,21 @@ fn git(dir: &Path, index: Option<&Path>, args: &[&str]) -> Result<String> {
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
     }
+    // A checkpoint needs an author: imkr, where git knows of no one.
+    if args.first() == Some(&"commit-tree") {
+        let known = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["config", "user.email"])
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !known {
+            for var in ["GIT_AUTHOR", "GIT_COMMITTER"] {
+                command.env(format!("{var}_NAME"), "imkr");
+                command.env(format!("{var}_EMAIL"), "imkr@localhost");
+            }
+        }
+    }
     let output = command.output().context("could not run git")?;
     if !output.status.success() {
         bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
