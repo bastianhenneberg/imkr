@@ -71,13 +71,37 @@ const SHELLS: &[&str] = &["bash", "zsh", "fish", "sh", "dash", "nu", "elvish", "
 /// Output within this time counts as working.
 pub const ACTIVE: Duration = Duration::from_millis(1500);
 
+/// The user's own additions from the config: programs that are agents,
+/// and phrases that mean a question waits. See `configure`.
+static EXTRA: std::sync::RwLock<(Vec<String>, Vec<String>)> =
+    std::sync::RwLock::new((Vec::new(), Vec::new()));
+
+/// Takes the config's `extra_agents` and `question_phrases`.
+pub fn configure(agents: &[String], phrases: &[String]) {
+    *EXTRA.write().unwrap() = (agents.to_vec(), phrases.to_vec());
+}
+
 /// The agent name if `argv` (a process's command line) runs one, looking at
-/// the program and, for interpreters like node, its script.
-pub fn agent_name(argv: &[String]) -> Option<&'static str> {
+/// the program and, for interpreters like node, its script: one imkr knows
+/// or one of the config's `extra_agents`.
+pub fn agent_name(argv: &[String]) -> Option<String> {
+    agent_match(argv).map(|(name, _)| name)
+}
+
+/// `agent_name` with where the name came from: `known` or `config`.
+pub fn agent_match(argv: &[String]) -> Option<(String, &'static str)> {
+    let extra = EXTRA.read().unwrap();
     argv.iter().take(2).find_map(|arg| {
         let base = arg.rsplit('/').next().unwrap_or(arg);
         let base = base.strip_suffix(".js").unwrap_or(base);
-        AGENTS.iter().copied().find(|agent| *agent == base)
+        if let Some(agent) = AGENTS.iter().find(|agent| **agent == base) {
+            return Some(((*agent).to_owned(), "known"));
+        }
+        extra
+            .0
+            .iter()
+            .find(|agent| *agent == base)
+            .map(|agent| (agent.clone(), "config"))
     })
 }
 
@@ -191,10 +215,23 @@ const QUESTIONS: &[&str] = &[
 /// Whether the last lines written show a question: the bottom of the
 /// screen, or above the empty rows of a screen not yet full.
 pub fn asks_question(screen: &vt100::Screen) -> bool {
+    question_phrase(screen).is_some()
+}
+
+/// The phrase that makes `asks_question` see a question, if one does.
+pub fn question_phrase(screen: &vt100::Screen) -> Option<String> {
     let (_, cols) = screen.size();
     let last = last_row(screen);
     let text = screen.contents_between(last.saturating_sub(14), 0, last, cols);
-    QUESTIONS.iter().any(|q| text.contains(q))
+    if let Some(q) = QUESTIONS.iter().find(|q| text.contains(**q)) {
+        return Some((*q).to_owned());
+    }
+    let extra = EXTRA.read().unwrap();
+    extra
+        .1
+        .iter()
+        .find(|q| !q.is_empty() && text.contains(q.as_str()))
+        .cloned()
 }
 
 /// The last row of the screen with text on it.
@@ -291,6 +328,18 @@ mod tests {
     }
 
     #[test]
+    fn the_config_adds_agents_and_question_phrases() {
+        assert_eq!(agent_name(&argv(&["imkr-test-agent"])), None);
+        configure(&["imkr-test-agent".into()], &["Shall I go on".into()]);
+        assert_eq!(
+            agent_match(&argv(&["/opt/imkr-test-agent", "-v"])),
+            Some(("imkr-test-agent".into(), "config"))
+        );
+        assert!(asks_question(screen("Shall I go on, then?\r\n").screen()));
+        configure(&[], &[]);
+    }
+
+    #[test]
     fn tail_drops_frames_and_blank_lines() {
         let parser = screen(
             "one\r\n\r\n╭────╮\r\n│ Do you want to proceed? │\r\n│ ❯ 1. Yes │\r\n╰────╯\r\n",
@@ -315,13 +364,13 @@ mod tests {
 
     #[test]
     fn recognises_agents_directly_and_behind_node() {
-        assert_eq!(agent_name(&argv(&["claude"])), Some("claude"));
+        assert_eq!(agent_name(&argv(&["claude"])).as_deref(), Some("claude"));
         assert_eq!(
-            agent_name(&argv(&["/home/me/.local/bin/claude", "--resume"])),
+            agent_name(&argv(&["/home/me/.local/bin/claude", "--resume"])).as_deref(),
             Some("claude")
         );
         assert_eq!(
-            agent_name(&argv(&["node", "/usr/lib/node_modules/gemini.js"])),
+            agent_name(&argv(&["node", "/usr/lib/node_modules/gemini.js"])).as_deref(),
             Some("gemini")
         );
         assert_eq!(agent_name(&argv(&["nvim", "claude.md"])), None);

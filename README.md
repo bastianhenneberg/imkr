@@ -222,8 +222,11 @@ while you look elsewhere or are detached: through `notify-send`, or as OSC 9 for
 Ghostty and WezTerm, or not at all (setting `notifications = "system" | "terminal" | "off"`).
 
 imkr recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen
-and kilo. It guesses from their output and from questions on the screen. For exact states, let
-the agent report them with hooks. For Claude Code:
+and kilo. It guesses from their output and from questions on the screen. Other agents and
+their questions go into the config (`extra_agents = ["my-agent"]`,
+`question_phrases = ["Proceed now?"]`), and `imkr explain --pane N` says why a pane counts as
+the agent it is, in its state, or as none. For exact states, let the agent report them with
+hooks. For Claude Code:
 
 ```bash
 imkr hooks --install    # puts them into ~/.claude, on every machine you run agents on

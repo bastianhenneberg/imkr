@@ -675,6 +675,42 @@ pub fn move_window(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `imkr explain [--pane N] [--json]`: why a pane counts as the agent it
+/// is, in its state.
+pub fn explain(args: &[String]) -> Result<()> {
+    let mut rest = args.to_vec();
+    let json = take_flag(&mut rest, "--json");
+    let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
+    let e = client::request(Request::Explain { pane })?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&e)?);
+        return Ok(());
+    }
+    let text = |key: &str| match &e[key] {
+        serde_json::Value::Null => "-".to_owned(),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let argv: Vec<&str> = e["argv"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a.as_str())
+        .collect();
+    println!("pane {pane}");
+    println!("  runs         {}", argv.join(" "));
+    match e["agent"].as_str() {
+        Some(agent) => println!("  agent        {agent} ({} name)", text("known_by")),
+        None => println!("  agent        none"),
+    }
+    println!("  hooks said   {}", text("reported"));
+    println!("  quiet for    {} ms", text("quiet_ms"));
+    println!("  question     {}", text("question"));
+    println!("  state        {}", text("state"));
+    println!("  because      {}", text("why"));
+    Ok(())
+}
+
 /// `imkr worktree NAME [-- command args...]`
 pub fn worktree(args: &[String]) -> Result<()> {
     let (options, command) = match args.iter().position(|a| a == "--") {

@@ -86,6 +86,8 @@ For scripts and agents:
   list [--json]                         list the panes with program and agent state
   status <working|blocked|idle|clear>   report this pane's agent state (for hooks)
   send [--pane N] [--no-enter] [--stdin] <text>   type text into a pane
+  explain [--pane N] [--json]
+                why a pane counts as the agent it is, in its state
   worktree NAME [-- command]
                 a new window in git worktree <repo>--NAME on branch NAME,
                 next to the repository here, running command or a shell
@@ -203,6 +205,7 @@ fn main() -> Result<()> {
         ["agents", ..] => cli::agents(&args[1..]),
         ["subscribe", ..] => cli::subscribe(&args[1..], chosen),
         ["worktree", ..] => cli::worktree(&args[1..]),
+        ["explain", ..] => cli::explain(&args[1..]),
         ["skill", ..] => cli::skill(&args[1..]),
         ["--skill"] => cli::skill(&[]),
         ["notify", ..] => cli::notify(&args[1..]),

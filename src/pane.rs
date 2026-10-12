@@ -430,6 +430,59 @@ impl Pane {
         agent::state(&argv, self.reported, since, asking && !self.answered.get())
     }
 
+    /// Why the pane counts as an agent in its state, or as none, step by
+    /// step, for `imkr explain`.
+    pub fn explain(&self) -> serde_json::Value {
+        let argv = self.foreground_argv();
+        let found = agent::agent_match(&argv);
+        let since = self.last_output.lock().unwrap().elapsed();
+        let phrase = agent::question_phrase(self.screen().screen());
+        let state = self.agent_state();
+        let why = if argv.is_empty() {
+            "no foreground process found".to_owned()
+        } else if found.is_none() && agent::is_shell(&argv) {
+            match argv.get(1).filter(|arg| !arg.starts_with('-')) {
+                Some(script) => {
+                    let name = script.rsplit('/').next().unwrap_or(script);
+                    format!(
+                        "a shell runs the script {name}, which is no agent imkr knows; \
+                         add \"{name}\" to `extra_agents` in the config if it is one"
+                    )
+                }
+                None => "a shell runs in the foreground: no agent".to_owned(),
+            }
+        } else if let Some(reported) = self.reported {
+            format!(
+                "its hooks reported {} (`imkr status`), that wins",
+                reported.name()
+            )
+        } else if found.is_none() {
+            let name = argv[0].rsplit('/').next().unwrap_or(&argv[0]);
+            format!("{name} is no agent imkr knows; add \"{name}\" to `extra_agents` in the config if it is one")
+        } else if since < agent::ACTIVE {
+            format!("it wrote output {} ms ago: working", since.as_millis())
+        } else if phrase.is_some() && !self.answered.get() {
+            "quiet, and a question is on the screen: blocked".to_owned()
+        } else if phrase.is_some() {
+            "quiet; the question on the screen was answered already: idle".to_owned()
+        } else {
+            "quiet, no question on the screen: idle".to_owned()
+        };
+        serde_json::json!({
+            "argv": argv,
+            "agent": found.as_ref().map(|(name, _)| name),
+            "known_by": found.map(|(_, by)| by),
+            "reported": self.reported.map(AgentState::name),
+            "quiet_ms": since.as_millis() as u64,
+            "question": phrase,
+            "answered": self.answered.get(),
+            "session": self.session,
+            "transcript": self.transcript,
+            "state": state.map(AgentState::name),
+            "why": why,
+        })
+    }
+
     /// Notes input from the user or another agent: a question on the screen
     /// counts as answered.
     pub fn note_input(&self) {
@@ -442,7 +495,7 @@ impl Pane {
     pub fn program(&self) -> Option<String> {
         let argv = self.foreground_argv();
         if let Some(agent) = agent::agent_name(&argv) {
-            return Some(agent.to_owned());
+            return Some(agent);
         }
         let first = argv.first()?;
         Some(

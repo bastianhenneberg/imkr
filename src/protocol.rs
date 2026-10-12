@@ -372,6 +372,8 @@ pub enum Request {
         command: Vec<String>,
         cwd: Option<PathBuf>,
     },
+    /// Why pane `pane` counts as the agent it is, in its state, or as none.
+    Explain { pane: PaneId },
     /// Close pane `pane`, ending its program, as `Ctrl+B x` does. Not the
     /// last one: that would end the session.
     Kill { pane: PaneId },

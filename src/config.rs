@@ -180,6 +180,14 @@ pub struct Config {
     /// off.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub resume_commands: BTreeMap<String, String>,
+    /// Programs to treat as coding agents besides those imkr knows, by the
+    /// name they run under, e.g. `my-agent`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_agents: Vec<String>,
+    /// Text that means an agent asks something, besides imkr's own
+    /// ("Do you want to", "(y/n)" …), for agents without hooks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub question_phrases: Vec<String>,
     /// Shell commands run when something happens, see `Hook`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<Hook>,
@@ -352,6 +360,8 @@ impl Default for Config {
                 float: true,
             }],
             hooks: Vec::new(),
+            extra_agents: Vec::new(),
+            question_phrases: Vec::new(),
             resume: Resume::default(),
             resume_commands: BTreeMap::new(),
             images: true,

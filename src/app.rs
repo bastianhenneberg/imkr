@@ -1091,7 +1091,7 @@ impl App {
                 let argv = pane.foreground_argv();
                 let saved = SavedPane {
                     cwd: pane.cwd(),
-                    agent: agent::agent_name(&argv).map(str::to_owned),
+                    agent: agent::agent_name(&argv),
                     session: pane.session.clone(),
                     name: pane.name.clone(),
                     command: None,
@@ -1838,6 +1838,11 @@ impl App {
                 cwd,
             } => self.new_pane(&command, float, workspace, cwd),
             Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
+            Request::Explain { pane } => self
+                .panes
+                .get(&pane)
+                .map(Pane::explain)
+                .ok_or(format!("no pane {pane}")),
             Request::Kill { pane } => {
                 if !self.panes.contains_key(&pane) {
                     return Err(format!("no pane {pane}"));
@@ -6497,6 +6502,7 @@ impl App {
     /// Draws with the configured theme from now on. When it follows
     /// Omarchy, remembers which Omarchy theme that was.
     fn apply_theme(&mut self) {
+        agent::configure(&self.config.extra_agents, &self.config.question_phrases);
         crate::pane::set_tmux_shim(if self.config.tmux_shim {
             crate::tmux::shim_dir().ok()
         } else {
