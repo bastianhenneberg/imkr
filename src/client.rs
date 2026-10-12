@@ -481,12 +481,26 @@ fn caps() -> Caps {
     };
     // On another machine's server, the client says where it is, so it can
     // be sent back.
-    let origin = SHOWN_HOST.lock().unwrap().is_some().then(|| {
+    let via = SHOWN_HOST.lock().unwrap().clone();
+    let origin = via.is_some().then(|| {
         let infos = local_sessions();
+        // What this machine's imkr knows of the others: any of its
+        // sessions knows the same.
+        let hosts = infos
+            .iter()
+            .find_map(|s| {
+                let reply = session_socket(&s.name)
+                    .and_then(|path| request_at(&path, Request::Places))
+                    .ok()?;
+                serde_json::from_value(reply).ok()
+            })
+            .unwrap_or_default();
         Origin {
             host: crate::protocol::hostname(),
             sessions: or_default(infos.iter().map(|s| s.name.clone()).collect()),
             infos,
+            hosts,
+            via,
         }
     });
     Caps {

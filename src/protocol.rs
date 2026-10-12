@@ -69,6 +69,22 @@ pub struct Origin {
     /// so the sidebar there shows this machine as this one shows it.
     #[serde(default)]
     pub infos: Vec<SessionInfo>,
+    /// The other machines the client's own imkr knows, with their
+    /// sessions, so every machine shows them all and the client can be
+    /// sent there (it connects from its own machine, with its own keys).
+    #[serde(default)]
+    pub hosts: Vec<HostInfo>,
+    /// The name the client reached this server by, e.g. its ssh alias: how
+    /// the user calls this machine, which may not be its hostname.
+    #[serde(default)]
+    pub via: Option<String>,
+}
+
+/// A machine with its sessions.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostInfo {
+    pub host: String,
+    pub sessions: Vec<SessionInfo>,
 }
 
 /// A session as `imkr ls --json` lists it, for the session list and the
@@ -184,6 +200,9 @@ pub enum Request {
     Flash { text: String },
     /// Show pane `pane` and focus it, e.g. after switching to its session.
     Reveal { pane: PaneId },
+    /// The other machines this server knows, with their sessions, as
+    /// `Vec<HostInfo>`.
+    Places,
     /// Open the session list, e.g. when `imkr` starts and the settings of
     /// the machine it runs on say so.
     OpenSessions,
@@ -448,6 +467,8 @@ mod tests {
                     host: "omarchy".into(),
                     sessions: vec!["default".into()],
                     infos: Vec::new(),
+                    hosts: Vec::new(),
+                    via: Some("codingmachine".into()),
                 }),
             }),
             ClientMsg::Request(Request::Status {

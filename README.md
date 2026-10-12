@@ -214,7 +214,10 @@ this terminal over to it. imkr runs on that machine and keeps its shells and age
 connection drops; this terminal stays the client, so keys, clipboard, images and the window size
 are local. On the other machine the list offers this one's sessions to come back to. Machines
 are marked from where you sit: `⌂` is the one your terminal runs on, `⇄` any other, and the
-control bar says `⇄ machine` while you work on one you do not sit at.
+control bar says `⇄ machine` while you work on one you do not sit at. Every machine shows them
+all: on another one, your terminal tells its imkr what runs on yours and on every machine yours
+knows, so you go from there straight to a third, connecting from your own machine with your own
+ssh keys.
 
 Machines come from the settings and from `imkr --host`:
 

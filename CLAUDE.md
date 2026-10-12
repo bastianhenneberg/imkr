@@ -81,6 +81,10 @@ Projekt-Slug: `imkr`
   Rückrichtung: Client auf fremdem Rechner schickt alle 3 s `Caps` mit `Origin::infos` (seine
   `local_sessions`), der Server zeigt sie unter ⌂ (`origin_infos`). `#pane` nur an Clients mit
   `Caps::panes`. `machine_label` nimmt die `places`-Sperre: nie aufrufen, während sie gehalten wird.
+  `Origin::hosts` (vom lokalen Server per `Request::Places`) + `Origin::via` (der ssh-Name, unter dem
+  der Client den Server erreicht) → `App::known_hosts()` führt sie mit den eigenen zusammen, ohne
+  sich selbst; `own_name()` nennt den Server so, wie der User ihn kennt. Test mit drei Welten:
+  Fake-`ssh` verteilt nach Host (`server`, `third`) auf eigene HOME/Runtime/State/Config.
   Remote-Wechsel nach blocked/done erkennt `watch_places` per `remote_change` und legt sie in
   `Places::alerts`, `pass_on_alerts` meldet wie lokal (lokale Sessions melden sich selbst).
   Falle: `pkill -f <pfad>` trifft die eigene Shell, deren Befehlszeile den Pfad enthält.

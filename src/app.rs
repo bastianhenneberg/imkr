@@ -1197,6 +1197,22 @@ impl App {
                     .map_err(|e| format!("{e:#}"))?;
                 Ok(serde_json::json!({ "popup": name, "shown": self.popup_shown }))
             }
+            Request::Places => {
+                let hosts: Vec<protocol::HostInfo> = self
+                    .places
+                    .lock()
+                    .unwrap()
+                    .hosts
+                    .iter()
+                    .filter_map(|(host, sessions)| {
+                        Some(protocol::HostInfo {
+                            host: host.clone(),
+                            sessions: sessions.as_ref().ok()?.clone(),
+                        })
+                    })
+                    .collect();
+                serde_json::to_value(hosts).map_err(|e| e.to_string())
+            }
             Request::OpenSessions => {
                 self.open_sessions();
                 Ok(serde_json::json!({}))
@@ -1618,7 +1634,7 @@ impl App {
                 rows.push(row(Some(origin.host.clone()), &info));
             }
         }
-        for (host, sessions) in &places.hosts {
+        for (host, sessions) in &self.known_hosts() {
             match sessions {
                 Ok(sessions) => {
                     rows.extend(sessions.iter().map(|info| row(Some(host.clone()), info)));
@@ -1634,6 +1650,38 @@ impl App {
             }
         }
         rows
+    }
+
+    /// This machine's name as the user knows it: the name their client
+    /// reached it by, else its hostname.
+    fn own_name(&self) -> String {
+        self.origin
+            .as_ref()
+            .and_then(|o| o.via.clone())
+            .unwrap_or_else(protocol::hostname)
+    }
+
+    /// Every other machine with its sessions: those this server asks
+    /// itself, then those only the client's own machine knows. Neither
+    /// this machine nor the client's.
+    fn known_hosts(
+        &self,
+    ) -> Vec<(
+        String,
+        std::result::Result<Vec<protocol::SessionInfo>, String>,
+    )> {
+        let mut hosts = self.places.lock().unwrap().hosts.clone();
+        if let Some(origin) = &self.origin {
+            let here = protocol::hostname();
+            for info in &origin.hosts {
+                let known = hosts.iter().any(|(h, _)| *h == info.host);
+                let itself = info.host == here || origin.via.as_deref() == Some(&info.host);
+                if !known && !itself && info.host != origin.host {
+                    hosts.push((info.host.clone(), Ok(info.sessions.clone())));
+                }
+            }
+        }
+        hosts
     }
 
     /// Tells about agents on other machines the way it tells about its own:
@@ -1652,9 +1700,10 @@ impl App {
     /// The agents of the other sessions, here and elsewhere: grouped by
     /// session, those that need the user first.
     fn other_agents(&self) -> Vec<(Place, protocol::AgentInfo)> {
-        let places = self.places.lock().unwrap();
+        let local = self.places.lock().unwrap().local.clone();
+        let hosts = self.known_hosts();
         let mut groups: Vec<(Option<String>, &protocol::SessionInfo)> =
-            places.local.iter().map(|s| (None, s)).collect();
+            local.iter().map(|s| (None, s)).collect();
         // The machine the user sits at, as their client last told.
         let origin = self.origin.clone();
         if let Some(origin) = &origin {
@@ -1662,7 +1711,7 @@ impl App {
                 groups.push((Some(origin.host.clone()), session));
             }
         }
-        for (host, sessions) in &places.hosts {
+        for (host, sessions) in &hosts {
             for session in sessions.iter().flatten() {
                 groups.push((Some(host.clone()), session));
             }
@@ -1710,7 +1759,7 @@ impl App {
         match (host, home) {
             (None, None) if self.places.lock().unwrap().hosts.is_empty() => None,
             (None, None) => Some(format!("⌂ {}", protocol::hostname())),
-            (None, Some(_)) => Some(format!("⇄ {}", protocol::hostname())),
+            (None, Some(_)) => Some(format!("⇄ {}", self.own_name())),
             (Some(h), Some(home)) if h == home => Some(format!("⌂ {h}")),
             (Some(h), _) => Some(format!("⇄ {h}")),
         }
@@ -2836,7 +2885,7 @@ impl App {
                 entries.push((place, format!("⌂ {}", origin.host)));
             }
         }
-        for (host, sessions) in &places.hosts {
+        for (host, sessions) in &self.known_hosts() {
             for session in sessions.iter().flatten() {
                 let place = Place {
                     host: Some(host.clone()),
