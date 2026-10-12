@@ -762,3 +762,59 @@ mod tests {
         assert_eq!(parser.screen().scrollback(), 0);
     }
 }
+
+#[cfg(test)]
+mod bench {
+    #[test]
+    #[ignore]
+    fn reading_costs() {
+        use std::time::Instant;
+        let mut data = Vec::new();
+        for i in 0..400_000 {
+            data.extend_from_slice(
+                format!("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx {i}\r\n")
+                    .as_bytes(),
+            );
+        }
+        let chunks: Vec<&[u8]> = data.chunks(8192).collect();
+        let t = Instant::now();
+        let mut parser = vt100::Parser::new(50, 200, super::SCROLLBACK_LINES);
+        for c in &chunks {
+            parser.process(c);
+        }
+        eprintln!("vt100 {:?} for {} MB", t.elapsed(), data.len() / 1_000_000);
+        let t = Instant::now();
+        let mut s = crate::clipboard::Osc52Scanner::default();
+        for c in &chunks {
+            let _ = s.feed(c);
+        }
+        eprintln!("osc52 {:?}", t.elapsed());
+        let t = Instant::now();
+        let mut s = crate::graphics::Scanner::default();
+        for c in &chunks {
+            let _ = s.feed(c);
+        }
+        eprintln!("graphics {:?}", t.elapsed());
+        let t = Instant::now();
+        let mut s = crate::links::LinkScanner::default();
+        for c in &chunks {
+            let _ = s.feed(c);
+        }
+        eprintln!("links {:?}", t.elapsed());
+        let mut short = Vec::new();
+        for i in 0..2_000_000 {
+            short.extend_from_slice(format!("{i}\r\n").as_bytes());
+        }
+        for scrollback in [super::SCROLLBACK_LINES, 1000] {
+            let t = Instant::now();
+            let mut parser = vt100::Parser::new(48, 170, scrollback);
+            for c in short.chunks(4096) {
+                parser.process(c);
+            }
+            eprintln!(
+                "vt100 2M short lines, scrollback {scrollback}: {:?}",
+                t.elapsed()
+            );
+        }
+    }
+}

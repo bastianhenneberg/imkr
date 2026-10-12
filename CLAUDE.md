@@ -161,6 +161,11 @@ Projekt-Slug: `imkr`
   portable-pty kann keinen Master aus einem FD bauen → `AdoptedMaster`/`AdoptedChild` implementieren
   dessen Traits. Protokoll kompatibel halten: der alte Client bleibt nach dem Update verbunden.
   Test: Binary zweimal ins Scratchpad kopieren (hm1/hm2), mit hm1 starten, `hm2 update`, PIDs vergleichen.
+- Event-Schleife: Rendern bei reiner Programmausgabe höchstens alle `FRAME` (8 ms), Eingaben
+  (`is_input`) sofort; Agents/Hooks/Git/Dateien/Speichern höchstens alle `UPKEEP` (100 ms) oder
+  nach Eingabe/Tick. Vorher ~1000 Frames/s bei Dauerausgabe. Rest liegt im pty-reader (vt100,
+  teuer bei vollem Verlauf); Benchmark: `cargo test --release reading_costs -- --ignored --nocapture`.
+  Messen: CPU je Thread aus `/proc/<server>/task/*/stat`.
 - Persistenz: `src/persist.rs`, Datei `~/.local/state/imkr/session.json` (mit `IMKR_SOCKET`
   daneben als `<socket>.state.json`, mit `IMKR_STATE` frei wählbar). Gespeichert höchstens 1×/s
   bei Änderung, gelöscht am Ende von `App::run` (nur bewusstes Beenden kommt dort an). Test: Server

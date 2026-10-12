@@ -49,6 +49,15 @@ const REPEAT_TIME: Duration = Duration::from_millis(600);
 
 /// How often the server looks at agent states without other events.
 const TICK: Duration = Duration::from_millis(500);
+/// The shortest time between two frames drawn for program output alone.
+const FRAME: Duration = Duration::from_millis(8);
+/// How often agents, hooks, git and files are looked at while busy.
+const UPKEEP: Duration = Duration::from_millis(100);
+
+/// Whether `event` comes from the user or a client, to be drawn at once.
+fn is_input(event: &AppEvent) -> bool {
+    !matches!(event, AppEvent::PtyOutput)
+}
 
 /// The screen size assumed until a client tells us its real one.
 const DEFAULT_SCREEN: Rect = Rect::new(0, 0, 80, 24);
@@ -1127,27 +1136,34 @@ impl App {
     }
 
     fn event_loop(&mut self, rx: &Receiver<AppEvent>) {
+        let mut last_upkeep: Option<Instant> = None;
         while !self.quit && !crate::server::stopped() {
             (_, self.body, self.sidebar) = self.areas(self.screen);
             self.sync_sizes();
-            self.update_agents();
-            self.check_hooks();
+            // What looks at agents, git and files, at most every UPKEEP:
+            // a burst of output would run it a thousand times a second.
+            if last_upkeep.is_none_or(|at| at.elapsed() >= UPKEEP) {
+                last_upkeep = Some(Instant::now());
+                self.update_agents();
+                self.check_hooks();
+                self.refresh_git();
+                self.refresh_files();
+                self.follow_omarchy();
+                self.pass_on_alerts();
+                if *self.watched_hosts.lock().unwrap() != self.config.hosts {
+                    *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
+                }
+                self.save_state();
+                self.save_scrollback(false);
+            }
             self.track_focus();
             self.sync_graphics();
-            self.refresh_git();
-            self.refresh_files();
             self.scroll_sidebar_to_selection();
-            self.follow_omarchy();
             if self.config.renumber_windows {
                 self.renumber_windows();
             }
-            self.pass_on_alerts();
-            if *self.watched_hosts.lock().unwrap() != self.config.hosts {
-                *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
-            }
-            self.save_state();
-            self.save_scrollback(false);
             self.render();
+            let rendered = Instant::now();
 
             // Block for the next event, then take everything else that is
             // already queued, so a burst of output costs one redraw.
@@ -1165,13 +1181,31 @@ impl App {
                 // Wake up now and then to notice agents going quiet.
                 _ => match rx.recv_timeout(TICK) {
                     Ok(event) => event,
-                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Timeout) => {
+                        last_upkeep = None;
+                        continue;
+                    }
                     Err(RecvTimeoutError::Disconnected) => break,
                 },
             };
+            let mut input = is_input(&event);
             self.handle(event);
-            while let Ok(event) = rx.try_recv() {
+            // Output alone waits for the rest of the frame, so programs that
+            // print fast are drawn at FRAME, not at every read; what the
+            // user does is drawn right away.
+            loop {
+                let next = if input {
+                    rx.try_recv().map_err(|_| ())
+                } else {
+                    let left = FRAME.saturating_sub(rendered.elapsed());
+                    rx.recv_timeout(left).map_err(|_| ())
+                };
+                let Ok(event) = next else { break };
+                input |= is_input(&event);
                 self.handle(event);
+            }
+            if input {
+                last_upkeep = None;
             }
             if let Some(exe) = self.upgrade_to.take() {
                 self.upgrade(&exe);
