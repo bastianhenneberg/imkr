@@ -14,6 +14,8 @@ session.
 ```bash
 imkr agents            # every agent on this machine, with its address and state
 imkr agents --all      # also on the user's other machines
+imkr subscribe         # what changes from now on, as JSON lines (e.g. pipe into
+                       # `grep -m1 '"pane":3,.*"state":"idle"'` to wait for pane 3)
 ```
 
 An address is `machine:session/pane`, e.g. `server:api/3`. Within your own session a

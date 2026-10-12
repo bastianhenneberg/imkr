@@ -383,6 +383,126 @@ pub fn agents(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// What `subscribe` compares: per (session, pane) its state (empty
+/// without an agent), program and window.
+type Snapshot = std::collections::BTreeMap<(String, PaneId), (String, String, u64)>;
+
+/// The panes of `sessions` (all running here when empty) as they are now.
+/// Sessions that do not answer are left out.
+fn snapshot(sessions: &[String]) -> Snapshot {
+    let names = if sessions.is_empty() {
+        protocol::sessions()
+    } else {
+        sessions.to_vec()
+    };
+    let mut out = Snapshot::new();
+    for name in names {
+        let Ok(reply) = protocol::session_socket(&name)
+            .and_then(|path| client::request_at(&path, Request::List))
+        else {
+            continue;
+        };
+        for pane in reply.as_array().into_iter().flatten() {
+            let Some(id) = pane["pane"].as_u64() else {
+                continue;
+            };
+            let program = pane["name"]
+                .as_str()
+                .or(pane["program"].as_str())
+                .unwrap_or_default();
+            out.insert(
+                (name.clone(), id as PaneId),
+                (
+                    pane["state"].as_str().unwrap_or_default().to_owned(),
+                    program.to_owned(),
+                    pane["workspace"].as_u64().unwrap_or(0),
+                ),
+            );
+        }
+    }
+    out
+}
+
+/// What happened between `old` and `new`: panes opened and closed, agent
+/// states changed, panes moved to another window.
+fn changes(old: &Snapshot, new: &Snapshot) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    let event = |kind: &str,
+                 (session, pane): &(String, PaneId),
+                 (state, program, window): &(String, String, u64)| {
+        serde_json::json!({
+            "event": kind,
+            "session": session,
+            "pane": pane,
+            "program": program,
+            "window": window,
+            "state": if state.is_empty() { None } else { Some(state) },
+        })
+    };
+    for (key, now) in new {
+        match old.get(key) {
+            None => out.push(event("pane-opened", key, now)),
+            Some(was) => {
+                if was.0 != now.0 {
+                    let mut e = event("state", key, now);
+                    e["from"] =
+                        serde_json::json!(if was.0.is_empty() { None } else { Some(&was.0) });
+                    out.push(e);
+                }
+                if was.2 != now.2 {
+                    let mut e = event("pane-moved", key, now);
+                    e["from_window"] = serde_json::json!(was.2);
+                    out.push(e);
+                }
+            }
+        }
+    }
+    for (key, was) in old {
+        if !new.contains_key(key) {
+            out.push(event("pane-closed", key, was));
+        }
+    }
+    out
+}
+
+/// `imkr subscribe [-s NAME …] [--snapshot]`: what changes in the sessions
+/// here, as one JSON object per line, until stdin's reader goes away.
+/// `--snapshot` first lists every pane as `pane-opened`.
+pub fn subscribe(args: &[String], only: Option<String>) -> Result<()> {
+    use std::io::Write;
+    let mut rest = args.to_vec();
+    let with_snapshot = take_flag(&mut rest, "--snapshot");
+    if let Some(unknown) = rest.first() {
+        bail!("unknown option {unknown:?}; usage: imkr subscribe [--snapshot]");
+    }
+    let sessions: Vec<String> = only.into_iter().collect();
+    let mut last = if with_snapshot {
+        Snapshot::new()
+    } else {
+        snapshot(&sessions)
+    };
+    let mut out = std::io::stdout().lock();
+    loop {
+        let now = snapshot(&sessions);
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        for mut change in changes(&last, &now) {
+            change["time"] = serde_json::json!(time);
+            // The reader is gone: done.
+            if writeln!(out, "{change}")
+                .and_then(|()| out.flush())
+                .is_err()
+            {
+                return Ok(());
+            }
+        }
+        last = now;
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 /// The guide for an agent in an imkr pane, as `imkr skill` prints it and
 /// `--install` puts it into Claude Code's skills.
 const SKILL: &str = include_str!("../skills/imkr/SKILL.md");
@@ -1160,6 +1280,33 @@ fn update_at(socket: &std::path::Path, exe: &std::path::Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subscribe_reports_what_changed() {
+        let pane = |state: &str, window| (state.to_owned(), "claude".to_owned(), window);
+        let old: Snapshot = [
+            (("a".into(), 1), pane("working", 1)),
+            (("a".into(), 2), pane("", 1)),
+        ]
+        .into();
+        let new: Snapshot = [
+            (("a".into(), 1), pane("blocked", 2)),
+            (("a".into(), 3), pane("", 1)),
+        ]
+        .into();
+        let events: Vec<String> = changes(&old, &new)
+            .iter()
+            .map(|e| e["event"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            events,
+            ["state", "pane-moved", "pane-opened", "pane-closed"]
+        );
+        let state = &changes(&old, &new)[0];
+        assert_eq!(state["from"], "working");
+        assert_eq!(state["state"], "blocked");
+        assert!(changes(&new, &new).is_empty());
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()

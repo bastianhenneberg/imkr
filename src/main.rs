@@ -83,6 +83,9 @@ For scripts and agents:
   list [--json]                         list the panes with program and agent state
   status <working|blocked|idle|clear>   report this pane's agent state (for hooks)
   send [--pane N] [--no-enter] [--stdin] <text>   type text into a pane
+  subscribe [--snapshot]
+                what changes, as JSON lines: agent states, panes opened,
+                closed and moved, in every session here (-s: only that one)
   agents [--all] [--json]               every agent in every session here, with
                                         --all also on the other machines, and
                                         its address for msg
@@ -185,6 +188,7 @@ fn main() -> Result<()> {
         ["send", ..] => cli::send(&args[1..]),
         ["msg", ..] => cli::msg(&args[1..]),
         ["agents", ..] => cli::agents(&args[1..]),
+        ["subscribe", ..] => cli::subscribe(&args[1..], chosen),
         ["skill", ..] => cli::skill(&args[1..]),
         ["--skill"] => cli::skill(&[]),
         ["notify", ..] => cli::notify(&args[1..]),

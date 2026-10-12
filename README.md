@@ -264,6 +264,19 @@ and never into a question it asks, which stays yours. Each message says who sent
 answer. `imkr skill` prints the guide for agents, `imkr skill --install` puts it into Claude
 Code's skills, so the agents use it on their own.
 
+### Events
+
+`imkr subscribe` prints what changes in the sessions on this machine, one JSON object per line,
+for scripts, status bars and agents that wait for each other (`-s NAME` watches one session,
+`--snapshot` lists every pane first):
+
+```json
+{"event":"state","session":"api","pane":1,"program":"claude","window":2,"from":"working","state":"blocked","time":1791843836}
+```
+
+Events are `state` (an agent's state changed, `null` without one), `pane-opened`, `pane-closed`
+and `pane-moved` (to another window, with `from_window`).
+
 ## Clipboard
 
 Text you select is copied with OSC 52, so it lands in the clipboard of the machine your terminal
