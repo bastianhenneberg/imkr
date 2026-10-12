@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
-use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -59,6 +59,12 @@ pub enum AppEvent {
     PtyExited(PaneId),
     ClientConnected(UnixStream),
     ClientMsg(ClientId, ClientMsg),
+    /// A window moved here from another session, with its ptys, or why it
+    /// could not be read.
+    MoveIn(
+        ClientId,
+        std::result::Result<(upgrade::MovedWindow, Vec<OwnedFd>), String>,
+    ),
     ClientGone(ClientId),
 }
 
@@ -91,6 +97,8 @@ enum Mode {
     Sessions(usize),
     /// The hives menu is open with the given hive selected.
     Hives(usize),
+    /// Choosing the session to move this window to, that entry selected.
+    MoveTo(u8, usize),
 }
 
 /// The pane picker: every pane in every workspace, filtered by what is
@@ -130,6 +138,8 @@ enum PromptFor {
     SaveHive,
     /// A new name for the hive called this.
     RenameHive(String),
+    /// The session to move this window to.
+    MoveWindow(u8),
     /// The name of a window just opened. Esc closes it again and goes back
     /// to the window it was opened from.
     NewWindow {
@@ -293,6 +303,13 @@ pub struct App {
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
+    /// Panes moved to another session: its socket and their id there, to
+    /// pass on what their agents report to this socket.
+    moved: HashMap<PaneId, (PathBuf, PaneId)>,
+    /// The shell the session started with when nothing was there to
+    /// restore, while it is the only pane. A window moved into a session
+    /// started for it takes its place.
+    first_shell: Option<PaneId>,
     /// The last agent state seen per pane, and since when it holds.
     agents: HashMap<PaneId, (AgentState, Instant)>,
     /// Agents that finished while the user was not looking, shown as done
@@ -382,6 +399,8 @@ impl App {
             conns: HashMap::new(),
             next_client_id: 0,
             socket,
+            moved: HashMap::new(),
+            first_shell: None,
             agents: HashMap::new(),
             unseen: HashSet::new(),
             sidebar: None,
@@ -469,6 +488,7 @@ impl App {
         self.workspace = 1;
         self.hidden.clear();
         self.next_id = 1;
+        self.first_shell = Some(0);
         Ok(())
     }
 
@@ -838,6 +858,13 @@ impl App {
                 self.handle_event(event)
             }
             AppEvent::ClientMsg(..) => Ok(()),
+            AppEvent::MoveIn(id, window) => {
+                let reply = window.and_then(|(window, fds)| self.move_in(window, fds));
+                match self.conns.get_mut(&id) {
+                    Some(stream) => ServerMsg::Reply(reply).write_to(stream).map_err(Into::into),
+                    None => Ok(()),
+                }
+            }
             AppEvent::ClientGone(id) => {
                 self.conns.remove(&id);
                 if self.take_client(id).is_some() {
@@ -864,7 +891,15 @@ impl App {
             .name(format!("client-{id}"))
             .spawn(move || {
                 while let Ok(Some(msg)) = ClientMsg::read_from(&mut reader) {
-                    if events.send(AppEvent::ClientMsg(id, msg)).is_err() {
+                    let event = match msg {
+                        // The descriptors come right after the frame and
+                        // must be taken off the socket before reading on.
+                        ClientMsg::Move(json) => {
+                            AppEvent::MoveIn(id, receive_window(&reader, &json))
+                        }
+                        msg => AppEvent::ClientMsg(id, msg),
+                    };
+                    if events.send(event).is_err() {
                         return;
                     }
                 }
@@ -1006,6 +1041,16 @@ impl App {
                 state,
                 session,
             } => {
+                // An agent in a pane that moved on still reports here.
+                if let Some((socket, there)) = self.moved.get(&pane).cloned() {
+                    let request = Request::Status {
+                        pane: there,
+                        state,
+                        session,
+                    };
+                    thread::spawn(move || crate::client::request_at(&socket, request));
+                    return Ok(serde_json::json!({ "pane": pane, "moved": true }));
+                }
                 let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
                 p.reported = state;
                 if session.is_some() {
@@ -1025,6 +1070,9 @@ impl App {
             }
             Request::List => Ok(self.list()),
             Request::Rename { target, name } => self.rename(target, name),
+            Request::MoveWindow { workspace, to } => {
+                self.move_window(workspace.unwrap_or(self.workspace), &to)
+            }
             Request::Read { pane, lines } => {
                 let p = self.panes.get(&pane).ok_or(format!("no pane {pane}"))?;
                 Ok(serde_json::json!({ "pane": pane, "text": p.read(lines) }))
@@ -1530,6 +1578,10 @@ impl App {
                 self.hives_key(key, selected);
                 Ok(())
             }
+            Mode::MoveTo(window, selected) => {
+                self.move_to_key(key, window, selected);
+                Ok(())
+            }
             Mode::Confirm(action) => {
                 self.mode = Mode::Normal;
                 if matches!(key.code, KeyCode::Char('y' | 'Y')) {
@@ -1672,6 +1724,7 @@ impl App {
                 }
             }
             Command::RenameWorkspace => self.start_prompt(RenameTarget::Workspace(self.workspace)),
+            Command::MoveWorkspace => self.mode = Mode::MoveTo(self.workspace, 0),
             Command::FocusSidebar => self.focus_sidebar(),
             Command::FocusMode => self.focus_mode = !self.focus_mode,
             Command::ToggleSidebar => {
@@ -2434,6 +2487,75 @@ impl App {
         (names, items)
     }
 
+    /// Where a window can move: every other running session, then a new
+    /// one.
+    fn move_to_items(&self) -> (Vec<String>, Vec<menu::MenuItem>) {
+        let current = protocol::session_name();
+        let names: Vec<String> = protocol::sessions()
+            .into_iter()
+            .filter(|name| *name != current)
+            .collect();
+        let mut items: Vec<menu::MenuItem> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| menu::MenuItem {
+                key: char::from_digit((i as u32 + 1) % 10, 10).unwrap_or(' '),
+                title: name.clone(),
+                hint: String::new(),
+                danger: false,
+            })
+            .collect();
+        items.push(menu::MenuItem {
+            key: 'n',
+            title: "new session…".into(),
+            hint: "started for this window".into(),
+            danger: false,
+        });
+        (names, items)
+    }
+
+    /// Enter or a digit moves window `window` to that session, n asks for
+    /// the name of a new one.
+    fn move_to_key(&mut self, key: KeyEvent, window: u8, selected: usize) {
+        let (names, items) = self.move_to_items();
+        let count = items.len();
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::MoveTo(window, (selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::MoveTo(window, (selected + 1) % count);
+                return;
+            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c) => match items.iter().position(|item| item.key == c) {
+                Some(i) => i,
+                None => return,
+            },
+            _ => return,
+        };
+        self.mode = Mode::Normal;
+        match names.get(pick) {
+            Some(name) => {
+                if let Err(e) = self.move_window(window, &name.clone()) {
+                    self.flash = Some(e);
+                }
+            }
+            None => {
+                self.prompt = Some(Prompt {
+                    purpose: PromptFor::MoveWindow(window),
+                    text: String::new(),
+                });
+                self.mode = Mode::Prompt;
+            }
+        }
+    }
+
     /// The hives menu's entries: every hive with its sessions and age.
     fn hive_items(&self) -> (Vec<String>, Vec<menu::MenuItem>) {
         let infos = persist::hive_infos();
@@ -2987,6 +3109,11 @@ impl App {
                         self.mode = Mode::Normal;
                         self.rename_other_session(&old, text.trim());
                     }
+                    PromptFor::MoveWindow(n) => {
+                        if let Err(e) = self.move_window(n, text.trim()) {
+                            self.flash = Some(e);
+                        }
+                    }
                     PromptFor::NewSession => {
                         let name = text.trim().to_owned();
                         if protocol::valid_session_name(&name) {
@@ -3154,6 +3281,196 @@ impl App {
             .and_then(|p| p.name.clone().or_else(|| p.program()))
             .unwrap_or_default();
         format!("imkr · {ws} · {pane}")
+    }
+
+    /// Moves window `n` with its running panes to session `to`, started
+    /// if needed. The processes go on there, untouched: their ptys are
+    /// passed over the session's socket.
+    fn move_window(&mut self, n: u8, to: &str) -> Reply {
+        if !self.workspace_exists(n) {
+            return Err(format!("no window {n}"));
+        }
+        if !protocol::valid_session_name(to) {
+            return Err(format!(
+                "{to:?} is no session name: letters, digits, - and _ only"
+            ));
+        }
+        if to == protocol::session_name() {
+            return Err(format!("window {n} is in session {to} already"));
+        }
+        let socket = protocol::session_socket(to).map_err(|e| format!("{e:#}"))?;
+        let (stream, fresh) = match UnixStream::connect(&socket) {
+            Ok(stream) => (stream, false),
+            Err(_) => (
+                crate::client::start_server(&socket, Some(to)).map_err(|e| format!("{e:#}"))?,
+                true,
+            ),
+        };
+        let ws = if n == self.workspace {
+            self.ws.clone()
+        } else {
+            self.hidden[&n].clone()
+        };
+        let ids = ws.panes();
+
+        // Nothing may be read from the ptys here anymore: what comes next
+        // is the other session's to read.
+        for id in &ids {
+            if let Some(pane) = self.panes.get_mut(id) {
+                pane.stop_reading();
+            }
+        }
+        let mut panes = BTreeMap::new();
+        let mut fds = Vec::new();
+        for id in &ids {
+            let handed = self.panes.get(id).and_then(|pane| {
+                let mut handed = pane.handover()?;
+                fds.push(handed.fd);
+                handed.fd = (fds.len() - 1) as RawFd;
+                Some(upgrade::MovedPane {
+                    pane: handed,
+                    name: pane.name.clone(),
+                    session: pane.session.clone(),
+                })
+            });
+            match handed {
+                Some(handed) => {
+                    panes.insert(*id, handed);
+                }
+                None => {
+                    self.read_on(&ids);
+                    return Err(format!("pane {id} cannot be moved"));
+                }
+            }
+        }
+        let window = upgrade::MovedWindow {
+            number: n,
+            workspace: ws,
+            panes,
+            fresh,
+        };
+        let sent = (|| -> Result<serde_json::Value> {
+            let mut stream = stream;
+            stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+            ClientMsg::Move(serde_json::to_vec(&window)?).write_to(&mut stream)?;
+            crate::fdpass::send(&stream, &fds)?;
+            loop {
+                match ServerMsg::read_from(&mut stream)? {
+                    Some(ServerMsg::Reply(Ok(value))) => return Ok(value),
+                    Some(ServerMsg::Reply(Err(message))) => anyhow::bail!(message),
+                    Some(_) => {}
+                    None => anyhow::bail!("session {to} closed the connection"),
+                }
+            }
+        })();
+        let reply = match sent {
+            Ok(reply) => reply,
+            Err(e) => {
+                self.read_on(&ids);
+                return Err(format!("not moved: {e:#}"));
+            }
+        };
+
+        // The panes live on there. Here they only go away.
+        let new_ids: HashMap<PaneId, PaneId> =
+            serde_json::from_value(reply["panes"].clone()).unwrap_or_default();
+        for id in &ids {
+            if let Some(pane) = self.panes.get_mut(id) {
+                pane.release();
+            }
+            if let Some(&there) = new_ids.get(id) {
+                self.moved.insert(*id, (socket.clone(), there));
+            }
+            self.close(*id);
+        }
+        let there = reply["window"].as_u64().unwrap_or(0);
+        self.flash = Some(format!("window {n} is now window {there} of session {to}"));
+        Ok(serde_json::json!({ "window": n, "to": to, "as": there, "panes": new_ids }))
+    }
+
+    /// Reads the ptys of `ids` again, after a move that did not happen.
+    fn read_on(&mut self, ids: &[PaneId]) {
+        for id in ids {
+            if let Some(pane) = self.panes.get_mut(id)
+                && let Err(e) = pane.read_on()
+            {
+                eprintln!("pane {id} cannot be read anymore: {e:#}");
+            }
+        }
+    }
+
+    /// Takes in a window another session moved here, keeping its number
+    /// and its panes' ids where they are free.
+    fn move_in(&mut self, window: upgrade::MovedWindow, fds: Vec<OwnedFd>) -> Reply {
+        let keep = (1..=9).contains(&window.number) && !self.workspace_exists(window.number);
+        let Some(n) = keep
+            .then_some(window.number)
+            .or_else(|| self.free_workspace())
+        else {
+            return Err(format!(
+                "session {} has all 9 windows in use",
+                protocol::session_name()
+            ));
+        };
+        if fds.len() != window.panes.len() {
+            return Err("the panes' terminals did not all arrive".into());
+        }
+        let mut new_ids: HashMap<PaneId, PaneId> = HashMap::new();
+        for &old in window.panes.keys() {
+            let taken = |id: PaneId, new_ids: &HashMap<PaneId, PaneId>| {
+                self.panes.contains_key(&id) || new_ids.values().any(|&v| v == id)
+            };
+            let mut new = old;
+            if taken(new, &new_ids) {
+                new = self.next_id;
+                while taken(new, &new_ids) {
+                    new += 1;
+                }
+            }
+            new_ids.insert(old, new);
+        }
+        self.next_id = self
+            .next_id
+            .max(new_ids.values().max().map_or(0, |id| id + 1));
+
+        let first_shell = self
+            .first_shell
+            .filter(|_| window.fresh && self.panes.len() == 1);
+        let mut fds: Vec<Option<OwnedFd>> = fds.into_iter().map(Some).collect();
+        let mut ws = window.workspace;
+        ws.renumber(&|id| new_ids.get(&id).copied().unwrap_or(id));
+        for (old, mut moved) in window.panes {
+            let new = new_ids[&old];
+            let fd = usize::try_from(moved.pane.fd)
+                .ok()
+                .and_then(|i| fds.get_mut(i)?.take());
+            let Some(fd) = fd else {
+                ws.remove(new);
+                continue;
+            };
+            moved.pane.fd = fd.into_raw_fd();
+            match Pane::take_over(new, &moved.pane, self.events.clone()) {
+                Ok(mut pane) => {
+                    pane.name = moved.name;
+                    pane.session = moved.session;
+                    self.panes.insert(new, pane);
+                }
+                Err(e) => {
+                    eprintln!("could not take over pane {old}: {e:#}");
+                    ws.remove(new);
+                }
+            }
+        }
+        if ws.is_empty() {
+            return Err("no pane could be taken over".into());
+        }
+        self.hidden.insert(n, ws);
+        // Started for this window: its own first shell makes way.
+        if let Some(id) = first_shell {
+            self.close(id);
+        }
+        self.first_shell = None;
+        Ok(serde_json::json!({ "window": n, "panes": new_ids }))
     }
 
     /// Draws with the configured theme from now on. When it follows
@@ -3612,6 +3929,7 @@ impl App {
                         | Mode::Picker
                         | Mode::Sessions(_)
                         | Mode::Hives(_)
+                        | Mode::MoveTo(..)
                 )
                 && (self.mode != Mode::Copy || copy_cursor.is_some())
                 && let Some(position) = cursor
@@ -3677,6 +3995,17 @@ impl App {
                     bindings::SESSION_LIST_KEYS,
                 );
             }
+            Mode::MoveTo(window, selected) => {
+                let (_, items) = self.move_to_items();
+                menu::draw_choices(
+                    frame,
+                    body,
+                    &format!(" ⬢ Move window {window} to "),
+                    &items,
+                    selected,
+                    bindings::MOVE_LIST_KEYS,
+                );
+            }
             Mode::Hives(selected) => {
                 let (names, mut items) = self.hive_items();
                 if names.is_empty() {
@@ -3740,6 +4069,7 @@ impl App {
             PromptFor::Search { forward: true } => " Search down ".to_owned(),
             PromptFor::Search { forward: false } => " Search up ".to_owned(),
             PromptFor::NewSession => " New session ".to_owned(),
+            PromptFor::MoveWindow(n) => format!(" Move window {n} to session "),
             PromptFor::SaveHive => " Save running sessions as hive ".to_owned(),
             PromptFor::RenameHive(old) => format!(" Rename hive {old} "),
             PromptFor::RenameSession(old) => format!(" Rename session {old} "),
@@ -3758,6 +4088,7 @@ impl App {
                     PromptFor::NewWindow { .. } => "Enter save · Esc closes the window again",
                     PromptFor::Search { .. } => "Enter find · then n next, N previous · Esc cancel",
                     PromptFor::NewSession => "Enter start and switch · letters, digits, - and _",
+                    PromptFor::MoveWindow(_) => "Enter move · a new name starts it · Esc cancel",
                     PromptFor::RenameSession(_) => "Enter rename · letters, digits, - and _",
                     PromptFor::SaveHive => "Enter save · letters, digits, - and _ · Esc cancel",
                     PromptFor::RenameHive(_) => "Enter rename · letters, digits, - and _",
@@ -4034,6 +4365,11 @@ impl App {
                 t.cyan,
                 "↑↓ select · ←→ Enter change · Esc close",
             ),
+            Mode::MoveTo(..) => (
+                "MOVE",
+                t.magenta,
+                "↑↓ choose · Enter or digit move there · n new session · Esc cancel",
+            ),
             Mode::Sessions(_) => (
                 "SESSIONS",
                 t.magenta,
@@ -4211,6 +4547,19 @@ fn screen_layout(screen: Rect, bars: &Bars, spacing: &Spacing) -> ScreenLayout {
 }
 
 /// ` ⬢ imkr `, or the session's name for a named one.
+/// Reads a moved window and the descriptors of its ptys that follow it on
+/// `stream`.
+fn receive_window(
+    stream: &UnixStream,
+    json: &[u8],
+) -> std::result::Result<(upgrade::MovedWindow, Vec<OwnedFd>), String> {
+    let window: upgrade::MovedWindow =
+        serde_json::from_slice(json).map_err(|e| format!("broken window: {e}"))?;
+    let fds = crate::fdpass::recv(stream, window.panes.len())
+        .map_err(|e| format!("the panes' terminals did not arrive: {e}"))?;
+    Ok((window, fds))
+}
+
 /// Fills what lies outside the shared `screen` on a client of `size` with
 /// dots, so it is clear the session ends there.
 fn outside(size: Rect, screen: Rect) -> Vec<u8> {

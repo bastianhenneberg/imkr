@@ -78,6 +78,13 @@ and named sessions show their name in the control bar. In that menu `n` starts a
 `x` ends the selected one, `r` renames it (like `imkr rename-session NAME`, `-s OLD` for
 another one), `s` saves all running sessions as a hive and `h` opens the hives.
 
+`Ctrl+B w m` moves the active window to another session: pick a running one, or `n` for a new
+one, started for it. E.g. to gather the windows of one project in a session of their own
+(`imkr move-window --window N NAME` from a script). Its programs keep running, nothing restarts: the ptys are passed to the other
+server over its socket. The window keeps its name and, if free, its number. Agents in it keep
+reporting to the session they came from, which passes it on while it runs; after that their
+state comes from what imkr sees on the screen.
+
 | Key | Action |
 |---|---|
 | `Ctrl+B` `%` | Split the pane side by side |
@@ -90,7 +97,7 @@ another one), `s` saves all running sessions as a hive and `h` opens the hives.
 | `Ctrl+B` `f` … | Floating panes menu: `f` float/tile, `n` new, `o` next, arrows move |
 | `Ctrl+B` `Shift+←↑↓→` | Move a floating pane |
 | `Ctrl+B` `n` | New window, asks for its name right away (Esc closes it again) |
-| `Ctrl+B` `w` … | Windows menu: `1`–`9`, `c` new, `n`/`p` next/previous |
+| `Ctrl+B` `w` … | Windows menu: `1`–`9`, `c` new, `n`/`p` next/previous, `m` move to another session |
 | `Ctrl+B` `1`–`9` | Go to window, an empty one starts a shell |
 | `Ctrl+B` `←↑↓→` | Focus the pane in that direction |
 | `Ctrl+B` `o` | Focus the next pane |
@@ -174,6 +181,16 @@ imkr notify --title build "done in 42 s"  # with a title of its own
 
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.
+
+## Other machines
+
+`imkr --host server` shows the session on `server` in this terminal: imkr runs there, started if
+needed, and keeps the shells and agents going when the connection drops. This terminal stays the
+client, so keys, clipboard, images and the window size are local. `-s NAME` picks a session
+there, `attach --host server` only attaches to one that runs, and `Ctrl+B S` switches between the
+sessions on that machine. It runs `ssh -C server imkr proxy` through a login shell, so imkr must
+be on the PATH there and ssh should log in without a password (keys, an agent or `ControlMaster`).
+Inside a local imkr, `Ctrl+B Ctrl+B` sends the prefix on to the one on the server.
 
 ## Updates
 

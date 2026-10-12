@@ -270,6 +270,26 @@ pub fn rename(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `imkr move-window [--window N] [--to] SESSION`: moves a window with its
+/// running panes to another session, started if needed.
+pub fn move_window(args: &[String]) -> Result<()> {
+    let mut rest = args.to_vec();
+    let workspace = take_window(&mut rest)?;
+    let to = match (take_value(&mut rest, "--to")?, rest.as_slice()) {
+        (Some(to), []) => to,
+        (None, [to]) => to.clone(),
+        _ => bail!("usage: imkr move-window [--window N] <session>"),
+    };
+    let reply = client::request(Request::MoveWindow { workspace, to })?;
+    println!(
+        "window {} is now window {} of session {}",
+        reply["window"],
+        reply["as"],
+        reply["to"].as_str().unwrap_or_default()
+    );
+    Ok(())
+}
+
 /// `imkr new [--float] [--window N] [-- command args...]`
 pub fn new(args: &[String]) -> Result<()> {
     let (options, command) = match args.iter().position(|a| a == "--") {

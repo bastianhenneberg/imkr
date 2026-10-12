@@ -113,6 +113,18 @@ impl Workspace {
         self.layout.contains(pane) || self.is_floating(pane)
     }
 
+    /// Gives every pane the id `new` maps it to, e.g. when the workspace
+    /// moves to a session whose panes use some of its ids.
+    pub fn renumber(&mut self, new: &dyn Fn(PaneId) -> PaneId) {
+        self.layout.renumber(new);
+        for float in &mut self.floats {
+            float.id = new(float.id);
+        }
+        self.focus = new(self.focus);
+        self.last_tiled = self.last_tiled.map(new);
+        self.zoomed = self.zoomed.map(new);
+    }
+
     pub fn is_floating(&self, pane: PaneId) -> bool {
         self.floats.iter().any(|f| f.id == pane)
     }
@@ -356,6 +368,18 @@ mod tests {
     use super::*;
 
     const BODY: Rect = Rect::new(0, 0, 100, 40);
+
+    #[test]
+    fn renumber_reaches_tiles_floats_and_focus() {
+        let mut ws = Workspace::new(1);
+        assert!(ws.split(Axis::Row, 2));
+        ws.add_float(3, BODY);
+        ws.focus(3);
+        ws.renumber(&|id| id + 10);
+        assert_eq!(ws.panes(), vec![11, 12, 13]);
+        assert_eq!(ws.focus, 13);
+        assert!(ws.is_floating(13) && !ws.contains(1));
+    }
 
     #[test]
     fn gaps_separate_tiles_but_not_the_edges() {

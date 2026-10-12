@@ -5,6 +5,7 @@ mod cli;
 mod client;
 mod clipboard;
 mod config;
+mod fdpass;
 mod filetree;
 mod graphics;
 mod keys;
@@ -32,6 +33,11 @@ Commands:
   (none)        attach to the session, or start it
   attach [-d]   attach to the session (`attach -t NAME` works too), -d detaches
                 other terminals attached to it
+  --host HOST   with or without attach: the session on HOST, through ssh. imkr
+                runs there, this terminal stays the client (keys, clipboard,
+                images). E.g. `imkr --host server -s work`
+  proxy [--start]
+                connect stdin/stdout to the session, used by --host
   ls            list the running sessions
   hive ls       list the hives: saved groups of sessions
   hive save [NAME]
@@ -61,6 +67,8 @@ For scripts and agents:
                                         start a command in a new pane
   rename [--pane N | --window N] [--clear | <name>]
                                         name a pane or a window
+  move-window [--window N] <session>    move a window with its running panes to
+                                        another session, started if needed
   read [--pane N] [--lines N]           print a pane's screen, or its last N lines
   wait [--pane N] --until <state> [--timeout S]
                                         wait for an agent: working, blocked, idle,
@@ -73,6 +81,18 @@ session. Ctrl+B then d detaches right away, the shells keep running.";
 
 fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // `--host HOST`: the session on that machine, through ssh.
+    let host = match args.iter().position(|a| a == "--host" || a == "-H") {
+        Some(i) => {
+            let Some(host) = args.get(i + 1).cloned() else {
+                bail!("{} needs a host", args[i]);
+            };
+            args.drain(i..=i + 1);
+            Some(host)
+        }
+        None => None,
+    };
+    let mut session = None;
     // `-s NAME` anywhere, or `attach -t NAME` as in tmux, picks the session.
     if let Some(i) = args.iter().position(|a| {
         a == "-s"
@@ -86,6 +106,7 @@ fn main() -> Result<()> {
             bail!("{name:?} is no session name: letters, digits, - and _ only");
         }
         args.drain(i..=i + 1);
+        session = Some(name.clone());
         // SAFETY: nothing else runs yet, no thread can read the
         // environment while it changes.
         unsafe {
@@ -93,15 +114,19 @@ fn main() -> Result<()> {
             std::env::remove_var("IMKR_SOCKET");
         }
     }
+    let remote = host.map(|host| client::Remote { host, session });
     match args
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>()
         .as_slice()
     {
-        [] => client::run(true, false),
-        ["attach" | "a"] => client::run(false, false),
-        ["attach" | "a", "-d"] => client::run(false, true),
+        [] => client::run(true, false, remote),
+        ["attach" | "a"] => client::run(false, false, remote),
+        ["attach" | "a", "-d"] => client::run(false, true, remote),
+        ["proxy"] => client::proxy(false),
+        ["proxy", "--start"] => client::proxy(true),
+        _ if remote.is_some() => bail!("--host works with attach only, run other commands there"),
         ["kill-server"] => client::kill_server(),
         ["ls"] => cli::ls(),
         ["keys"] => {
@@ -115,6 +140,7 @@ fn main() -> Result<()> {
         ["notify", ..] => cli::notify(&args[1..]),
         ["new", ..] => cli::new(&args[1..]),
         ["rename", ..] => cli::rename(&args[1..]),
+        ["move-window", ..] => cli::move_window(&args[1..]),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks"] => cli::hooks(),

@@ -2,11 +2,13 @@
 //! its output has produced.
 
 use std::cell::Cell;
+use std::fs::File;
 use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -20,6 +22,7 @@ use crate::layout::PaneId;
 const SCROLLBACK_LINES: usize = 10_000;
 
 pub struct Pane {
+    id: PaneId,
     parser: Arc<Mutex<vt100::Parser>>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -37,6 +40,19 @@ pub struct Pane {
     /// Whether the question on the screen was answered: input came while it
     /// was shown. Cleared once no question is shown anymore.
     answered: Cell<bool>,
+    events: Sender<AppEvent>,
+    /// The thread reading the pty, while it runs.
+    reader: Option<Reader>,
+    /// The process went to another session with the pty: it is not ended
+    /// with the pane.
+    released: bool,
+}
+
+/// The thread reading a pane's pty, and the way to stop it.
+struct Reader {
+    /// Written to, or closed, to stop the thread.
+    stop: File,
+    thread: JoinHandle<()>,
 }
 
 /// What to run in a new pane and where.
@@ -105,19 +121,33 @@ impl Pane {
         from: &crate::upgrade::HandoverPane,
         events: Sender<AppEvent>,
     ) -> Result<Self> {
-        use crate::upgrade::{AdoptedChild, AdoptedMaster, replay};
+        let child = crate::upgrade::AdoptedChild::new(from.pid);
+        Self::from_handover(id, from, Box::new(child), events)
+    }
+
+    /// Takes over a pane another session moved here, whose process stays
+    /// that session's child.
+    pub fn take_over(
+        id: PaneId,
+        from: &crate::upgrade::HandoverPane,
+        events: Sender<AppEvent>,
+    ) -> Result<Self> {
+        let child = crate::upgrade::ForeignChild::new(from.pid);
+        Self::from_handover(id, from, Box::new(child), events)
+    }
+
+    fn from_handover(
+        id: PaneId,
+        from: &crate::upgrade::HandoverPane,
+        child: Box<dyn Child + Send + Sync>,
+        events: Sender<AppEvent>,
+    ) -> Result<Self> {
+        use crate::upgrade::{AdoptedMaster, replay};
         // SAFETY: the descriptor was handed over for this pane only.
         let master = unsafe { AdoptedMaster::from_raw_fd(from.fd) };
         let size = (from.rows.max(1), from.cols.max(1));
         let before = replay(&from.history, &from.screen, size.0);
-        let mut pane = Self::start(
-            id,
-            size,
-            Box::new(master),
-            Box::new(AdoptedChild::new(from.pid)),
-            &before,
-            events,
-        )?;
+        let mut pane = Self::start(id, size, Box::new(master), child, &before, events)?;
         pane.reported = from.reported;
         Ok(pane)
     }
@@ -160,23 +190,67 @@ impl Pane {
         before: &[u8],
         events: Sender<AppEvent>,
     ) -> Result<Self> {
-        let mut reader = master.try_clone_reader()?;
-        let writer = master.take_writer()?;
+        // A copy of the master rather than portable-pty's writer: that one
+        // types Ctrl+D when dropped, which ends a shell whose pane moved to
+        // another session. Closing a pane ends its process with SIGHUP anyway.
+        let writer: Box<dyn Write + Send> = match master.as_raw_fd() {
+            // SAFETY: the master stays open while it is borrowed here.
+            Some(fd) => Box::new(File::from(
+                unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?,
+            )),
+            None => master.take_writer()?,
+        };
         let mut parser = vt100::Parser::new(rows, cols, SCROLLBACK_LINES);
         parser.process(before);
-        let parser = Arc::new(Mutex::new(parser));
+        let mut pane = Self {
+            id,
+            parser: Arc::new(Mutex::new(parser)),
+            master,
+            writer,
+            child,
+            size: (rows, cols),
+            last_output: Arc::new(Mutex::new(Instant::now())),
+            graphics: Arc::new(Mutex::new(PaneGraphics::default())),
+            reported: None,
+            session: None,
+            name: None,
+            answered: Cell::new(false),
+            events,
+            reader: None,
+            released: false,
+        };
+        pane.read_on()?;
+        Ok(pane)
+    }
 
-        let reader_parser = Arc::clone(&parser);
-        let last_output = Arc::new(Mutex::new(Instant::now()));
-        let reader_last_output = Arc::clone(&last_output);
-        let graphics = Arc::new(Mutex::new(PaneGraphics::default()));
-        let reader_graphics = Arc::clone(&graphics);
-        thread::Builder::new()
+    /// Starts the thread that reads the pty into the terminal state. It
+    /// sends `AppEvent::PtyOutput` after every chunk and
+    /// `AppEvent::PtyExited` at the end, unless `stop_reading` stopped it.
+    pub fn read_on(&mut self) -> Result<()> {
+        if self.reader.is_some() {
+            return Ok(());
+        }
+        let id = self.id;
+        let mut reader = self.master.try_clone_reader()?;
+        let pty = self.master.as_raw_fd();
+        let (wake, stop) = stop_pipe()?;
+        let reader_parser = Arc::clone(&self.parser);
+        let reader_last_output = Arc::clone(&self.last_output);
+        let reader_graphics = Arc::clone(&self.graphics);
+        let events = self.events.clone();
+        let thread = thread::Builder::new()
             .name("pty-reader".into())
             .spawn(move || {
                 let mut buf = [0u8; 8192];
                 let mut scanner = Scanner::default();
                 loop {
+                    // Stopped: the pty is someone else's from here on, not a
+                    // byte more is read.
+                    if let Some(pty) = pty
+                        && !wait_readable(pty, wake.as_raw_fd())
+                    {
+                        return;
+                    }
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
@@ -222,20 +296,34 @@ impl Pane {
                 }
                 let _ = events.send(AppEvent::PtyExited(id));
             })?;
+        self.reader = Some(Reader { stop, thread });
+        Ok(())
+    }
 
-        Ok(Self {
-            parser,
-            master,
-            writer,
-            child,
-            size: (rows, cols),
-            last_output,
-            graphics,
-            reported: None,
-            session: None,
-            name: None,
-            answered: Cell::new(false),
-        })
+    /// Stops reading the pty and waits until the reader is done, so the
+    /// terminal state holds everything read and nothing more comes in.
+    pub fn stop_reading(&mut self) {
+        if let Some(Reader { mut stop, thread }) = self.reader.take() {
+            let _ = stop.write_all(&[1]);
+            let _ = thread.join();
+        }
+    }
+
+    /// Lets the process go on without this pane: it is not ended when the
+    /// pane is dropped, but still waited for, so it does not linger as a
+    /// zombie once it exits.
+    pub fn release(&mut self) {
+        self.stop_reading();
+        self.released = true;
+        let mut child = std::mem::replace(
+            &mut self.child,
+            Box::new(crate::upgrade::AdoptedChild::new(0)),
+        );
+        let _ = thread::Builder::new()
+            .name("released-child".into())
+            .spawn(move || {
+                let _ = child.wait();
+            });
     }
 
     /// The process in the foreground of this pane, e.g. the shell, or nvim
@@ -474,8 +562,57 @@ fn history_len(parser: &mut vt100::Parser) -> usize {
 
 impl Drop for Pane {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// A pipe whose write end stops a reader thread waiting on the read end.
+/// Both ends are closed on exec.
+fn stop_pipe() -> Result<(OwnedFd, File)> {
+    let mut fds = [0; 2];
+    // SAFETY: pipe2 fills both descriptors, which are then ours.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // SAFETY: as above.
+    Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
+}
+
+/// Waits until the pty has something to read, or has ended. False when
+/// `wake` became readable instead, i.e. the reader is to stop.
+fn wait_readable(pty: RawFd, wake: RawFd) -> bool {
+    let mut fds = [
+        libc::pollfd {
+            fd: pty,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: wake,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    loop {
+        // SAFETY: fds is a valid array of two pollfds.
+        let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        if ready < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            // Reading tells what is wrong.
+            return true;
+        }
+        if fds[1].revents != 0 {
+            return false;
+        }
+        if fds[0].revents != 0 {
+            return true;
+        }
     }
 }
 

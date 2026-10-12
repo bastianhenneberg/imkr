@@ -44,6 +44,26 @@ pub struct Handover {
     pub panes: BTreeMap<PaneId, HandoverPane>,
 }
 
+/// A window moving to another session: its layout and its panes, whose
+/// `fd` is the index into the descriptors sent along with it.
+#[derive(Serialize, Deserialize)]
+pub struct MovedWindow {
+    /// Its number, kept if it is free there.
+    #[serde(default)]
+    pub number: u8,
+    pub workspace: crate::workspace::Workspace,
+    pub panes: BTreeMap<PaneId, MovedPane>,
+    /// The receiving session was started for it: its first shell goes.
+    pub fresh: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MovedPane {
+    pub pane: HandoverPane,
+    pub name: Option<String>,
+    pub session: Option<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct HandoverClient {
     pub fd: RawFd,
@@ -297,6 +317,103 @@ impl Child for AdoptedChild {
         Ok(self
             .wait_pid(0)?
             .unwrap_or_else(|| ExitStatus::with_exit_code(0)))
+    }
+
+    fn process_id(&self) -> Option<u32> {
+        Some(self.pid)
+    }
+}
+
+/// A pane's process that came from another session: someone else's child.
+/// It is reached through a pidfd, so a signal can never hit another process
+/// that got its pid after it ended.
+#[derive(Debug, Clone)]
+pub struct ForeignChild {
+    pid: u32,
+    pidfd: Option<std::sync::Arc<std::os::fd::OwnedFd>>,
+}
+
+impl ForeignChild {
+    pub fn new(pid: u32) -> Self {
+        // SAFETY: pidfd_open takes a pid and flags and returns a new fd.
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
+        let pidfd = (fd >= 0).then(|| {
+            // SAFETY: the descriptor was just opened and is ours.
+            let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as RawFd) };
+            let _ = set_cloexec(fd.as_raw_fd(), true);
+            std::sync::Arc::new(fd)
+        });
+        Self { pid, pidfd }
+    }
+
+    /// Whether the process ended, waiting up to `timeout` ms (-1: forever).
+    /// Without a pidfd it counts as ended: nothing safe can be done with it.
+    fn ended(&self, timeout: libc::c_int) -> bool {
+        let Some(pidfd) = &self.pidfd else {
+            return true;
+        };
+        let mut poll = libc::pollfd {
+            fd: pidfd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        loop {
+            // SAFETY: one valid pollfd.
+            match unsafe { libc::poll(&mut poll, 1, timeout) } {
+                -1 if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {}
+                -1 => return true,
+                n => return n > 0,
+            }
+        }
+    }
+
+    fn signal(&self, signal: libc::c_int) -> io::Result<()> {
+        let Some(pidfd) = &self.pidfd else {
+            return Ok(());
+        };
+        // SAFETY: pidfd_send_signal on our own pidfd, no siginfo.
+        let sent = unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                pidfd.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+        if sent != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+impl ChildKiller for ForeignChild {
+    /// SIGHUP, and SIGKILL if that does not end it within a moment.
+    fn kill(&mut self) -> io::Result<()> {
+        if self.ended(0) {
+            return Ok(());
+        }
+        self.signal(libc::SIGHUP)?;
+        if !self.ended(250) {
+            self.signal(libc::SIGKILL)?;
+        }
+        Ok(())
+    }
+
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+impl Child for ForeignChild {
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        Ok(self.ended(0).then(|| ExitStatus::with_exit_code(0)))
+    }
+
+    fn wait(&mut self) -> io::Result<ExitStatus> {
+        self.ended(-1);
+        Ok(ExitStatus::with_exit_code(0))
     }
 
     fn process_id(&self) -> Option<u32> {

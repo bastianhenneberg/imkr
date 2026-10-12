@@ -49,6 +49,23 @@ Projekt-Slug: `imkr`
   `render` nimmt die Clients beim Zeichnen heraus, in `draw` daher `App::attached` statt
   `clients.len()`. `attach -d` = `Attach { alone: true }`, als Payload-Byte, das alte Server ignorieren.
   Headless-Test: zwei tmux-Sessions verschiedener Größe am selben `IMKR_SOCKET`.
+- Andere Rechner: `imkr --host H` (`client::Conn::remote`) startet `ssh -C -T H` mit Login-Shell
+  und `imkr [-s NAME] proxy [--start]`; der Proxy schreibt erst `PROXY_READY` (vor dem Raw-Mode,
+  damit ssh-Fehler/Passwortabfragen lesbar bleiben) und reicht dann stdin/stdout ↔ Socket durch.
+  Falle: `io::copy` nutzt unter Linux splice und hält Frames zurück (Detached kam nie an) →
+  `pass_on` mit einfachem read/write. Test ohne sshd: Fake-`ssh` im Scratchpad vorn im PATH, der
+  bis `--` überspringt und den Befehl mit `SHELL=/bin/sh sh -c` ausführt. Socket-Pfade max. 108
+  Zeichen: für `XDG_RUNTIME_DIR` im Test ein kurzes Verzeichnis nehmen.
+- Window in andere Session verschieben: `App::move_window` → `Pane::stop_reading` (Reader-Thread
+  wartet per `poll` auf PTY oder Stopp-Pipe, damit nach der Übergabe kein Byte mehr hier gelesen
+  wird), `ClientMsg::Move` (JSON `upgrade::MovedWindow`) plus PTY-FDs per SCM_RIGHTS (`fdpass`)
+  an den Ziel-Socket; der Reader-Thread dort holt die FDs direkt nach dem Frame ab
+  (`receive_window`). Ziel: `App::move_in` (IDs/Nummer behalten wenn frei, `Workspace::renumber`,
+  `Pane::take_over` mit `ForeignChild` über pidfd, weil der Prozess Kind der Quelle bleibt).
+  Quelle: `Pane::release` (Prozess nicht beenden, nur noch `wait`en), `App::moved` leitet Hook-
+  Status weiter. Falle: portable-pty's Master-Writer tippt beim Drop `\n` + Ctrl+D → Shells
+  sterben; daher schreibt `Pane` über ein `dup` des Masters. Test: zwei Sessions mit eigenem
+  `XDG_RUNTIME_DIR`/`XDG_STATE_HOME` (sonst echte Zustände!), Tick-Skript auf Lücken prüfen.
 - Agent-Tests ohne echten Agent: Skript namens `claude` im Scratchpad, das arbeitet und dann eine
   Frage stellt, per `imkr new --window 2 -- <skript>` starten.
 - Live-Update: `imkr update` (`src/upgrade.rs`): Server execs das neue Binary im selben Prozess,

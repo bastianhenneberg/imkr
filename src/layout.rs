@@ -75,6 +75,13 @@ impl Layout {
         self.root.as_ref().is_some_and(|root| root.contains(pane))
     }
 
+    /// Gives every pane the id `new` maps it to.
+    pub fn renumber(&mut self, new: &dyn Fn(PaneId) -> PaneId) {
+        if let Some(root) = &mut self.root {
+            root.renumber(new);
+        }
+    }
+
     /// Splits `target` in half along `axis`, putting `new` second (right or
     /// below). Returns false if `target` is not in the layout.
     pub fn split(&mut self, target: PaneId, axis: Axis, new: PaneId) -> bool {
@@ -312,6 +319,16 @@ impl Node {
             *ratio = a / (a + b);
             first.equalize();
             second.equalize();
+        }
+    }
+
+    fn renumber(&mut self, new: &dyn Fn(PaneId) -> PaneId) {
+        match self {
+            Node::Leaf(id) => *id = new(*id),
+            Node::Split { first, second, .. } => {
+                first.renumber(new);
+                second.renumber(new);
+            }
         }
     }
 

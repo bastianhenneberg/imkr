@@ -48,6 +48,8 @@ pub enum Command {
     Equalize,
     LastPane,
     RenameWorkspace,
+    /// Move the active window with its panes to another session.
+    MoveWorkspace,
     /// Give the sidebar the keyboard.
     FocusSidebar,
     /// Show or hide the sidebar.
@@ -607,6 +609,12 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Char('c')), C::NewWorkspace)],
     },
     Binding {
+        label: "m",
+        description: "move to session",
+        group: Group::Workspaces,
+        keys: &[(Key::plain(Char('m')), C::MoveWorkspace)],
+    },
+    Binding {
         label: "n p ←→",
         description: "next / previous",
         group: Group::Workspaces,
@@ -707,6 +715,13 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("Esc", "cancel"),
 ];
 
+/// The keys of the list of sessions to move a window to (`Ctrl+B w m`).
+pub const MOVE_LIST_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    ("Enter", "or key move there"),
+    ("Esc", "cancel"),
+];
+
 /// The keys of the hives list (`Ctrl+B H`) besides its entries.
 pub const HIVE_LIST_KEYS: &[KeyHint] = &[
     ("↑↓", "select"),
@@ -723,6 +738,7 @@ pub const HIVE_LIST_KEYS: &[KeyHint] = &[
 pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
     ("Session list", "S", SESSION_LIST_KEYS),
     ("Hives", "H", HIVE_LIST_KEYS),
+    ("Move window", "w m", MOVE_LIST_KEYS),
 ];
 
 /// The command bound to `event` in `menu`.

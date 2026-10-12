@@ -34,6 +34,10 @@ pub enum ClientMsg {
     /// What the client's terminal can do, sent after attaching and after
     /// every resize.
     Caps(Caps),
+    /// A window from another session, `upgrade::MovedWindow` as JSON. The
+    /// ptys follow right after as descriptors, see `fdpass`; the answer is
+    /// a `ServerMsg::Reply`.
+    Move(Vec<u8>),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +94,9 @@ pub enum Request {
     /// Replace the server with the binary at `exe`, keeping the session,
     /// see `upgrade`.
     Upgrade { exe: PathBuf },
+    /// Move a workspace, the active one without a number, with its running
+    /// panes to session `to`, started if needed.
+    MoveWindow { workspace: Option<u8>, to: String },
     /// Start `command` (the shell if empty) in a new pane.
     New {
         command: Vec<String>,
@@ -135,6 +142,7 @@ impl ClientMsg {
             ClientMsg::Attach { alone } => write_frame(w, 3, if *alone { &[1] } else { &[] }),
             ClientMsg::Request(request) => write_frame(w, 4, &serde_json::to_vec(request)?),
             ClientMsg::Caps(caps) => write_frame(w, 6, &serde_json::to_vec(caps)?),
+            ClientMsg::Move(json) => write_frame(w, 7, json),
         }
     }
 
@@ -151,6 +159,7 @@ impl ClientMsg {
             })),
             4 => Ok(Some(ClientMsg::Request(serde_json::from_slice(&payload)?))),
             6 => Ok(Some(ClientMsg::Caps(serde_json::from_slice(&payload)?))),
+            7 => Ok(Some(ClientMsg::Move(payload))),
             _ => Err(invalid(format!("unknown client message {tag}"))),
         }
     }
