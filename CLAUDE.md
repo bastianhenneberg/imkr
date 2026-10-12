@@ -42,11 +42,19 @@ Projekt-Slug: `imkr`
   Tick (500 ms) und klingelt bei neuem `blocked`. Beantwortete Fragen: `Pane::note_input`.
 - Verbindungen attachen erst nach `ClientMsg::Attach`; alle anderen (CLI, Agents) schicken
   `ClientMsg::Request` und bekommen `ServerMsg::Reply`. Befehle: `src/cli.rs`.
+- Mehrere Clients wie in tmux: `App::clients` (Größe, Caps, Fenstertitel, Bilder je Client), alle
+  sehen dasselbe bei der Größe des kleinsten (`App::fit_screen`, Rest mit Punkten, `outside`).
+  `App::active` ist der Client, dessen Eingabe gerade läuft: nur er wird von `Ctrl+B d` getrennt,
+  per Session-Wechsel weitergeschickt und bekommt das Clipboard; Glocke/Benachrichtigung an alle.
+  `render` nimmt die Clients beim Zeichnen heraus, in `draw` daher `App::attached` statt
+  `clients.len()`. `attach -d` = `Attach { alone: true }`, als Payload-Byte, das alte Server ignorieren.
+  Headless-Test: zwei tmux-Sessions verschiedener Größe am selben `IMKR_SOCKET`.
 - Agent-Tests ohne echten Agent: Skript namens `claude` im Scratchpad, das arbeitet und dann eine
   Frage stellt, per `imkr new --window 2 -- <skript>` starten.
 - Live-Update: `imkr update` (`src/upgrade.rs`): Server execs das neue Binary im selben Prozess,
-  PTY-Master-FDs, Listener und Client-Verbindung ohne `FD_CLOEXEC` weiter, Rest (Layout, Screens
-  als `state_formatted`, History als Text) in `<socket>.upgrade.json`, Env `IMKR_UPGRADE`.
+  PTY-Master-FDs, Listener und alle Client-Verbindungen (`clients`; `client` nur für ältere
+  Server) ohne `FD_CLOEXEC` weiter, Rest (Layout, Screens als `state_formatted`, History als
+  Text) in `<socket>.upgrade.json`, Env `IMKR_UPGRADE`.
   portable-pty kann keinen Master aus einem FD bauen → `AdoptedMaster`/`AdoptedChild` implementieren
   dessen Traits. Protokoll kompatibel halten: der alte Client bleibt nach dem Update verbunden.
   Test: Binary zweimal ins Scratchpad kopieren (hm1/hm2), mit hm1 starten, `hm2 update`, PIDs vergleichen.

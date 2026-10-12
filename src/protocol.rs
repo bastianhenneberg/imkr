@@ -25,9 +25,10 @@ pub enum ClientMsg {
     Event(Event),
     /// Shut the server down, killing all panes.
     KillServer,
-    /// Become the attached client, showing the session. A connection that
-    /// does not send this only makes requests.
-    Attach,
+    /// Become an attached client, showing the session. A connection that
+    /// does not send this only makes requests. With `alone`, the other
+    /// attached clients are detached, as `tmux attach -d` does.
+    Attach { alone: bool },
     /// A command from the CLI or an agent, answered with `ServerMsg::Reply`.
     Request(Request),
     /// What the client's terminal can do, sent after attaching and after
@@ -129,7 +130,9 @@ impl ClientMsg {
         match self {
             ClientMsg::Event(event) => write_frame(w, 1, &serde_json::to_vec(event)?),
             ClientMsg::KillServer => write_frame(w, 2, &[]),
-            ClientMsg::Attach => write_frame(w, 3, &[]),
+            // The flag rides in the payload, which servers from before it
+            // ignore.
+            ClientMsg::Attach { alone } => write_frame(w, 3, if *alone { &[1] } else { &[] }),
             ClientMsg::Request(request) => write_frame(w, 4, &serde_json::to_vec(request)?),
             ClientMsg::Caps(caps) => write_frame(w, 6, &serde_json::to_vec(caps)?),
         }
@@ -143,7 +146,9 @@ impl ClientMsg {
         match tag {
             1 => Ok(Some(ClientMsg::Event(serde_json::from_slice(&payload)?))),
             2 => Ok(Some(ClientMsg::KillServer)),
-            3 => Ok(Some(ClientMsg::Attach)),
+            3 => Ok(Some(ClientMsg::Attach {
+                alone: payload.first() == Some(&1),
+            })),
             4 => Ok(Some(ClientMsg::Request(serde_json::from_slice(&payload)?))),
             6 => Ok(Some(ClientMsg::Caps(serde_json::from_slice(&payload)?))),
             _ => Err(invalid(format!("unknown client message {tag}"))),
@@ -316,7 +321,8 @@ mod tests {
             ClientMsg::Event(Event::Resize(120, 40)),
             ClientMsg::Event(Event::Paste("hallo\nwelt".into())),
             ClientMsg::KillServer,
-            ClientMsg::Attach,
+            ClientMsg::Attach { alone: false },
+            ClientMsg::Attach { alone: true },
             ClientMsg::Caps(Caps {
                 graphics: true,
                 cell_width: 9,

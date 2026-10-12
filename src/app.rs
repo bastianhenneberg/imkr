@@ -196,12 +196,28 @@ enum Action {
     OverwriteHive,
 }
 
-/// The attached client. Rendering goes through a ratatui terminal whose
+/// Where images are placed, by (image, placement): column, row, columns
+/// and rows.
+type Placements = HashMap<(u32, u32), (u16, u16, u16, u16)>;
+
+/// An attached client. Rendering goes through a ratatui terminal whose
 /// output is sent to the client instead of being written to a tty.
 struct Client {
     id: ClientId,
     stream: UnixStream,
+    /// Drawn at the shared screen size, `App::screen`, which is never larger
+    /// than `size`.
     terminal: Terminal<CrosstermBackend<FrameSink>>,
+    /// The size of the client's own terminal.
+    size: Rect,
+    /// What the client's terminal can do.
+    caps: Caps,
+    /// The title last sent to the client's terminal window.
+    window_title: String,
+    /// Images shown on the client now, by (image, placement), with where.
+    shown_images: Placements,
+    /// Send every image again: the client has none of them.
+    resend_images: bool,
 }
 
 impl Client {
@@ -259,11 +275,19 @@ pub struct App {
     /// drawn.
     hidden: BTreeMap<u8, Workspace>,
     next_id: PaneId,
-    /// The attached client's screen.
+    /// The screen all attached clients share: as large as the smallest of
+    /// them, like in tmux.
     screen: Rect,
     /// Where the panes are drawn, i.e. the screen minus the status bar.
     body: Rect,
-    client: Option<Client>,
+    /// The attached clients. They all show the same and type into it.
+    clients: Vec<Client>,
+    /// How many clients are attached, for drawing: `render` takes them out
+    /// of `clients` while it draws.
+    attached: usize,
+    /// The client whose input is handled now: it is the one detached by
+    /// `Ctrl+B d`, sent on by a session switch and given the clipboard.
+    active: Option<ClientId>,
     /// Every open connection, attached or not, to answer requests on.
     conns: HashMap<ClientId, UnixStream>,
     next_client_id: ClientId,
@@ -325,14 +349,6 @@ pub struct App {
     search: Option<(String, bool)>,
     /// When and where the left button went down last, to spot double clicks.
     last_click: Option<(Instant, Position)>,
-    /// The title last sent to the client's terminal window.
-    window_title: String,
-    /// What the attached client's terminal can do.
-    caps: Caps,
-    /// Images shown on the client now, by (image, placement), with where.
-    shown_images: HashMap<(u32, u32), (u16, u16, u16, u16)>,
-    /// Send every image again: a client attached that has none of them.
-    resend_images: bool,
     quit: bool,
 }
 
@@ -360,7 +376,9 @@ impl App {
             next_id: 0,
             screen: DEFAULT_SCREEN,
             body,
-            client: None,
+            clients: Vec::new(),
+            attached: 0,
+            active: None,
             conns: HashMap::new(),
             next_client_id: 0,
             socket,
@@ -395,10 +413,6 @@ impl App {
             picker: None,
             search: None,
             last_click: None,
-            window_title: String::new(),
-            caps: Caps::default(),
-            shown_images: HashMap::new(),
-            resend_images: false,
             quit: false,
         };
         app.apply_theme();
@@ -410,7 +424,7 @@ impl App {
             app.start_fresh()?;
         }
         app.event_loop(rx);
-        if let Some(mut client) = app.client.take() {
+        for mut client in app.clients.drain(..) {
             let _ = client.send(&ServerMsg::Exited);
         }
         for link in &app.old_sockets {
@@ -573,21 +587,34 @@ impl App {
             return;
         }
         (_, self.body, self.sidebar) = self.areas(self.screen);
-        if let Some(fd) = handover.client {
-            let _ = upgrade::set_cloexec(fd, true);
-            // SAFETY: the server before handed its client's connection over.
-            let stream = unsafe { UnixStream::from_raw_fd(fd) };
+        let mut clients = handover.clients;
+        // A server from before several clients hands over just one.
+        if clients.is_empty()
+            && let Some(fd) = handover.client
+        {
+            clients.push(upgrade::HandoverClient {
+                fd,
+                size: handover.screen,
+                caps: handover.caps,
+            });
+        }
+        for handed in clients {
+            let _ = upgrade::set_cloexec(handed.fd, true);
+            // SAFETY: the server before handed this connection over.
+            let stream = unsafe { UnixStream::from_raw_fd(handed.fd) };
             let id = self.next_client_id;
-            if let Err(e) = self.connect(stream).and_then(|()| self.attach(id)) {
-                eprintln!("update: could not keep the client: {e:#}");
+            if let Err(e) = self.connect(stream).and_then(|()| self.attach(id, false)) {
+                eprintln!("update: could not keep a client: {e:#}");
+                continue;
             }
-            self.caps = handover.caps;
-            if let Some(client) = &mut self.client {
-                // Drawn afresh: the new terminal state knows nothing of
-                // what the client shows.
-                let _ = client.send(&ServerMsg::Output(b"\x1b[H\x1b[2J".to_vec()));
+            if let Some(client) = self.clients.iter_mut().find(|c| c.id == id) {
+                client.caps = handed.caps;
+                client.size = Rect::new(0, 0, handed.size.0, handed.size.1);
             }
         }
+        // Drawn afresh: the new terminal state knows nothing of what the
+        // clients show.
+        self.fit_screen(true);
         self.flash = Some(format!(
             "updated to imkr {}, {} panes kept",
             env!("CARGO_PKG_VERSION"),
@@ -606,11 +633,21 @@ impl App {
             };
             panes.insert(id, handed);
         }
+        let clients: Vec<_> = self
+            .clients
+            .iter()
+            .map(|c| upgrade::HandoverClient {
+                fd: c.stream.as_raw_fd(),
+                size: (c.size.width, c.size.height),
+                caps: c.caps,
+            })
+            .collect();
         let handover = Handover {
             listener: self.listener,
-            client: self.client.as_ref().map(|c| c.stream.as_raw_fd()),
+            client: clients.first().map(|c| c.fd),
             screen: (self.screen.width, self.screen.height),
-            caps: self.caps,
+            caps: clients.first().map(|c| c.caps).unwrap_or_default(),
+            clients,
             focus_mode: self.focus_mode,
             saved: self.saved(),
             panes,
@@ -723,35 +760,49 @@ impl App {
         }
     }
 
-    /// Draws the screen for the attached client. A client that cannot be
+    /// Draws the screen for every attached client. A client that cannot be
     /// written to anymore is dropped.
     fn render(&mut self) {
-        // Asked before taking the client out, which makes it look detached.
+        if self.clients.is_empty() {
+            return;
+        }
+        // Asked before taking the clients out, which makes them look detached.
         let graphics = self.graphics_enabled();
-        let Some(mut client) = self.client.take() else {
-            return;
-        };
-        if client.terminal.draw(|frame| self.draw(frame)).is_err() {
-            return;
-        }
-        let images = self.image_output(graphics);
-        if !images.is_empty() && client.send(&ServerMsg::Output(images)).is_err() {
-            return;
-        }
+        self.attached = self.clients.len();
+        let mut clients = std::mem::take(&mut self.clients);
+        let resend = clients.iter().any(|c| c.caps.graphics && c.resend_images);
+        let (data, wanted) = self.image_state(graphics, resend);
         // The terminal window's title names the workspace and the pane.
         let title = self.window_title_text();
-        if title != self.window_title {
-            let clean: String = title.chars().filter(|c| !c.is_control()).collect();
-            if client
-                .send(&ServerMsg::Output(
-                    format!("\x1b]2;{clean}\x07").into_bytes(),
-                ))
-                .is_ok()
-            {
-                self.window_title = title;
+        let before = clients.len();
+        clients.retain_mut(|client| {
+            if client.terminal.draw(|frame| self.draw(frame)).is_err() {
+                return false;
             }
+            if graphics && client.caps.graphics {
+                let mut images = data.clone();
+                placements(&mut images, &client.shown_images, &wanted);
+                client.shown_images = wanted.clone();
+                client.resend_images = false;
+                if !images.is_empty() && client.send(&ServerMsg::Output(images)).is_err() {
+                    return false;
+                }
+            }
+            if title != client.window_title {
+                let clean: String = title.chars().filter(|c| !c.is_control()).collect();
+                let osc = format!("\x1b]2;{clean}\x07").into_bytes();
+                if client.send(&ServerMsg::Output(osc)).is_err() {
+                    return false;
+                }
+                client.window_title.clone_from(&title);
+            }
+            true
+        });
+        let lost = clients.len() < before;
+        self.clients = clients;
+        if lost {
+            self.fit_screen(false);
         }
-        self.client = Some(client);
     }
 
     fn handle(&mut self, event: AppEvent) {
@@ -766,11 +817,13 @@ impl App {
                 self.quit = true;
                 Ok(())
             }
-            AppEvent::ClientMsg(id, ClientMsg::Attach) => self.attach(id),
-            AppEvent::ClientMsg(id, ClientMsg::Caps(caps))
-                if self.client.as_ref().is_some_and(|c| c.id == id) =>
-            {
-                self.caps = caps;
+            AppEvent::ClientMsg(id, ClientMsg::Attach { alone }) => self.attach(id, alone),
+            AppEvent::ClientMsg(id, ClientMsg::Caps(caps)) => {
+                if let Some(client) = self.client_mut(id) {
+                    // Images the client does not know yet go out again.
+                    client.resend_images |= caps.graphics && !client.caps.graphics;
+                    client.caps = caps;
+                }
                 Ok(())
             }
             AppEvent::ClientMsg(id, ClientMsg::Request(request)) => {
@@ -780,16 +833,15 @@ impl App {
                     None => Ok(()),
                 }
             }
-            AppEvent::ClientMsg(id, ClientMsg::Event(event))
-                if self.client.as_ref().is_some_and(|c| c.id == id) =>
-            {
+            AppEvent::ClientMsg(id, ClientMsg::Event(event)) if self.client_mut(id).is_some() => {
+                self.active = Some(id);
                 self.handle_event(event)
             }
             AppEvent::ClientMsg(..) => Ok(()),
             AppEvent::ClientGone(id) => {
                 self.conns.remove(&id);
-                if self.client.as_ref().is_some_and(|c| c.id == id) {
-                    self.client = None;
+                if self.take_client(id).is_some() {
+                    self.fit_screen(false);
                 }
                 Ok(())
             }
@@ -822,31 +874,117 @@ impl App {
         Ok(())
     }
 
-    /// Makes connection `id` the attached client, detaching the previous one.
-    fn attach(&mut self, id: ClientId) -> Result<()> {
+    /// Attaches connection `id`, next to the clients attached already, or
+    /// in their place with `alone`. Its size comes with its first resize.
+    fn attach(&mut self, id: ClientId, alone: bool) -> Result<()> {
+        if self.client_mut(id).is_some() {
+            return Ok(());
+        }
         let Some(stream) = self.conns.get(&id) else {
             return Ok(());
         };
         let stream = stream.try_clone()?;
-        self.detach();
+        if alone {
+            let others: Vec<ClientId> = self.clients.iter().map(|c| c.id).collect();
+            for other in others {
+                self.detach(other);
+            }
+        }
+        if self.clients.is_empty() {
+            self.mode = Mode::Normal;
+        }
         let terminal = Client::terminal_for(&stream, self.screen)?;
-        // A new client gets the window title and every image sent afresh.
-        self.window_title.clear();
-        self.caps = Caps::default();
-        self.shown_images.clear();
-        self.resend_images = true;
-        self.client = Some(Client {
+        self.clients.push(Client {
             id,
             stream,
             terminal,
+            size: self.screen,
+            caps: Caps::default(),
+            window_title: String::new(),
+            shown_images: HashMap::new(),
+            resend_images: true,
         });
-        self.mode = Mode::Normal;
         Ok(())
     }
 
-    fn detach(&mut self) {
-        if let Some(mut client) = self.client.take() {
+    /// Detaches client `id`; the others stay.
+    fn detach(&mut self, id: ClientId) {
+        if let Some(mut client) = self.take_client(id) {
             let _ = client.send(&ServerMsg::Detached);
+            self.fit_screen(false);
+        }
+    }
+
+    /// Detaches the client whose input is handled now.
+    fn detach_active(&mut self) {
+        if let Some(id) = self.active {
+            self.detach(id);
+        }
+    }
+
+    fn client_mut(&mut self, id: ClientId) -> Option<&mut Client> {
+        self.clients.iter_mut().find(|c| c.id == id)
+    }
+
+    fn take_client(&mut self, id: ClientId) -> Option<Client> {
+        let i = self.clients.iter().position(|c| c.id == id)?;
+        Some(self.clients.remove(i))
+    }
+
+    /// Sends `bytes` to every attached client, e.g. a bell.
+    fn broadcast(&mut self, bytes: &[u8]) {
+        for client in &mut self.clients {
+            let _ = client.send(&ServerMsg::Output(bytes.to_vec()));
+        }
+    }
+
+    /// Sends `bytes` to the client whose input is handled now, or to all if
+    /// that one is gone.
+    fn send_active(&mut self, bytes: &[u8]) {
+        let active = self.active;
+        match self.clients.iter_mut().find(|c| Some(c.id) == active) {
+            Some(client) => {
+                let _ = client.send(&ServerMsg::Output(bytes.to_vec()));
+            }
+            None => self.broadcast(bytes),
+        }
+    }
+
+    /// Makes the shared screen as large as the smallest client and redraws
+    /// every client whose screen changed, or all with `all`. Clients larger
+    /// than the screen get the rest filled with dots, as in tmux.
+    fn fit_screen(&mut self, all: bool) {
+        let Some(width) = self.clients.iter().map(|c| c.size.width).min() else {
+            return;
+        };
+        let height = self
+            .clients
+            .iter()
+            .map(|c| c.size.height)
+            .min()
+            .unwrap_or(0);
+        let screen = Rect::new(0, 0, width, height);
+        let changed = screen != self.screen;
+        self.screen = screen;
+        for client in &mut self.clients {
+            if !all && !changed && client.terminal.get_frame().area() == screen {
+                continue;
+            }
+            let mut out = b"\x1b[H\x1b[2J".to_vec();
+            out.extend_from_slice(&outside(client.size, screen));
+            // Rebuilt rather than resized: resizing makes ratatui ask the tty
+            // for its size. A new terminal draws everything again.
+            let rebuilt = client
+                .send(&ServerMsg::Output(out))
+                .and_then(|()| Client::terminal_for(&client.stream, screen));
+            match rebuilt {
+                Ok(terminal) => {
+                    client.terminal = terminal;
+                    client.shown_images.clear();
+                    client.resend_images = true;
+                }
+                Err(e) => eprintln!("client {}: {e:#}", client.id),
+            }
         }
     }
 
@@ -1047,7 +1185,7 @@ impl App {
         for (&id, &(state, _)) in &seen {
             let was = self.agents.get(&id).map(|(s, _)| *s);
             // Nobody looks at anything while detached.
-            let in_view = self.client.is_some() && self.ws.contains(id) && self.ws.focus == id;
+            let in_view = !self.clients.is_empty() && self.ws.contains(id) && self.ws.focus == id;
             if state == AgentState::Idle
                 && matches!(was, Some(AgentState::Working | AgentState::Blocked))
                 && !in_view
@@ -1057,14 +1195,12 @@ impl App {
             }
             if state == AgentState::Blocked && was != Some(AgentState::Blocked) && !in_view {
                 self.flash = Some(format!("pane {id} needs you · ^B a"));
-                if let Some(client) = &mut self.client {
-                    let _ = client.send(&ServerMsg::Output(b"\x07".to_vec()));
-                }
+                self.broadcast(b"\x07");
                 self.notify(id, "needs you");
             }
         }
         self.unseen.retain(|id| seen.contains_key(id));
-        if self.client.is_some() {
+        if !self.clients.is_empty() {
             self.unseen.remove(&self.ws.focus);
         }
         self.agents = seen;
@@ -1103,16 +1239,12 @@ impl App {
         match self.config.notifications {
             Notifications::Off => {}
             Notifications::Terminal => {
-                if let Some(client) = &mut self.client {
-                    let text = match body {
-                        "" => format!("imkr: {title}"),
-                        body => format!("imkr: {title} · {body}"),
-                    };
-                    let text: String = text.chars().filter(|c| !c.is_control()).collect();
-                    let _ = client.send(&ServerMsg::Output(
-                        format!("\x1b]9;{text}\x07").into_bytes(),
-                    ));
-                }
+                let text = match body {
+                    "" => format!("imkr: {title}"),
+                    body => format!("imkr: {title} · {body}"),
+                };
+                let text: String = text.chars().filter(|c| !c.is_control()).collect();
+                self.broadcast(format!("\x1b]9;{text}\x07").as_bytes());
             }
             Notifications::System => {
                 let spawned = std::process::Command::new("notify-send")
@@ -1327,14 +1459,18 @@ impl App {
         self.reveal(target);
     }
 
-    /// Adopts the client's new screen size. The terminal is rebuilt rather
-    /// than resized, since resizing makes ratatui ask the tty for its size.
+    /// Adopts the active client's new terminal size.
     fn resize_screen(&mut self, cols: u16, rows: u16) -> Result<()> {
-        self.screen = Rect::new(0, 0, cols, rows);
-        if let Some(client) = &mut self.client {
-            client.send(&ServerMsg::Output(b"\x1b[2J".to_vec()))?;
-            client.terminal = Client::terminal_for(&client.stream, self.screen)?;
-        }
+        let Some(id) = self.active else {
+            return Ok(());
+        };
+        let Some(client) = self.client_mut(id) else {
+            return Ok(());
+        };
+        client.size = Rect::new(0, 0, cols, rows);
+        // Redrawn even at the same size: its screen may hold anything.
+        client.terminal = Client::terminal_for(&client.stream, Rect::default())?;
+        self.fit_screen(false);
         Ok(())
     }
 
@@ -1549,7 +1685,7 @@ impl App {
                 let page = self.focused_inner().map_or(1, |r| r.height as isize);
                 self.copy_scroll(page);
             }
-            Command::Detach => self.detach(),
+            Command::Detach => self.detach_active(),
             Command::Quit => self.mode = Mode::Confirm(Action::KillServer),
             Command::Help => self.mode = Mode::Help(0),
             Command::SessionMenu => self.mode = Mode::Menu(0),
@@ -1611,7 +1747,7 @@ impl App {
         let Some(entry) = pick else { return };
         self.mode = Mode::Normal;
         match entry {
-            MenuEntry::Detach => self.detach(),
+            MenuEntry::Detach => self.detach_active(),
             MenuEntry::ClosePane => self.close(self.ws.focus),
             MenuEntry::EndSession => self.quit = true,
         }
@@ -1740,9 +1876,7 @@ impl App {
             return;
         }
         let chars = text.chars().count();
-        if let Some(client) = &mut self.client {
-            let _ = client.send(&ServerMsg::Output(clipboard::osc52(&text)));
-        }
+        self.send_active(&clipboard::osc52(&text));
         self.flash = Some(format!(
             "copied {chars} {}",
             if chars == 1 {
@@ -2569,10 +2703,15 @@ impl App {
         });
     }
 
-    /// Sends the client on to session `name`; it starts it if needed.
+    /// Sends the active client on to session `name`; it starts it if
+    /// needed. The other clients stay.
     fn switch_session(&mut self, name: String) {
-        if let Some(mut client) = self.client.take() {
+        let Some(id) = self.active else {
+            return;
+        };
+        if let Some(mut client) = self.take_client(id) {
             let _ = client.send(&ServerMsg::Switch(name));
+            self.fit_screen(false);
         }
     }
 
@@ -2927,14 +3066,21 @@ impl App {
     /// Whether images are shown: an attached client whose terminal can, and
     /// the setting on.
     fn graphics_enabled(&self) -> bool {
-        self.client.is_some() && self.caps.graphics && self.config.images
+        self.config.images && self.graphics_caps().is_some()
+    }
+
+    /// What the first client that shows images can do. Programs are told
+    /// its cell size, the others may scale a little differently.
+    fn graphics_caps(&self) -> Option<Caps> {
+        self.clients.iter().map(|c| c.caps).find(|c| c.graphics)
     }
 
     /// Tells every pane whether to handle images and the cell size, and
     /// writes the answers to programs' graphics queries.
     fn sync_graphics(&mut self) {
         let enabled = self.graphics_enabled();
-        let cell = (self.caps.cell_width, self.caps.cell_height);
+        let caps = self.graphics_caps().unwrap_or_default();
+        let cell = (caps.cell_width, caps.cell_height);
         for pane in self.panes.values_mut() {
             let replies = {
                 let mut g = pane.graphics.lock().unwrap();
@@ -2948,14 +3094,14 @@ impl App {
         }
     }
 
-    /// The bytes that bring the client's images up to date after a frame:
-    /// new image data, then placements moved, added and removed. Images
-    /// show only in panes nothing is drawn over.
-    fn image_output(&mut self, enabled: bool) -> Vec<u8> {
+    /// What every client that shows images needs after a frame: the new
+    /// image data, every image with `resend`, and where the images go, see
+    /// `placements`. Images show only in panes nothing is drawn over.
+    fn image_state(&self, enabled: bool, resend: bool) -> (Vec<u8>, Placements) {
         let mut out = Vec::new();
         for pane in self.panes.values() {
             let mut g = pane.graphics.lock().unwrap();
-            if enabled && self.resend_images {
+            if enabled && resend {
                 g.resend();
             }
             for command in g.outbox.drain(..) {
@@ -2964,11 +3110,8 @@ impl App {
                 }
             }
         }
-        if enabled {
-            self.resend_images = false;
-        }
 
-        let mut wanted: HashMap<(u32, u32), (u16, u16, u16, u16)> = HashMap::new();
+        let mut wanted: Placements = HashMap::new();
         let quiet = matches!(self.mode, Mode::Normal | Mode::Repeat(..) | Mode::Copy);
         if enabled && quiet {
             let rects = self.rects_of(&self.ws);
@@ -2996,30 +3139,7 @@ impl App {
             }
         }
 
-        for (&(image, id), &at) in &wanted {
-            if self.shown_images.get(&(image, id)) == Some(&at) {
-                continue;
-            }
-            let (x, y, cols, rows) = at;
-            // Save the cursor, place the image without moving it, restore.
-            out.extend_from_slice(
-                format!(
-                    "\x1b7\x1b[{};{}H\x1b_Ga=p,i={image},p={id},c={cols},r={rows},C=1,q=2\x1b\\\x1b8",
-                    y + 1,
-                    x + 1
-                )
-                .as_bytes(),
-            );
-        }
-        for &(image, id) in self.shown_images.keys() {
-            if !wanted.contains_key(&(image, id)) {
-                out.extend_from_slice(
-                    format!("\x1b_Ga=d,d=i,i={image},p={id},q=2\x1b\\").as_bytes(),
-                );
-            }
-        }
-        self.shown_images = wanted;
-        out
+        (out, wanted)
     }
 
     /// `imkr · 2 api · claude`: the workspace, then the focused pane.
@@ -3813,6 +3933,13 @@ impl App {
         }
         if control {
             spans.extend(self.mode_spans());
+            // Others see and type into the same session: worth knowing.
+            if self.attached > 1 {
+                spans.push(Span::styled(
+                    format!(" · {} clients", self.attached),
+                    Style::new().fg(t.cyan).add_modifier(Modifier::BOLD),
+                ));
+            }
         }
         let left = Line::from(spans);
 
@@ -4084,6 +4211,50 @@ fn screen_layout(screen: Rect, bars: &Bars, spacing: &Spacing) -> ScreenLayout {
 }
 
 /// ` ⬢ imkr `, or the session's name for a named one.
+/// Fills what lies outside the shared `screen` on a client of `size` with
+/// dots, so it is clear the session ends there.
+fn outside(size: Rect, screen: Rect) -> Vec<u8> {
+    let mut out = b"\x1b[0;2m".to_vec();
+    for row in 0..size.height {
+        let (col, width) = if row < screen.height {
+            (screen.width, size.width.saturating_sub(screen.width))
+        } else {
+            (0, size.width)
+        };
+        if width > 0 {
+            out.extend_from_slice(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
+            out.extend_from_slice("·".repeat(usize::from(width)).as_bytes());
+        }
+    }
+    out.extend_from_slice(b"\x1b[0m");
+    out
+}
+
+/// Moves a client's images from where they are, `shown`, to where they go,
+/// `wanted`: placements moved, added and removed.
+fn placements(out: &mut Vec<u8>, shown: &Placements, wanted: &Placements) {
+    for (&(image, id), &at) in wanted {
+        if shown.get(&(image, id)) == Some(&at) {
+            continue;
+        }
+        let (x, y, cols, rows) = at;
+        // Save the cursor, place the image without moving it, restore.
+        out.extend_from_slice(
+            format!(
+                "\x1b7\x1b[{};{}H\x1b_Ga=p,i={image},p={id},c={cols},r={rows},C=1,q=2\x1b\\\x1b8",
+                y + 1,
+                x + 1
+            )
+            .as_bytes(),
+        );
+    }
+    for &(image, id) in shown.keys() {
+        if !wanted.contains_key(&(image, id)) {
+            out.extend_from_slice(format!("\x1b_Ga=d,d=i,i={image},p={id},q=2\x1b\\").as_bytes());
+        }
+    }
+}
+
 fn badge_text() -> String {
     let name = protocol::session_name();
     if name == protocol::DEFAULT_SESSION {
@@ -4408,6 +4579,21 @@ mod tests {
         let layout = screen_layout(screen, &Bars::default(), &spacing);
         assert_eq!(layout.bottom, Some(Rect::new(0, 23, 80, 1)));
         assert_eq!(layout.body, Rect::new(2, 1, 76, 21));
+    }
+
+    #[test]
+    fn outside_fills_only_what_the_shared_screen_leaves() {
+        let text =
+            String::from_utf8(outside(Rect::new(0, 0, 5, 3), Rect::new(0, 0, 3, 2))).unwrap();
+        // Two dots right of the first two rows, a full row below.
+        assert!(text.contains("\x1b[1;4H··"));
+        assert!(text.contains("\x1b[2;4H··"));
+        assert!(text.contains("\x1b[3;1H·····"));
+        // A client exactly the shared size gets nothing but the reset.
+        assert_eq!(
+            outside(Rect::new(0, 0, 3, 2), Rect::new(0, 0, 3, 2)),
+            b"\x1b[0;2m\x1b[0m"
+        );
     }
 
     #[test]

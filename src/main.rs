@@ -30,7 +30,8 @@ Usage: imkr [-s NAME] [command]
 
 Commands:
   (none)        attach to the session, or start it
-  attach        attach to the session (`attach -t NAME` works too)
+  attach [-d]   attach to the session (`attach -t NAME` works too), -d detaches
+                other terminals attached to it
   ls            list the running sessions
   hive ls       list the hives: saved groups of sessions
   hive save [NAME]
@@ -97,8 +98,9 @@ fn main() -> Result<()> {
         .collect::<Vec<_>>()
         .as_slice()
     {
-        [] => client::run(true),
-        ["attach" | "a"] => client::run(false),
+        [] => client::run(true, false),
+        ["attach" | "a"] => client::run(false, false),
+        ["attach" | "a", "-d"] => client::run(false, true),
         ["kill-server"] => client::kill_server(),
         ["ls"] => cli::ls(),
         ["keys"] => {

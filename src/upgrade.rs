@@ -1,6 +1,6 @@
 //! `imkr update`: the server replaces itself with a new binary and the
 //! session goes on. It execs the new binary in its own process, which keeps
-//! every pane's pty, the socket and the attached client's connection open,
+//! every pane's pty, the socket and the attached clients' connections open,
 //! and hands over the rest in a file. The shells and agents never notice,
 //! they are still the children of the same process.
 
@@ -31,13 +31,25 @@ const ENV: &str = "IMKR_UPGRADE";
 #[derive(Serialize, Deserialize)]
 pub struct Handover {
     pub listener: RawFd,
-    /// The attached client's connection.
+    /// The first attached client's connection, for servers from before
+    /// `clients`. Only read when `clients` is missing.
     pub client: Option<RawFd>,
     pub screen: (u16, u16),
     pub caps: Caps,
+    /// Every attached client.
+    #[serde(default)]
+    pub clients: Vec<HandoverClient>,
     pub focus_mode: bool,
     pub saved: Saved,
     pub panes: BTreeMap<PaneId, HandoverPane>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HandoverClient {
+    pub fd: RawFd,
+    /// The size of its terminal.
+    pub size: (u16, u16),
+    pub caps: Caps,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -84,7 +96,7 @@ pub fn exec(exe: &Path, socket: &Path, handover: &Handover) -> anyhow::Error {
         .values()
         .map(|p| p.fd)
         .chain([handover.listener])
-        .chain(handover.client)
+        .chain(handover.clients.iter().map(|c| c.fd))
         .collect();
     let result = (|| -> Result<()> {
         if !exe.is_file() {

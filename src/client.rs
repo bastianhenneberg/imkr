@@ -39,8 +39,8 @@ enum Outcome {
 type Writer = Arc<Mutex<Option<UnixStream>>>;
 
 /// Attaches to the running server. With `start`, starts one first if there
-/// is none.
-pub fn run(start: bool) -> Result<()> {
+/// is none. With `alone`, other terminals attached to it are detached.
+pub fn run(start: bool, alone: bool) -> Result<()> {
     let path = socket_path()?;
     let stream = match UnixStream::connect(&path) {
         Ok(stream) => stream,
@@ -77,7 +77,7 @@ pub fn run(start: bool) -> Result<()> {
 
     let mut stream = stream;
     let outcome = loop {
-        match session(stream, &writer) {
+        match session(stream, &writer, alone) {
             Ok(Outcome::Switch(name)) => {
                 let path = session_socket(&name)?;
                 stream = match UnixStream::connect(&path) {
@@ -177,10 +177,10 @@ pub fn request_at(path: &Path, request: Request) -> Result<serde_json::Value> {
     }
 }
 
-fn session(mut stream: UnixStream, writer: &Writer) -> Result<Outcome> {
+fn session(mut stream: UnixStream, writer: &Writer, alone: bool) -> Result<Outcome> {
     let mut to_server = stream.try_clone()?;
     let (cols, rows) = terminal::size()?;
-    ClientMsg::Attach.write_to(&mut to_server)?;
+    ClientMsg::Attach { alone }.write_to(&mut to_server)?;
     ClientMsg::Event(Event::Resize(cols, rows)).write_to(&mut to_server)?;
     ClientMsg::Caps(caps()).write_to(&mut to_server)?;
     *writer.lock().unwrap() = Some(to_server);

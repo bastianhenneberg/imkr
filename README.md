@@ -47,8 +47,11 @@ cargo build --release
 
 The first `imkr` starts a server in the background. It owns the shells and keeps them
 running after you detach or close the terminal. The socket lives in
-`$XDG_RUNTIME_DIR/imkr/`, set `IMKR_SOCKET` to use another one. One client is attached at
-a time, attaching from a second terminal detaches the first.
+`$XDG_RUNTIME_DIR/imkr/`, set `IMKR_SOCKET` to use another one. Several terminals can attach
+to the same session, as in tmux: they all show it and type into it, at the size of the smallest
+one (the rest of a larger terminal is filled with dots), and the control bar says how many are
+attached. `Ctrl+B d` detaches only the terminal it was pressed in, `imkr attach -d` detaches all
+others.
 
 Sessions are separate servers with their own panes, socket and saved layout. `imkr -s NAME`
 (or `attach -t NAME`) picks one, `Ctrl+B S` switches between them without leaving the terminal,
@@ -162,9 +165,9 @@ cargo install --path . --locked && imkr update
 ```
 
 `imkr update` tells the running server to become the new binary. It execs it in the same
-process, which keeps every pane's pty, the socket and the attached client's connection open, and
+process, which keeps every pane's pty, the socket and the attached clients' connections open, and
 hands over layout, names and screens (history included) in a file. Shells and agents keep
-running, the attached client just redraws. Only the server is updated: a client started before
+running, the attached clients just redraw. Only the server is updated: a client started before
 keeps its old code until it reattaches, fine as long as the protocol stays compatible.
 
 ## Restarts
