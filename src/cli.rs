@@ -1025,8 +1025,64 @@ pub fn hosts(args: &[String]) -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: imkr hosts [add NAME | rm NAME]"),
+        [cmd] if cmd == "sync" => hosts_sync(),
+        _ => bail!("usage: imkr hosts [add NAME | rm NAME | sync]"),
     }
+}
+
+/// `imkr hosts sync`: every known machine gets the latest release, all at
+/// once: installed where imkr is missing, upgraded with its sessions
+/// elsewhere.
+fn hosts_sync() -> Result<()> {
+    let mut hosts = crate::config::Config::load().0.hosts;
+    for host in client::remembered_hosts() {
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    if hosts.is_empty() {
+        bail!("no other machines known: `imkr hosts add NAME` or `imkr --host NAME`");
+    }
+    let threads: Vec<_> = hosts
+        .into_iter()
+        .map(|host| {
+            std::thread::spawn(move || {
+                let result = match client::installed_on(&host) {
+                    Err(e) => Err(e),
+                    Ok(false) => client::install_on(&host, false)
+                        .map(|()| "installed the latest release".to_owned()),
+                    Ok(true) => client::remote_output(&host, &["upgrade"], "").map(|out| {
+                        out.lines()
+                            .filter(|line| {
+                                line.contains("->")
+                                    || line.contains("already")
+                                    || line.contains("updated to")
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    }),
+                };
+                (host, result)
+            })
+        })
+        .collect();
+    let mut failed = false;
+    for thread in threads {
+        let Ok((host, result)) = thread.join() else {
+            continue;
+        };
+        match result {
+            Ok(done) => println!("{host:<20} {done}"),
+            Err(e) => {
+                failed = true;
+                println!("{host:<20} {e:#}");
+            }
+        }
+    }
+    if failed {
+        bail!("not every machine is up to date");
+    }
+    Ok(())
 }
 
 /// `imkr update`: the running servers become this binary, keeping every

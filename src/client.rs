@@ -86,7 +86,10 @@ impl Conn {
         // so a failure comes with ssh's or imkr's own message.
         let mut ready = [0u8; 1];
         if reader.read_exact(&mut ready).is_err() || ready[0] != PROXY_READY {
-            let _ = ssh.wait();
+            // The login shell's "command not found".
+            if ssh.wait().is_ok_and(|status| status.code() == Some(127)) {
+                return Err(NotInstalled(host.to_owned()).into());
+            }
             let mut message = String::new();
             let _ = errors.read_to_string(&mut message);
             let message = message.trim();
@@ -113,6 +116,81 @@ impl Drop for Conn {
             let _ = ssh.kill();
             let _ = ssh.wait();
         }
+    }
+}
+
+/// imkr is not installed on this host.
+#[derive(Debug)]
+pub struct NotInstalled(pub String);
+
+impl std::fmt::Display for NotInstalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "imkr is not installed on {}, `imkr hosts sync` installs it",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for NotInstalled {}
+
+/// For `error` from reaching `host`: if imkr is missing there, asks on the
+/// terminal whether to install it, and does. Any other error stays.
+fn offer_install(host: &str, error: anyhow::Error) -> Result<()> {
+    use std::io::IsTerminal;
+    if error.downcast_ref::<NotInstalled>().is_none() || !io::stdin().is_terminal() {
+        return Err(error);
+    }
+    eprint!("imkr is not installed on {host}. Install the latest release there? [Y/n] ");
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    if !matches!(answer.trim(), "" | "y" | "Y" | "yes" | "j" | "ja") {
+        return Err(error);
+    }
+    install_on(host, true)
+}
+
+/// The install script of the releases, run by a shell on another machine.
+const INSTALL: &str = "u=https://raw.githubusercontent.com/bastianhenneberg/imkr/main/install.sh; \
+     (curl -fsSL $u 2>/dev/null || wget -qO- $u) | sh";
+
+/// Installs the latest release on `host` through ssh (into `~/.local/bin`),
+/// its output shown if `show`, else only in the error.
+pub fn install_on(host: &str, show: bool) -> Result<()> {
+    let mut ssh = Command::new("ssh");
+    ssh.args(["-T", "-o", "ConnectTimeout=10", "--", host])
+        .arg(format!("exec \"${{SHELL:-sh}}\" -lc '{INSTALL}'"))
+        .stdin(Stdio::null());
+    if show {
+        if !ssh.status().context("could not run ssh")?.success() {
+            bail!("installing imkr on {host} failed");
+        }
+        return Ok(());
+    }
+    let output = ssh.output().context("could not run ssh")?;
+    if !output.status.success() {
+        let why = String::from_utf8_lossy(&output.stderr);
+        bail!("installing failed: {}", why.trim());
+    }
+    Ok(())
+}
+
+/// Whether `host` has imkr, without prompting; an error if it cannot be
+/// reached.
+pub fn installed_on(host: &str) -> Result<bool> {
+    let status = Command::new("ssh")
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host])
+        .arg("exec \"${SHELL:-sh}\" -lc 'PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH; command -v imkr'")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("could not run ssh")?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(255) | None => bail!("not reachable"),
+        Some(_) => Ok(false),
     }
 }
 
@@ -417,7 +495,10 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
     *SHOWN_SESSION.lock().unwrap() = name.clone();
     let exe = std::env::current_exe().ok();
     let conn = match &remote {
-        Some(r) => match Conn::remote(&r.host, r.session.as_deref(), start) {
+        Some(r) => match Conn::remote(&r.host, r.session.as_deref(), start).or_else(|e| {
+            offer_install(&r.host, e)?;
+            Conn::remote(&r.host, r.session.as_deref(), start)
+        }) {
             Ok(conn) => conn,
             // The last session was elsewhere and is out of reach: here then.
             Err(e) if last => {

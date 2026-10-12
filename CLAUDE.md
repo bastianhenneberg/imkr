@@ -126,6 +126,12 @@ Projekt-Slug: `imkr`
   Remote-Wechsel nach blocked/done erkennt `watch_places` per `remote_change` und legt sie in
   `Places::alerts`, `pass_on_alerts` meldet wie lokal (lokale Sessions melden sich selbst).
   Falle: `pkill -f <pfad>` trifft die eigene Shell, deren Befehlszeile den Pfad enthält.
+- Verteilen: `imkr update`/`upgrade` stellen jede laufende Session des Rechners um (`-s` nur eine,
+  eigenes `IMKR_SOCKET` außerhalb des Runtime-Verzeichnisses nur diesen). `imkr hosts sync`
+  (`cli::hosts_sync`, parallel je Host): `client::installed_on` → `install_on` (install.sh per
+  ssh nach `~/.local/bin`) oder `remote_output(["upgrade"])`. `Conn::remote` meldet Exit 127 als
+  `NotInstalled`, `offer_install` fragt im Terminal. Test: Fake-ssh-Host `bare` mit leerem HOME
+  und `PATH=/usr/bin:/bin` (lädt das echte Release).
 - Window in andere Session verschieben: `App::move_window` → `Pane::stop_reading` (Reader-Thread
   wartet per `poll` auf PTY oder Stopp-Pipe, damit nach der Übergabe kein Byte mehr hier gelesen
   wird), `ClientMsg::Move` (JSON `upgrade::MovedWindow`) plus PTY-FDs per SCM_RIGHTS (`fdpass`)

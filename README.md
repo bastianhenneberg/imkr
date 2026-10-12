@@ -340,7 +340,10 @@ starts here and says why.
 It runs `ssh -C server imkr proxy` through a login shell, with `~/.cargo/bin` and `~/.local/bin`
 added to the PATH, so ssh should log in without a password (keys, an agent or `ControlMaster`).
 The sessions there are listed every 5 seconds with `imkr ls --json`, which needs this version
-of imkr there too; the sidebar says if it is missing or the machine does not answer.
+of imkr there too; the sidebar says if it is missing or the machine does not answer. If imkr is
+missing on a machine, `imkr --host` offers to install the latest release there (into
+`~/.local/bin`), and `imkr hosts sync` brings every known machine up to date at once: installed
+where it is missing, upgraded with all its running sessions everywhere else.
 
 Agents of the other sessions, here and on other machines, are listed under *Agents* below this
 session's own, grouped by session (`⇄ codingmachine · brain`), those that need you first. A click
@@ -438,6 +441,7 @@ imkr hive restore work --from codingmachine               # a new machine: fetch
 imkr hive restore work --from codingmachine --take laptop # and bring the broken laptop's sessions here
 imkr hosts                                               # the other machines this one shows
 imkr hosts add desktop                                   # or forget one with `rm`
+imkr hosts sync                                          # the latest release on all of them
 ```
 
 Machines are told apart by `/etc/machine-id`, so two machines set up alike may share a hostname
