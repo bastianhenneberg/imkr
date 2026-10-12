@@ -49,6 +49,7 @@ Commands:
   update        move the running server to this binary, e.g. after
                 `cargo install`; panes, programs and screens stay
   keys          list the key bindings
+  version       print the version
 
 For scripts and agents:
   list [--json]                         list the panes with program and agent state
@@ -122,6 +123,10 @@ fn main() -> Result<()> {
         ["save", ..] => cli::save(&args[1..]),
         ["restore", ..] => cli::restore(&args[1..]),
         ["rename-session", ..] => cli::rename_session(&args[1..]),
+        ["version" | "-V" | "--version"] => {
+            println!("imkr {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         ["help" | "-h" | "--help"] => {
             println!("{USAGE}");
             Ok(())

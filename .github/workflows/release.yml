@@ -1,0 +1,52 @@
+name: release
+
+# A tag like `v0.1.0` builds the binaries and attaches them to its release.
+# install.sh downloads from there, so the tag has to match Cargo.toml's version.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # No binaries from a tag that does not build, lint and test cleanly.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup update stable --no-self-update
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  binaries:
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # musl, so one binary runs on every distribution regardless of its glibc.
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup update stable --no-self-update
+      # The musl targets and their linkers are not on the runner; this adds them.
+      - uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: imkr
+          target: ${{ matrix.target }}
+          # imkr-x86_64-unknown-linux-musl.tar.gz plus a .sha256 next to it,
+          # the binary at the root of the archive. install.sh expects both.
+          archive: $bin-$target
+          include: README.md,LICENSE-MIT,LICENSE-APACHE
+          checksum: sha256
+          locked: true
+          token: ${{ secrets.GITHUB_TOKEN }}

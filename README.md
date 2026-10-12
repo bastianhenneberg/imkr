@@ -33,16 +33,35 @@ Inspired by [TUIOS](https://github.com/Gaurav-Gosain/tuios) and [herdr](https://
 6. ~~Agent status, socket API~~ ✓
 7. ~~Layout persistence across restarts~~ ✓
 
-## Build
+## Install
+
+Linux on x86_64 or aarch64, no toolchain needed:
 
 ```bash
-cargo build --release
-./target/release/imkr            # attach to the session, or start one
-./target/release/imkr attach     # attach, fail if there is no session
-./target/release/imkr kill-server  # stop the server and every shell in it
-./target/release/imkr keys         # list the key bindings
-./target/release/imkr -s work      # the session `work`, started if needed
-./target/release/imkr ls           # the running sessions with panes and agents
+curl -fsSL https://raw.githubusercontent.com/bastianhenneberg/imkr/main/install.sh | sh
+```
+
+That puts the latest release into `~/.local/bin`. `PREFIX` picks another root and
+`IMKR_VERSION` another tag: `curl -fsSL … | IMKR_VERSION=v0.1.0 PREFIX=/usr/local sh`.
+
+With a Rust toolchain, from crates.io or straight from the repository:
+
+```bash
+cargo install imkr --locked   # once imkr is on crates.io
+cargo install --git https://github.com/bastianhenneberg/imkr --locked
+```
+
+imkr is Linux only for now: it reads `/proc` to tell what a pane is running and where.
+Everything else is portable, so a port is mostly a matter of replacing those two reads.
+
+```bash
+imkr              # attach to the session, or start one
+imkr attach       # attach, fail if there is no session
+imkr kill-server  # stop the server and every shell in it
+imkr keys         # list the key bindings
+imkr version      # what is installed
+imkr -s work      # the session `work`, started if needed
+imkr ls           # the running sessions with panes and agents
 ```
 
 The first `imkr` starts a server in the background. It owns the shells and keeps them
@@ -161,7 +180,9 @@ OSC 9 to the terminal, or none) and shows up in the control bar as well.
 A new version does not need a restart:
 
 ```bash
-cargo install --path . --locked && imkr update
+cargo install --path . --locked && imkr update   # from a checkout
+curl -fsSL https://raw.githubusercontent.com/bastianhenneberg/imkr/main/install.sh | sh
+imkr update                                      # from the latest release
 ```
 
 `imkr update` tells the running server to become the new binary. It execs it in the same
@@ -299,6 +320,18 @@ float = false
 
 Elements on the same side share one line. New panes start in the directory of the focused
 pane.
+
+## Build
+
+```bash
+cargo build --release
+cargo install --path . --locked   # put this checkout on PATH as `imkr`
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+A tag `vX.Y.Z` matching the version in `Cargo.toml` builds the release binaries and attaches
+them to its GitHub release, which is where `install.sh` downloads from.
 
 ## License
 
