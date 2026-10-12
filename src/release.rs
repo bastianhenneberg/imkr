@@ -127,8 +127,9 @@ pub fn replace_binary(target: &Path, new: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `imkr upgrade`: fetch the newest release and become it.
-pub fn upgrade() -> Result<()> {
+/// `imkr upgrade`: fetch the newest release and become it, in every
+/// running session or only `only`.
+pub fn upgrade(only: Option<String>) -> Result<()> {
     let target = target_triple()?;
     let here = env!("CARGO_PKG_VERSION");
 
@@ -147,6 +148,8 @@ pub fn upgrade() -> Result<()> {
 
     if there == here {
         println!("imkr {here} is already the latest release");
+        // Sessions started before, or left out last time, move over now.
+        let _ = crate::cli::update_to(std::env::current_exe()?, only);
         return Ok(());
     }
     println!("imkr {here} -> {there}");
@@ -179,7 +182,7 @@ pub fn upgrade() -> Result<()> {
     println!("replaced {}", exe.display());
 
     // Only worth saying something about if a session is actually running.
-    match crate::cli::update_to(exe) {
+    match crate::cli::update_to(exe, only) {
         Ok(()) => {}
         Err(_) => println!("no running session to move over"),
     }

@@ -68,11 +68,12 @@ Commands:
   rename-session NAME
                 rename the session (`-s OLD rename-session NEW` for another)
   kill-server   shut down the session's server and every pane in it
-  update        move the running server to this binary, e.g. after
-                `cargo install`; panes, programs and screens stay
+  update        move every running session (or the one of -s) to this
+                binary, e.g. after `cargo install`; panes, programs and
+                screens stay
   keys          list the key bindings
   upgrade       download the latest release, replace this binary and
-                move a running session to it
+                move every running session (or the one of -s) to it
   version       print the version
 
 For scripts and agents:
@@ -155,6 +156,7 @@ fn main() -> Result<()> {
     }
     // Plain `imkr` goes where it was last; a session or host given wins.
     let last = session.is_none() && host.is_none() && std::env::var_os("IMKR_SOCKET").is_none();
+    let chosen = session.clone();
     let remote = host.map(|host| client::Remote { host, session });
     match args
         .iter()
@@ -195,8 +197,8 @@ fn main() -> Result<()> {
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks", ..] => cli::hooks(&args[1..]),
-        ["update"] => cli::update(),
-        ["upgrade"] => release::upgrade(),
+        ["update"] => cli::update(chosen),
+        ["upgrade"] => release::upgrade(chosen),
         ["hive", ..] => cli::hive(&args[1..]),
         ["save", ..] => cli::save(&args[1..]),
         ["restore", ..] => cli::restore(&args[1..]),

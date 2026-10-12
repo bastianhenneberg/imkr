@@ -1029,24 +1029,65 @@ pub fn hosts(args: &[String]) -> Result<()> {
     }
 }
 
-/// `imkr update`: the running server becomes this binary, keeping every
-/// pane and the attached client, see `upgrade`.
-pub fn update() -> Result<()> {
-    update_to(std::env::current_exe()?)
+/// `imkr update`: the running servers become this binary, keeping every
+/// pane and the attached clients, see `upgrade`. Every session on this
+/// machine, or only `only` (`-s NAME`).
+pub fn update(only: Option<String>) -> Result<()> {
+    update_to(std::env::current_exe()?, only)
 }
 
 /// `imkr upgrade` has to name the path itself: once the binary has been
 /// replaced, `current_exe()` reads back as `… (deleted)`, because the running
 /// process still holds the old, now unlinked inode.
-pub fn update_to(exe: std::path::PathBuf) -> Result<()> {
-    let reply = client::request(Request::Upgrade { exe: exe.clone() })?;
+pub fn update_to(exe: std::path::PathBuf, only: Option<String>) -> Result<()> {
+    // A socket of its own outside the runtime directory (tests) is the only
+    // one meant; a pane's own `IMKR_SOCKET` lies inside it.
+    let own = std::env::var_os("IMKR_SOCKET")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.parent() != protocol::runtime_dir().ok().as_deref());
+    let sockets: Vec<(String, std::path::PathBuf)> = match (only, own) {
+        (None, Some(path)) => vec![(path.display().to_string(), path)],
+        (Some(name), _) => vec![(name.clone(), protocol::session_socket(&name)?)],
+        (None, None) => protocol::sessions()
+            .into_iter()
+            .filter_map(|name| Some((name.clone(), protocol::session_socket(&name).ok()?)))
+            .collect(),
+    };
+    if sockets.is_empty() {
+        anyhow::bail!("no imkr server running");
+    }
+    let mut failed = Vec::new();
+    for (name, socket) in sockets {
+        let result = update_at(&socket, &exe);
+        match result {
+            Ok(panes) => println!("{name}: updated to {} ({panes} panes kept)", exe.display()),
+            Err(e) => {
+                println!("{name}: {e:#}");
+                failed.push(name);
+            }
+        }
+    }
+    if !failed.is_empty() {
+        anyhow::bail!("not updated: {}", failed.join(", "));
+    }
+    Ok(())
+}
+
+/// Hands the server at `socket` over to `exe` and waits until it answers
+/// again. The number of panes it kept.
+fn update_at(socket: &std::path::Path, exe: &std::path::Path) -> Result<u64> {
+    let reply = client::request_at(
+        socket,
+        Request::Upgrade {
+            exe: exe.to_path_buf(),
+        },
+    )?;
     let panes = reply["panes"].as_u64().unwrap_or(0);
     // The new server takes the socket over; wait until it answers.
     for _ in 0..100 {
         std::thread::sleep(std::time::Duration::from_millis(50));
-        if client::request(Request::List).is_ok() {
-            println!("updated to {} ({panes} panes kept)", exe.display());
-            return Ok(());
+        if client::request_at(socket, Request::List).is_ok() {
+            return Ok(panes);
         }
     }
     anyhow::bail!("the server did not come back, see its log next to the socket")
