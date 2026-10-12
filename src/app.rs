@@ -111,8 +111,10 @@ enum Mode {
     NewWindowWhere(usize),
     /// Choosing the template for the new session `App::new_session`.
     NewSessionTemplate(usize),
-    /// The list of this session's windows, that one selected.
+    /// The list of every window everywhere, that one selected.
     Windows(usize),
+    /// The list of every pane everywhere, that one selected.
+    Panes(usize),
     /// The marks, that one selected.
     Marks(usize),
 }
@@ -126,6 +128,52 @@ struct Picker {
     global: bool,
     /// The hives, read once when it opens rather than on every frame.
     hives: Vec<persist::HiveInfo>,
+}
+
+/// Where an entry of the window or pane list leads.
+#[derive(Clone)]
+enum Spot {
+    Window(u8),
+    Pane(PaneId),
+    /// A pane in another session, here or on another machine.
+    Elsewhere(Place, PaneId),
+}
+
+/// A window in the window list, before it becomes a line.
+struct WindowEntry {
+    spot: Spot,
+    number: u8,
+    name: String,
+    states: Vec<AgentState>,
+    programs: Vec<String>,
+    /// Where it is, e.g. `⌂ laptop · api`.
+    at: String,
+}
+
+/// The key of entry `i` in a list: 1 to 9, then none.
+fn list_key_char(i: usize) -> char {
+    if i < 9 {
+        char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
+    } else {
+        ' '
+    }
+}
+
+/// How many agents are in each state, the urgent first: "◆1 ●2".
+fn state_counts(states: &[AgentState]) -> String {
+    [
+        AgentState::Blocked,
+        AgentState::Done,
+        AgentState::Working,
+        AgentState::Idle,
+    ]
+    .into_iter()
+    .filter_map(|state| {
+        let n = states.iter().filter(|s| **s == state).count();
+        (n > 0).then(|| format!("{}{n}", state.symbol()))
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 /// One thing found by the picker, and where Enter goes.
@@ -2193,7 +2241,11 @@ impl App {
                 Ok(())
             }
             Mode::Windows(selected) => {
-                self.windows_key(key, selected);
+                self.spot_list_key(key, selected, false);
+                Ok(())
+            }
+            Mode::Panes(selected) => {
+                self.spot_list_key(key, selected, true);
                 Ok(())
             }
             Mode::NewSessionWhere(selected) => {
@@ -2385,6 +2437,14 @@ impl App {
             Command::Windows => {
                 let at = self.workspaces().iter().position(|&n| n == self.workspace);
                 self.mode = Mode::Windows(at.unwrap_or(0));
+            }
+            Command::Panes => {
+                let at = self
+                    .pane_items()
+                    .0
+                    .iter()
+                    .position(|s| matches!(s, Spot::Pane(id) if *id == self.ws.focus));
+                self.mode = Mode::Panes(at.unwrap_or(0));
             }
             Command::Mark => self.mark_focused(),
             Command::Marks => self.mode = Mode::Marks(0),
@@ -3845,96 +3905,263 @@ impl App {
     }
 
     /// Enter or a digit goes to that agent, here or wherever it runs.
-    /// Every window of the session: its number and name, what its agents
-    /// do in the sidebar's colours, how many panes it has.
-    fn window_items(&self) -> (Vec<u8>, Vec<menu::MenuItem>) {
-        let numbers = self.workspaces();
-        let items = numbers
-            .iter()
-            .map(|&n| {
-                let ws = self.workspace_ref(n);
-                let panes = ws.map(Workspace::panes).unwrap_or_default();
-                let states: Vec<AgentState> = panes
-                    .iter()
-                    .filter_map(|&id| self.shown_state(id))
-                    .collect();
+    /// The panes of every other session, here and on the other machines,
+    /// with where they are. Sessions from versions before list only their
+    /// agents.
+    fn other_panes(&self) -> Vec<(Place, protocol::AgentInfo)> {
+        let local = self.places.lock().unwrap().local.clone();
+        let hosts = self.known_hosts();
+        let mut groups: Vec<(Option<String>, protocol::SessionInfo)> =
+            local.into_iter().map(|s| (None, s)).collect();
+        if let Some(origin) = &self.origin {
+            for session in &origin.infos {
+                groups.push((Some(origin.host.clone()), session.clone()));
+            }
+        }
+        for (host, sessions) in hosts {
+            for session in sessions.into_iter().flatten() {
+                groups.push((Some(host.clone()), session));
+            }
+        }
+        let mut out = Vec::new();
+        for (host, session) in groups {
+            let panes = if session.all_panes.is_empty() {
+                session.agent_panes.clone()
+            } else {
+                session.all_panes.clone()
+            };
+            for pane in panes {
+                let place = Place {
+                    host: host.clone(),
+                    name: session.name.clone(),
+                };
+                out.push((place, pane));
+            }
+        }
+        out
+    }
+
+    /// "machine · session" for a list entry elsewhere, the machine left out
+    /// when there is only this one.
+    fn where_label(&self, place: &Place) -> String {
+        match self.machine_label(place.host.as_deref()) {
+            Some(machine) => format!("{machine} · {}", place.name),
+            None => place.name.clone(),
+        }
+    }
+
+    /// Every window everywhere: this session's first, then those of the
+    /// other sessions on every machine. Each with what its agents do, in
+    /// the sidebar's colours, and its programs.
+    fn window_items(&self) -> (Vec<Spot>, Vec<menu::MenuItem>) {
+        let mut entries: Vec<WindowEntry> = Vec::new();
+        for n in self.workspaces() {
+            let Some(ws) = self.workspace_ref(n) else {
+                continue;
+            };
+            let panes = ws.panes();
+            let name = ws
+                .name
+                .clone()
+                .or_else(|| {
+                    let cwd = self.panes.get(&ws.focus)?.cwd()?;
+                    Some(cwd.file_name()?.to_string_lossy().into_owned())
+                })
+                .unwrap_or_default();
+            let states = panes
+                .iter()
+                .filter_map(|&id| self.shown_state(id))
+                .collect();
+            let programs = panes
+                .iter()
+                .filter_map(|id| {
+                    let pane = self.panes.get(id)?;
+                    pane.name.clone().or_else(|| pane.program())
+                })
+                .collect();
+            let at = if n == self.workspace {
+                "shown".to_owned()
+            } else {
+                "this session".to_owned()
+            };
+            entries.push(WindowEntry {
+                spot: Spot::Window(n),
+                number: n,
+                name,
+                states,
+                programs,
+                at,
+            });
+        }
+        let mut groups: Vec<(Place, u8, Vec<protocol::AgentInfo>)> = Vec::new();
+        for (place, pane) in self.other_panes() {
+            match groups
+                .iter_mut()
+                .find(|(p, n, _)| *p == place && *n == pane.workspace)
+            {
+                Some((_, _, panes)) => panes.push(pane),
+                None => groups.push((place, pane.workspace, vec![pane])),
+            }
+        }
+        for (place, n, panes) in groups {
+            let states = panes
+                .iter()
+                .filter_map(|p| AgentState::from_name(&p.state))
+                .collect();
+            let programs = panes.iter().map(|p| p.program.clone()).collect();
+            let at = self.where_label(&place);
+            entries.push(WindowEntry {
+                spot: Spot::Elsewhere(place, panes[0].pane),
+                number: n,
+                name: panes[0].dir.clone(),
+                states,
+                programs,
+                at,
+            });
+        }
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let WindowEntry {
+                    spot,
+                    number: n,
+                    name,
+                    states,
+                    programs,
+                    at,
+                } = entry;
                 let urgent = states.iter().copied().min_by_key(|s| sidebar::urgency(*s));
-                let name = ws
-                    .and_then(|ws| ws.name.clone())
-                    .or_else(|| {
-                        let cwd = self.panes.get(&ws?.focus)?.cwd()?;
-                        Some(cwd.file_name()?.to_string_lossy().into_owned())
-                    })
-                    .unwrap_or_default();
-                let mut counts: Vec<String> = Vec::new();
-                for state in [
-                    AgentState::Blocked,
-                    AgentState::Done,
-                    AgentState::Working,
-                    AgentState::Idle,
-                ] {
-                    let k = states.iter().filter(|s| **s == state).count();
-                    if k > 0 {
-                        counts.push(format!("{}{k}", state.symbol()));
-                    }
-                }
-                let programs: Vec<String> = panes
-                    .iter()
-                    .filter_map(|id| {
-                        let pane = self.panes.get(id)?;
-                        pane.name.clone().or_else(|| pane.program())
-                    })
-                    .collect();
-                let mut hint = programs.join(", ");
+                let mut hint = vec![at];
+                let counts = state_counts(&states);
                 if !counts.is_empty() {
-                    hint = format!("{} · {hint}", counts.join(" "));
+                    hint.push(counts);
                 }
-                if n == self.workspace {
-                    hint = format!("{hint} · shown");
-                }
-                menu::MenuItem {
-                    key: char::from_digit(u32::from(n) % 10, 10).unwrap_or(' '),
+                hint.push(programs.join(", "));
+                let item = menu::MenuItem {
+                    key: list_key_char(i),
                     title: match urgent {
                         Some(state) => format!("{} {n} {name}", state.symbol()),
                         None => format!("  {n} {name}"),
                     },
-                    hint,
+                    hint: hint.join(" · "),
                     danger: false,
                     apart: false,
                     color: urgent.and_then(|state| sidebar::state_style(state).fg),
-                }
+                };
+                (spot, item)
             })
-            .collect();
-        (numbers, items)
+            .unzip()
     }
 
-    fn windows_key(&mut self, key: KeyEvent, selected: usize) {
-        let (numbers, _) = self.window_items();
-        let count = numbers.len().max(1);
+    /// Every pane everywhere: this session's, then those of the other
+    /// sessions on every machine, each after its window.
+    fn pane_items(&self) -> (Vec<Spot>, Vec<menu::MenuItem>) {
+        let mut entries: Vec<(Spot, String, Option<AgentState>, String)> = Vec::new();
+        for n in self.workspaces() {
+            let Some(ws) = self.workspace_ref(n) else {
+                continue;
+            };
+            for id in ws.panes() {
+                let Some(pane) = self.panes.get(&id) else {
+                    continue;
+                };
+                let program = pane
+                    .name
+                    .clone()
+                    .or_else(|| pane.program())
+                    .unwrap_or_default();
+                let window = self.window_name_of(id).unwrap_or_default();
+                let dir = pane.cwd().map(|c| tilde(&c)).unwrap_or_default();
+                entries.push((
+                    Spot::Pane(id),
+                    format!("{n} {window} › {program}"),
+                    self.shown_state(id),
+                    format!("this session · pane {id} · {dir}"),
+                ));
+            }
+        }
+        for (place, pane) in self.other_panes() {
+            let at = self.where_label(&place);
+            entries.push((
+                Spot::Elsewhere(place, pane.pane),
+                format!("{} {} › {}", pane.workspace, pane.dir, pane.program),
+                AgentState::from_name(&pane.state),
+                at,
+            ));
+        }
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(i, (spot, label, state, hint))| {
+                let item = menu::MenuItem {
+                    key: list_key_char(i),
+                    title: match state {
+                        Some(state) => format!("{} {label}", state.symbol()),
+                        None => format!("  {label}"),
+                    },
+                    hint,
+                    danger: false,
+                    apart: false,
+                    color: state.and_then(|state| sidebar::state_style(state).fg),
+                };
+                (spot, item)
+            })
+            .unzip()
+    }
+
+    /// Keys of the window and pane lists: Enter or a digit goes there.
+    fn spot_list_key(&mut self, key: KeyEvent, selected: usize, panes: bool) {
+        let spots = if panes {
+            self.pane_items().0
+        } else {
+            self.window_items().0
+        };
+        let mode = |i| {
+            if panes {
+                Mode::Panes(i)
+            } else {
+                Mode::Windows(i)
+            }
+        };
+        let count = spots.len().max(1);
         let pick = match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 return;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.mode = Mode::Windows((selected + count - 1) % count);
+                self.mode = mode((selected + count - 1) % count);
                 return;
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                self.mode = Mode::Windows((selected + 1) % count);
+                self.mode = mode((selected + 1) % count);
                 return;
             }
-            KeyCode::Enter => numbers.get(selected).copied(),
-            // The digit is the window's number, as in Ctrl+B 1-9.
-            KeyCode::Char(c @ '1'..='9') => {
-                let n = c as u8 - b'0';
-                numbers.contains(&n).then_some(n)
-            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
             _ => return,
         };
         self.mode = Mode::Normal;
-        if let Some(n) = pick {
-            self.switch_workspace(n);
+        if let Some(spot) = spots.into_iter().nth(pick) {
+            self.go_spot(spot);
+        }
+    }
+
+    fn go_spot(&mut self, spot: Spot) {
+        match spot {
+            Spot::Window(n) => self.switch_workspace(n),
+            Spot::Pane(id) => self.reveal(id),
+            Spot::Elsewhere(place, pane) => {
+                if place.host.is_some() && !self.active_caps().is_some_and(|caps| caps.hosts) {
+                    self.flash =
+                        Some("this terminal's imkr is too old for other machines, reattach".into());
+                } else if self.active_caps().is_some_and(|caps| caps.panes) {
+                    self.switch_session(format!("{}#{pane}", place.target()));
+                } else {
+                    self.switch_session(place.target());
+                }
+            }
         }
     }
 
@@ -6041,6 +6268,7 @@ impl App {
                         | Mode::MoveTo(..)
                         | Mode::Agents(_)
                         | Mode::Windows(_)
+                        | Mode::Panes(_)
                         | Mode::NewSessionWhere(_)
                         | Mode::NewSessionTemplate(_)
                         | Mode::NewWindowWhere(_)
@@ -6181,7 +6409,18 @@ impl App {
                 self.draw_list(
                     frame,
                     body,
-                    " ⬢ Windows ",
+                    " ⬢ Windows everywhere ",
+                    &items,
+                    selected,
+                    bindings::CHOOSE_LIST_KEYS,
+                );
+            }
+            Mode::Panes(selected) => {
+                let (_, items) = self.pane_items();
+                self.draw_list(
+                    frame,
+                    body,
+                    " ⬢ Panes everywhere ",
                     &items,
                     selected,
                     bindings::CHOOSE_LIST_KEYS,
@@ -6250,6 +6489,7 @@ impl App {
             Mode::Sessions(s) => (self.session_items().1, s),
             Mode::Agents(s) => (self.agent_choices().1, s),
             Mode::Windows(s) => (self.window_items().1, s),
+            Mode::Panes(s) => (self.pane_items().1, s),
             Mode::Hives(s) => (self.hive_items().1, s),
             Mode::MoveTo(_, s) => (self.move_to_items().1, s),
             Mode::Marks(s) => (self.mark_items(), s),
@@ -6269,6 +6509,7 @@ impl App {
             Mode::Sessions(s)
             | Mode::Agents(s)
             | Mode::Windows(s)
+            | Mode::Panes(s)
             | Mode::Hives(s)
             | Mode::Marks(s)
             | Mode::NewWindowWhere(s)
@@ -6778,6 +7019,11 @@ impl App {
             ),
             Mode::Windows(_) => (
                 "WINDOWS",
+                t.blue,
+                "↑↓ choose · Enter or digit go there · / search · Esc cancel",
+            ),
+            Mode::Panes(_) => (
+                "PANES",
                 t.blue,
                 "↑↓ choose · Enter or digit go there · / search · Esc cancel",
             ),

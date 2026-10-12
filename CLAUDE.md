@@ -159,6 +159,10 @@ Projekt-Slug: `imkr`
   `deliver_mail` (je Tick) tippt nur bei idle/done/ohne Agent, nie bei blocked, 3 s Abstand je Pane.
   `imkr agents [--all]`, Skill-Text in `skills/imkr/SKILL.md` (`imkr skill [--install]`).
   Test-Falle: `imkr status` liest stdin (Hook-JSON) – in Heredoc-Tests `</dev/null` anhängen.
+- Großbuchstaben zeigen alles, über alle Sessions und Rechner: `S` Sessions, `A` Agents, `W` Windows,
+  `P` Panes, `M` Marken, `H` Hives. W/P: `window_items`/`pane_items` → `Spot` (`go_spot`), andere
+  Sessions über `other_panes` aus `SessionInfo::all_panes` (ältere Versionen: nur `agent_panes`).
+  Panes stehen überall hinter ihrem Window: `1 api › claude` (`window_name_of`).
 - Tastenbelegung nach dem Prefix steht **nur** in `src/bindings.rs` (`BINDINGS`). Which-Key-Menü,
   Hilfe-Overlay und `imkr keys` lesen daraus, neue Befehle dort eintragen, nicht in `app.rs`.
 - Einstellungen: `src/config.rs` (serde/TOML, `SETTINGS`-Tabelle fürs Settings-Menü). Neue

@@ -41,8 +41,10 @@ pub enum Command {
     /// Save every running session as a hive, asking for its name.
     SaveHive,
     PickPane,
-    /// The list of every window of the session.
+    /// The list of every window, in every session on every machine.
     Windows,
+    /// The list of every pane, in every session on every machine.
+    Panes,
     /// Search everything: panes, windows, sessions, agents, plugins,
     /// hives, marks and commands.
     Search,
@@ -377,6 +379,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "all windows…",
         group: Group::Navigate,
         keys: &[(Key::plain(Char('W')), C::Windows)],
+    },
+    Binding {
+        label: "P",
+        description: "all panes…",
+        group: Group::Navigate,
+        keys: &[(Key::plain(Char('P')), C::Panes)],
     },
     Binding {
         label: "m M",
@@ -859,7 +867,8 @@ pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
     ("Hives", "H", HIVE_LIST_KEYS),
     ("Move window", "w m", MOVE_LIST_KEYS),
     ("Agents", "A", AGENT_LIST_KEYS),
-    ("Windows", "W", CHOOSE_LIST_KEYS),
+    ("Windows everywhere", "W", CHOOSE_LIST_KEYS),
+    ("Panes everywhere", "P", CHOOSE_LIST_KEYS),
     ("Marks (Alt+1 … 9 jumps)", "M", MARK_LIST_KEYS),
 ];
 

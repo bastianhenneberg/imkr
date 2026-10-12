@@ -287,10 +287,10 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                 info.panes = panes.len();
                 info.windows = windows.len();
                 for pane in &panes {
-                    let Some(state) = pane["state"].as_str() else {
-                        continue;
-                    };
-                    *info.agents.entry(state.to_owned()).or_default() += 1;
+                    let state = pane["state"].as_str();
+                    if let Some(state) = state {
+                        *info.agents.entry(state.to_owned()).or_default() += 1;
+                    }
                     let dir = pane["workspace_name"]
                         .as_str()
                         .map(str::to_owned)
@@ -300,18 +300,22 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                             Some(name.to_string_lossy().into_owned())
                         })
                         .unwrap_or_default();
-                    info.agent_panes.push(crate::protocol::AgentInfo {
+                    let entry = crate::protocol::AgentInfo {
                         pane: pane["pane"].as_u64().unwrap_or(0) as crate::layout::PaneId,
                         program: pane["name"]
                             .as_str()
                             .or(pane["program"].as_str())
-                            .unwrap_or("agent")
+                            .unwrap_or(if state.is_some() { "agent" } else { "shell" })
                             .to_owned(),
                         workspace: pane["workspace"].as_u64().unwrap_or(0) as u8,
                         dir,
-                        state: state.to_owned(),
+                        state: state.unwrap_or_default().to_owned(),
                         since: pane["since"].as_u64().unwrap_or(0),
-                    });
+                    };
+                    if state.is_some() {
+                        info.agent_panes.push(entry.clone());
+                    }
+                    info.all_panes.push(entry);
                 }
             }
             info

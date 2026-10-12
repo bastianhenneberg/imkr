@@ -111,6 +111,11 @@ pub struct SessionInfo {
     /// Every agent, for the sidebar of another session.
     #[serde(default)]
     pub agent_panes: Vec<AgentInfo>,
+    /// Every pane, agents and shells, for the lists of every window and
+    /// pane (`Ctrl+B W`, `Ctrl+B P`); `state` is empty without an agent.
+    /// Empty from versions before.
+    #[serde(default)]
+    pub all_panes: Vec<AgentInfo>,
 }
 
 /// An agent of a session, as another session's sidebar lists it.
