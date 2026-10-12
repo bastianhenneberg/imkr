@@ -174,6 +174,10 @@ pub struct Config {
     /// Images from programs, with the kitty graphics protocol, where the
     /// terminal shows them.
     pub images: bool,
+    /// Windows move up to fill the gap a closed one leaves, so they are
+    /// always numbered 1, 2, 3 …, as tmux's `renumber-windows`. Without
+    /// it a window keeps its number for good.
+    pub renumber_windows: bool,
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
@@ -246,6 +250,7 @@ impl Default for Config {
                 float: true,
             }],
             images: true,
+            renumber_windows: false,
             sessions_on_start: false,
             hosts: Vec::new(),
         }
@@ -388,6 +393,11 @@ pub const SETTINGS: &[Setting] = &[
                 forward,
             )
         },
+    },
+    Setting {
+        name: "Renumber windows",
+        value: |c| if c.renumber_windows { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.renumber_windows = !c.renumber_windows,
     },
     Setting {
         name: "Session list on start",

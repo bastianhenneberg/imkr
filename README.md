@@ -97,7 +97,7 @@ state comes from what imkr sees on the screen.
 | `Ctrl+B` `f` … | Floating panes menu: `f` float/tile, `n` new, `o` next, arrows move |
 | `Ctrl+B` `Shift+←↑↓→` | Move a floating pane |
 | `Ctrl+B` `n` | New window, asks for its name right away (Esc closes it again) |
-| `Ctrl+B` `w` … | Windows menu: `1`–`9`, `c` new, `n`/`p` next/previous, `m` move to another session |
+| `Ctrl+B` `w` … | Windows menu: `1`–`9`, `c` new, `n`/`p` next/previous, `m` move to another session, `=` renumber 1, 2, 3 … |
 | `Ctrl+B` `1`–`9` | Go to window, an empty one starts a shell |
 | `Ctrl+B` `←↑↓→` | Focus the pane in that direction |
 | `Ctrl+B` `o` | Focus the next pane |
@@ -298,6 +298,9 @@ The file can also be edited by hand, imkr reads it when the server starts:
 
 ```toml
 theme = "omarchy"   # "imkr", "omarchy" to follow the desktop, or an Omarchy theme name
+renumber_windows = false   # true: windows move up to fill gaps, always 1, 2, 3 …
+sessions_on_start = false  # true: plain `imkr` opens the session list first
+hosts = []          # other machines whose sessions to show, see "Other machines"
 
 [which_key]
 enabled = true      # show the key menu after Ctrl+B

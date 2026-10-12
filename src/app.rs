@@ -782,6 +782,9 @@ impl App {
             self.refresh_files();
             self.scroll_sidebar_to_selection();
             self.follow_omarchy();
+            if self.config.renumber_windows {
+                self.renumber_windows();
+            }
             if *self.watched_hosts.lock().unwrap() != self.config.hosts {
                 *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
             }
@@ -1844,6 +1847,13 @@ impl App {
             }
             Command::RenameWorkspace => self.start_prompt(RenameTarget::Workspace(self.workspace)),
             Command::MoveWorkspace => self.mode = Mode::MoveTo(self.workspace, 0),
+            Command::RenumberWorkspaces => {
+                self.flash = Some(if self.renumber_windows() {
+                    "windows renumbered".into()
+                } else {
+                    "windows are numbered without gaps already".into()
+                });
+            }
             Command::FocusSidebar => self.focus_sidebar(),
             Command::FocusMode => self.focus_mode = !self.focus_mode,
             Command::ToggleSidebar => {
@@ -4010,6 +4020,37 @@ impl App {
         self.stash();
         self.workspace = n;
         self.ws = ws;
+    }
+
+    /// Numbers the windows 1, 2, 3 … in their order, closing gaps. Whatever
+    /// refers to a window by number follows. False if nothing changed.
+    fn renumber_windows(&mut self) -> bool {
+        let old = self.workspaces();
+        let map: HashMap<u8, u8> = old.iter().zip(1..).map(|(&o, n)| (o, n)).collect();
+        if map.iter().all(|(o, n)| o == n) {
+            return false;
+        }
+        let new = |n: u8| map.get(&n).copied().unwrap_or(n);
+        self.hidden = std::mem::take(&mut self.hidden)
+            .into_iter()
+            .map(|(n, ws)| (new(n), ws))
+            .collect();
+        self.workspace = new(self.workspace);
+        if let Mode::MoveTo(window, _) = &mut self.mode {
+            *window = new(*window);
+        }
+        if let Some(prompt) = &mut self.prompt {
+            match &mut prompt.purpose {
+                PromptFor::MoveWindow(window)
+                | PromptFor::Rename(RenameTarget::Workspace(window)) => *window = new(*window),
+                PromptFor::NewWindow { window, back, .. } => {
+                    *window = new(*window);
+                    *back = new(*back);
+                }
+                _ => {}
+            }
+        }
+        true
     }
 
     /// Moves the active workspace into `hidden`, if it has any panes.

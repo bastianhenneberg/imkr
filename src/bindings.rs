@@ -50,6 +50,8 @@ pub enum Command {
     RenameWorkspace,
     /// Move the active window with its panes to another session.
     MoveWorkspace,
+    /// Number the windows 1, 2, 3 … again, closing the gaps.
+    RenumberWorkspaces,
     /// Give the sidebar the keyboard.
     FocusSidebar,
     /// Show or hide the sidebar.
@@ -613,6 +615,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "move to session",
         group: Group::Workspaces,
         keys: &[(Key::plain(Char('m')), C::MoveWorkspace)],
+    },
+    Binding {
+        label: "=",
+        description: "renumber windows",
+        group: Group::Workspaces,
+        keys: &[(Key::plain(Char('=')), C::RenumberWorkspaces)],
     },
     Binding {
         label: "n p ←→",
