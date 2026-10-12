@@ -97,6 +97,8 @@ pub enum Command {
     PaneToWindow(u8),
     /// Moves the focused pane into a new window of its own.
     PaneToNewWindow,
+    /// Asks for a branch and opens a window in a git worktree of it.
+    WorktreeWindow,
     /// Goes back from a submenu to the main menu.
     Back,
     Cancel,
@@ -762,6 +764,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "new window",
         group: Group::Workspaces,
         keys: &[(Key::plain(Char('c')), C::NewWorkspace)],
+    },
+    Binding {
+        label: "t",
+        description: "new window in a git worktree…",
+        group: Group::Workspaces,
+        keys: &[(Key::plain(Char('t')), C::WorktreeWindow)],
     },
     Binding {
         label: "m",

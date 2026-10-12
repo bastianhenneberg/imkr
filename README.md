@@ -130,6 +130,17 @@ server over its socket. The window keeps its name and, if free, its number. Agen
 reporting to the session they came from, which passes it on while it runs; after that their
 state comes from what imkr sees on the screen.
 
+`Ctrl+B w t` asks for a branch and opens a window of that name in a git worktree of the focused
+pane's repository: `<repo>--<branch>` next to it, a new branch from the current commit or the
+existing one, or the worktree made before. So agents work side by side without touching each
+other's files. From a shell, also with what to run in it:
+
+```bash
+imkr worktree fix-login -- claude     # window "fix-login" in ../api--fix-login, running claude
+```
+
+Worktrees stay when the window closes; `git worktree remove` deletes one once its work is merged.
+
 | Key | Action |
 |---|---|
 | `Ctrl+B` `%` | Split the pane side by side |

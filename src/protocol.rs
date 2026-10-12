@@ -365,6 +365,13 @@ pub enum Request {
     /// Move a workspace, the active one without a number, with its running
     /// panes to session `to`, started if needed.
     MoveWindow { workspace: Option<u8>, to: String },
+    /// A new window named `name` in git worktree `name` of the repository
+    /// `cwd` is in, running `command` (the shell if empty).
+    Worktree {
+        name: String,
+        command: Vec<String>,
+        cwd: Option<PathBuf>,
+    },
     /// Start `command` (the shell if empty) in a new pane.
     New {
         command: Vec<String>,

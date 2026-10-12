@@ -198,6 +198,9 @@ Projekt-Slug: `imkr`
   Panes stehen überall hinter ihrem Window: `1 api › claude` (`window_name_of`).
   Listen gruppieren nach Rechner: `MenuItem::group` (Überschrift über dem ersten Eintrag jeder
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
+- Worktrees: `src/worktree.rs` (`create`: neben dem Haupt-Repo `<repo>--<name>`, über
+  `--git-common-dir` auch aus einem Worktree heraus), `App::worktree_window` (`Request::Worktree`,
+  `Ctrl+B w t` per `PromptFor::Worktree`). Entfernen bleibt bei git.
 - Ereignisse: `imkr subscribe` (`cli::snapshot`/`changes`, Polling per `List`, läuft mit jedem
   Server) und `[[hooks]]` in der Config (`config::Hook`, `HOOK_EVENTS`, `hook_problems`):
   `App::check_hooks` vergleicht je Tick (`HookPanes`, erster Blick feuert nichts),

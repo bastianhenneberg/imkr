@@ -675,6 +675,28 @@ pub fn move_window(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `imkr worktree NAME [-- command args...]`
+pub fn worktree(args: &[String]) -> Result<()> {
+    let (options, command) = match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (args.to_vec(), Vec::new()),
+    };
+    let [name] = options.as_slice() else {
+        bail!("usage: imkr worktree NAME [-- command args...]");
+    };
+    let reply = client::request(Request::Worktree {
+        name: name.clone(),
+        command,
+        cwd: std::env::current_dir().ok(),
+    })?;
+    println!(
+        "window {} in {}",
+        reply["window"],
+        reply["dir"].as_str().unwrap_or_default()
+    );
+    Ok(())
+}
+
 /// `imkr new [--float] [--window N] [-- command args...]`
 pub fn new(args: &[String]) -> Result<()> {
     let (options, command) = match args.iter().position(|a| a == "--") {

@@ -254,6 +254,8 @@ enum PromptFor {
     RenameHive(String),
     /// The session to move this window to.
     MoveWindow(u8),
+    /// The branch of a new worktree window.
+    Worktree,
     /// The name of a window just opened. Esc closes it again and goes back
     /// to the window it was opened from.
     NewWindow {
@@ -1662,6 +1664,7 @@ impl App {
                 workspace,
                 cwd,
             } => self.new_pane(&command, float, workspace, cwd),
+            Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
             Request::Snapshot => serde_json::to_value(self.saved()).map_err(|e| e.to_string()),
             Request::RenameSession { name } => {
                 self.rename_session(&name)?;
@@ -1821,6 +1824,23 @@ impl App {
 
     /// Starts `command` in a new pane: floating or split off the focused one,
     /// in workspace `n` or the active one. Hidden workspaces stay hidden.
+    /// Opens window `name` in git worktree `name` of the repository `cwd`
+    /// (else the focused pane's directory) is in, running `command`, and
+    /// shows it.
+    fn worktree_window(&mut self, name: &str, command: &[String], cwd: Option<PathBuf>) -> Reply {
+        let from = cwd
+            .or_else(|| self.focused_cwd())
+            .ok_or("no directory to start from")?;
+        let dir = crate::worktree::create(&from, name).map_err(|e| format!("{e:#}"))?;
+        let n = self.free_workspace().ok_or("all 9 windows are in use")?;
+        let reply = self.new_pane(command, false, Some(n), Some(dir.clone()))?;
+        if let Some(ws) = self.hidden.get_mut(&n) {
+            ws.name = Some(name.to_owned());
+        }
+        self.switch_workspace(n);
+        Ok(serde_json::json!({ "window": n, "dir": dir, "pane": reply["pane"] }))
+    }
+
     fn new_pane(
         &mut self,
         command: &[String],
@@ -2639,6 +2659,13 @@ impl App {
             Command::BreakPopup => self.pane_to_popup(),
             Command::PaneToWindow(n) => self.pane_to_window(Some(n)),
             Command::PaneToNewWindow => self.pane_to_window(None),
+            Command::WorktreeWindow => {
+                self.prompt = Some(Prompt {
+                    purpose: PromptFor::Worktree,
+                    text: String::new(),
+                });
+                self.mode = Mode::Prompt;
+            }
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::NewSession => self.new_session(),
@@ -5675,6 +5702,11 @@ impl App {
                             self.flash = Some(e);
                         }
                     }
+                    PromptFor::Worktree => {
+                        if let Err(e) = self.worktree_window(text.trim(), &[], None) {
+                            self.flash = Some(e);
+                        }
+                    }
                     PromptFor::NewSession(host) => {
                         let name = text.trim().to_owned();
                         if protocol::valid_session_name(&name) {
@@ -7421,6 +7453,7 @@ impl App {
             PromptFor::NewSession(None) => " New session ".to_owned(),
             PromptFor::NewSession(Some(host)) => format!(" New session on {host} "),
             PromptFor::MoveWindow(n) => format!(" Move window {n} to session "),
+            PromptFor::Worktree => " New window in a git worktree, branch ".to_owned(),
             PromptFor::SaveHive => " Save running sessions as hive ".to_owned(),
             PromptFor::RenameHive(old) => format!(" Rename hive {old} "),
             PromptFor::RenameSession(old) => format!(" Rename session {old} "),
@@ -7443,6 +7476,9 @@ impl App {
                     PromptFor::RenameSession(_) => "Enter rename · letters, digits, - and _",
                     PromptFor::SaveHive => "Enter save · letters, digits, - and _ · Esc cancel",
                     PromptFor::RenameHive(_) => "Enter rename · letters, digits, - and _",
+                    PromptFor::Worktree => {
+                        "Enter open · new branch from here, or the one of that name · Esc cancel"
+                    }
                 },
                 hint,
             ),
