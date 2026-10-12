@@ -5185,6 +5185,9 @@ impl App {
         self.popups.insert(name.clone(), Popup { pane: id, title });
         self.popup = Some(name);
         self.popup_shown = true;
+        // Back as a popup should look like one, not fill the screen like
+        // the window it was.
+        self.popup_full = false;
     }
 
     /// Draws the shown popup over the panes, with the cursor in it.
@@ -5206,13 +5209,28 @@ impl App {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(t.accent))
-            .title(Line::from(vec![Span::styled(
-                format!(" ◆ {title} "),
-                Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
-            )]))
+            // Full size it could pass for a window: it says what it is.
+            .title(Line::from(vec![
+                Span::styled(
+                    format!(" ◆ {title} "),
+                    Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    if self.popup_full {
+                        "popup · full "
+                    } else {
+                        "popup "
+                    },
+                    Style::new().fg(t.muted),
+                ),
+            ]))
             .title_bottom(
                 Line::styled(
-                    " ^B Space hide · z full · ! window ",
+                    if self.popup_full {
+                        " ^B Space hide · z smaller · ! window "
+                    } else {
+                        " ^B Space hide · z full · ! window "
+                    },
                     Style::new().fg(t.muted),
                 )
                 .right_aligned(),
