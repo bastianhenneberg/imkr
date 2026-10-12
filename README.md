@@ -29,6 +29,23 @@ Hive "work"                    saved, not running: a map of sessions on every ma
 Sessions, windows and panes run; a hive only remembers them, so bringing it back starts what is
 missing, on whichever machine it belongs to.
 
+## What sets imkr apart
+
+Agent status, several machines and agents messaging each other are what multiplexers for
+coding agents do now. What imkr adds on top:
+
+- **Hives, a map of every machine**: one save holds the sessions of all your machines. It is
+  shared between them, and `imkr hive restore` brings everything back from any of them, also
+  on a new machine that takes the place of an old one (`--from`, `--take`).
+- **Move windows with their programs running**: `Ctrl+B w m` hands a window to another
+  session, the processes keep running, nothing restarts (the terminal itself passes over).
+- **You are the operator**: the machine you sit at (⌂) brings its plugins and session
+  templates along to every machine you open, and every machine shows the same sidebar.
+- **Capitals show everything**: `S` sessions, `A` agents, `W` windows, `P` panes, `M` marks,
+  `H` hives, each across every session on every machine, and `Ctrl+B /` searches all of it.
+- **Live update without losing anything**: `imkr update` moves the running server to a new
+  binary, programs and screens stay, connected terminals stay connected.
+
 > **Status:** early prototype. imkr runs shells in split panes, including full-screen
 > programs like nvim, spread over windows, and keeps them running when you detach.
 
