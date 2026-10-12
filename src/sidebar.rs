@@ -884,5 +884,4 @@ mod tests {
         assert!(at("  imkr") < at("▸ peppermint-tui"));
         assert!(at("▸ peppermint-tui") < at("peppermint-verwaltung"));
     }
-
 }
