@@ -73,6 +73,12 @@ impl Pane {
     /// on a background thread, which sends `AppEvent::PtyOutput` after every
     /// chunk and `AppEvent::PtyExited(id)` at EOF.
     pub fn spawn(spawn: Spawn, events: Sender<AppEvent>) -> Result<Self> {
+        Self::spawn_after(spawn, &[], events)
+    }
+
+    /// `spawn` with `before` fed into the terminal first, e.g. the history
+    /// from before a restart.
+    pub fn spawn_after(spawn: Spawn, before: &[u8], events: Sender<AppEvent>) -> Result<Self> {
         let id = spawn.id;
         let rows = spawn.rows.max(1);
         let cols = spawn.cols.max(1);
@@ -111,7 +117,7 @@ impl Pane {
         // Drop our copy of the slave side, so the reader sees EOF once the
         // child exits.
         drop(pair.slave);
-        Self::start(id, (rows, cols), pair.master, child, &[], events)
+        Self::start(id, (rows, cols), pair.master, child, before, events)
     }
 
     /// Takes over the pane the server before `imkr update` ran, see
@@ -472,6 +478,11 @@ impl Pane {
         let all = self.text((0, 0), (total - 1, cols));
         let all: Vec<&str> = all.trim_end().lines().collect();
         all[all.len().saturating_sub(lines)..].join("\n")
+    }
+
+    /// When the program last wrote something.
+    pub fn last_output(&self) -> Instant {
+        *self.last_output.lock().unwrap()
     }
 
     pub fn screen(&self) -> MutexGuard<'_, vt100::Parser> {

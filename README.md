@@ -378,8 +378,10 @@ machine included (clients from before 0.7 keep their old code until they attach 
 imkr saves the layout to `~/.local/state/imkr/session.json` while it runs: windows,
 splits, floating panes and each pane's directory. If the server dies with the machine, the next
 `imkr` brings the layout back, shells start in their old directories, and Claude Code and
-Codex sessions known from the hooks are resumed (`claude --resume <id>`). Processes and screen
-contents cannot survive a restart. Ending the session on purpose (`Ctrl+B Q`, `kill-server`, or
+Codex sessions known from the hooks are resumed (`claude --resume <id>`). Each pane's history
+comes back too, as text above a line *restored after a restart*: the last 3000 lines are kept
+every 20 seconds in `<session>.scrollback/` next to the file, readable by you only. Processes
+cannot survive a restart. Ending the session on purpose (`Ctrl+B Q`, `kill-server`, or
 exiting the last shell) deletes the file and keeps the layout in the hive `last`.
 
 Sessions that do not run are listed with `◌`, in `Ctrl+B S` as a group of their own after the

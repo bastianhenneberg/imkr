@@ -405,6 +405,19 @@ enum AgentAt {
 /// (`None` for this one), session and pane.
 type InboxId = (Option<String>, String, PaneId);
 
+/// How often the panes' history is kept for after a restart, and how many
+/// lines of it.
+const SCROLLBACK_EVERY: Duration = Duration::from_secs(20);
+const SCROLLBACK_KEPT: usize = 3000;
+
+/// What a pane restored after a restart starts with: its history as text,
+/// then a line that says where the new shell begins.
+fn restored_history(text: &str) -> Vec<u8> {
+    let mut bytes = text.trim_end().replace('\n', "\r\n").into_bytes();
+    bytes.extend_from_slice(b"\r\n\x1b[2m\xe2\x94\x80\xe2\x94\x80 restored after a restart \xe2\x94\x80\xe2\x94\x80\x1b[0m\r\n");
+    bytes
+}
+
 /// How many lines of a waiting agent's screen the inbox shows.
 const INBOX_LINES: usize = 12;
 
@@ -580,6 +593,9 @@ pub struct App {
     /// What was saved last, to write only when something changed.
     last_saved: String,
     last_save_at: Instant,
+    /// When each pane's history was last kept for after a restart.
+    scrollback_at: HashMap<PaneId, Instant>,
+    last_scrollback_at: Instant,
     events: Sender<AppEvent>,
     title: String,
     config: Config,
@@ -677,6 +693,8 @@ impl App {
             followed: None,
             last_saved: String::new(),
             last_save_at: Instant::now(),
+            scrollback_at: HashMap::new(),
+            last_scrollback_at: Instant::now(),
             events,
             title: shell_name(),
             config,
@@ -724,6 +742,7 @@ impl App {
         if crate::server::stopped() {
             return Ok(());
         }
+        app.save_scrollback(true);
         if !app.panes.is_empty()
             && let Err(e) = persist::keep_in_last(&protocol::session_name(), app.saved())
         {
@@ -738,6 +757,10 @@ impl App {
 
     /// One shell in workspace 1.
     fn start_fresh(&mut self) -> Result<()> {
+        // History of a session by this name before is no one's now.
+        if let Some(path) = &self.state_path {
+            persist::prune_scrollback(path, &[]);
+        }
         let inner = pane_inner(self.body);
         let first = Pane::spawn(
             Spawn {
@@ -782,7 +805,11 @@ impl App {
                 let spec = saved.panes.get(&id).cloned().unwrap_or_default();
                 let cwd = spec.cwd.as_deref().map(crate::template::home_dir);
                 let inner = pane_inner(rect);
-                let spawned = Pane::spawn(
+                let before = persist::read_scrollback(&path, id)
+                    .filter(|text| !text.trim().is_empty())
+                    .map(|text| restored_history(&text))
+                    .unwrap_or_default();
+                let spawned = Pane::spawn_after(
                     Spawn {
                         id,
                         rows: inner.height,
@@ -791,6 +818,7 @@ impl App {
                         command: &[],
                         socket: &self.socket,
                     },
+                    &before,
                     self.events.clone(),
                 );
                 match spawned {
@@ -809,6 +837,8 @@ impl App {
                 }
             }
         }
+        let kept: Vec<PaneId> = self.panes.keys().copied().collect();
+        persist::prune_scrollback(&path, &kept);
         if !self.install(workspaces, saved.active) {
             return;
         }
@@ -1023,6 +1053,33 @@ impl App {
         }
     }
 
+    /// Keeps the history of every pane that wrote something since the last
+    /// time, every `SCROLLBACK_EVERY` or `now`, for `restore`. Files of
+    /// panes gone are left: at a shutdown the shells may die before the
+    /// server, `restore` drops what it does not need.
+    fn save_scrollback(&mut self, now: bool) {
+        let Some(path) = self.state_path.clone() else {
+            return;
+        };
+        if !now && self.last_scrollback_at.elapsed() < SCROLLBACK_EVERY {
+            return;
+        }
+        self.last_scrollback_at = Instant::now();
+        let popups: HashSet<PaneId> = self.popups.values().map(|p| p.pane).collect();
+        for (&id, pane) in &self.panes {
+            let written = self.scrollback_at.get(&id);
+            if popups.contains(&id) || written.is_some_and(|&at| at >= pane.last_output()) {
+                continue;
+            }
+            match persist::write_scrollback(&path, id, &pane.read(Some(SCROLLBACK_KEPT))) {
+                Ok(()) => {
+                    self.scrollback_at.insert(id, Instant::now());
+                }
+                Err(e) => eprintln!("could not keep the history of pane {id}: {e:#}"),
+            }
+        }
+    }
+
     fn event_loop(&mut self, rx: &Receiver<AppEvent>) {
         while !self.quit && !crate::server::stopped() {
             (_, self.body, self.sidebar) = self.areas(self.screen);
@@ -1042,6 +1099,7 @@ impl App {
                 *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
             }
             self.save_state();
+            self.save_scrollback(false);
             self.render();
 
             // Block for the next event, then take everything else that is
@@ -4873,6 +4931,7 @@ impl App {
         let state = persist::path().ok();
         if let (Some(from), Some(to)) = (&self.state_path, &state) {
             let _ = std::fs::rename(from, to);
+            let _ = std::fs::rename(persist::scrollback_dir(from), persist::scrollback_dir(to));
         }
         self.state_path = state;
         self.last_saved.clear();

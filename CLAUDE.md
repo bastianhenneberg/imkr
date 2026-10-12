@@ -154,7 +154,10 @@ Projekt-Slug: `imkr`
 - Persistenz: `src/persist.rs`, Datei `~/.local/state/imkr/session.json` (mit `IMKR_SOCKET`
   daneben als `<socket>.state.json`, mit `IMKR_STATE` frei wählbar). Gespeichert höchstens 1×/s
   bei Änderung, gelöscht am Ende von `App::run` (nur bewusstes Beenden kommt dort an). Test: Server
-  mit `kill -9` töten und neu starten.
+  mit `kill -9` töten und neu starten. Verlauf: `App::save_scrollback` (alle 20 s je Pane mit neuer
+  Ausgabe, 0600) nach `persist::scrollback_dir` (`<state>.scrollback/<pane>.txt`), `restore` lädt
+  ihn per `Pane::spawn_after` vor (`restored_history`) und räumt erst dann auf
+  (`prune_scrollback`) – nie im Betrieb, beim Herunterfahren sterben die Shells vor dem Server.
 - Farben nie fest verdrahten: `theme::current()` (accent, on_accent, subtle, danger, success,
   warning). Themes aus Omarchys `colors.toml` (`~/.config/omarchy/themes`, `~/.local/share/omarchy/themes`,
   aktuell: `~/.local/state/omarchy/current/`), `src/theme.rs`. Test des Live-Folgens mit falschem

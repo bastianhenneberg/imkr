@@ -213,6 +213,7 @@ pub fn revive(name: &str) -> Result<()> {
 pub fn forget(name: &str) -> Result<bool> {
     let path = path_for(name)?;
     let mut found = false;
+    prune_scrollback(&path, &[]);
     if path.exists() {
         fs::remove_file(&path)?;
         found = true;
@@ -475,6 +476,63 @@ pub fn remove(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
+/// Where the panes' history of the session saved at `state` is kept, one
+/// text file per pane. It outlives the state file: a session closed on
+/// purpose can come back from the hive `last` with its history.
+pub fn scrollback_dir(state: &Path) -> PathBuf {
+    state.with_extension("scrollback")
+}
+
+/// Keeps `text`, pane `id`'s history, readable by the user only: it holds
+/// whatever ran in the terminal.
+pub fn write_scrollback(state: &Path, id: PaneId, text: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let dir = scrollback_dir(state);
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)?;
+    let tmp = dir.join(format!("{id}.tmp"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    file.write_all(text.as_bytes())?;
+    fs::rename(&tmp, dir.join(format!("{id}.txt")))?;
+    Ok(())
+}
+
+/// Pane `id`'s history kept by `write_scrollback`, if any.
+pub fn read_scrollback(state: &Path, id: PaneId) -> Option<String> {
+    fs::read_to_string(scrollback_dir(state).join(format!("{id}.txt"))).ok()
+}
+
+/// Drops the history of every pane but `keep`, all of it when `keep` is
+/// empty.
+pub fn prune_scrollback(state: &Path, keep: &[PaneId]) {
+    let dir = scrollback_dir(state);
+    if keep.is_empty() {
+        let _ = fs::remove_dir_all(dir);
+        return;
+    }
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<PaneId>().ok());
+        if !id.is_some_and(|id| keep.contains(&id)) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,6 +646,27 @@ mod tests {
         assert!(delete_hive("beta").is_err());
         assert_eq!(saves(), ["last"]);
         unsafe { std::env::remove_var("IMKR_STATE") };
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn scrollback_is_kept_private_and_pruned() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("imkr-scroll-{}", std::process::id()));
+        let state = dir.join("work.json");
+        write_scrollback(&state, 1, "one\ntwo").unwrap();
+        write_scrollback(&state, 2, "other").unwrap();
+        assert_eq!(read_scrollback(&state, 1).as_deref(), Some("one\ntwo"));
+        let file = scrollback_dir(&state).join("1.txt");
+        assert_eq!(
+            fs::metadata(file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        prune_scrollback(&state, &[2]);
+        assert_eq!(read_scrollback(&state, 1), None);
+        assert_eq!(read_scrollback(&state, 2).as_deref(), Some("other"));
+        prune_scrollback(&state, &[]);
+        assert!(!scrollback_dir(&state).exists());
         let _ = fs::remove_dir_all(dir);
     }
 }
