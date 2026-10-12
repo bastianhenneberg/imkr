@@ -256,6 +256,9 @@ pub struct MenuItem {
     pub apart: bool,
     /// A colour of its own, e.g. an agent's state as the sidebar shows it.
     pub color: Option<ratatui::style::Color>,
+    /// The group it belongs to, e.g. its machine: a heading goes above the
+    /// first item of each group. Groups follow each other in the list.
+    pub group: Option<String>,
 }
 
 /// The quit menu in the middle of `area`, `selected` highlighted.
@@ -298,7 +301,22 @@ pub fn draw_choices(
     let row_width = 3 + GAP + title_width + GAP + hint_width;
 
     let mut lines = Vec::new();
+    let mut group: Option<&str> = None;
     for (i, item) in items.iter().enumerate() {
+        if let Some(name) = item.group.as_deref()
+            && group != Some(name)
+        {
+            group = Some(name);
+            if i > 0 {
+                lines.push(Line::default());
+            }
+            lines.push(Line::styled(
+                format!(" {name}"),
+                Style::new()
+                    .fg(theme::current().cyan)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
         if item.apart && i > 0 {
             lines.push(Line::styled(
                 "─".repeat(row_width),
@@ -580,6 +598,7 @@ mod tests {
             danger: false,
             apart: false,
             color: None,
+            group: None,
         }];
         let keys = [("Enter", "switch"), ("r", "rename"), ("Esc", "cancel")];
         let screen = render(80, 20, |f, a| {

@@ -143,6 +143,21 @@ enum Spot {
 /// the hint, its agents by state, and what it says when it does not run.
 type SessionEntry = (Place, String, BTreeMap<String, usize>, Option<String>);
 
+/// An agent in the agent list before it becomes a line: its state, how
+/// long, where it leads, its label, its session and its machine.
+type AgentEntry = (
+    AgentState,
+    Duration,
+    AgentAt,
+    String,
+    String,
+    Option<String>,
+);
+
+/// A pane in the pane list before it becomes a line: where it leads, its
+/// label, its agent's state, the hint and its machine.
+type PaneEntry = (Spot, String, Option<AgentState>, String, Option<String>);
+
 /// A window in the window list, before it becomes a line.
 struct WindowEntry {
     spot: Spot,
@@ -150,8 +165,10 @@ struct WindowEntry {
     name: String,
     states: Vec<AgentState>,
     programs: Vec<String>,
-    /// Where it is, e.g. `⌂ laptop · api`.
+    /// Where it is in its machine: `shown`, `this session` or the session.
     at: String,
+    /// Its machine, the group it is listed under.
+    group: Option<String>,
 }
 
 /// The key of entry `i` in a list: 1 to 9, then none.
@@ -3305,7 +3322,7 @@ impl App {
                 entries.push((place, format!("⇄ {host}"), session.agents.clone(), dormant));
             }
         }
-        let (places, mut items): (Vec<Place>, Vec<menu::MenuItem>) = entries
+        let (places, items): (Vec<Place>, Vec<menu::MenuItem>) = entries
             .into_iter()
             .enumerate()
             .map(|(i, (place, hint, agents, dormant))| {
@@ -3322,6 +3339,7 @@ impl App {
                         danger: false,
                         apart: false,
                         color: Some(theme::current().muted),
+                        group: None,
                     };
                     return (place, item);
                 }
@@ -3363,7 +3381,37 @@ impl App {
                     danger: false,
                     apart: false,
                     color: urgent.and_then(|state| sidebar::state_style(state).fg),
+                    group: None,
                 };
+                (place, item)
+            })
+            .unzip();
+        // Grouped by machine under its name, which leaves the hints; what
+        // does not run is a group of its own at the end.
+        let mut grouped: Vec<(Place, menu::MenuItem)> = places
+            .into_iter()
+            .zip(items)
+            .map(|(place, mut item)| {
+                let asleep = item.title.starts_with('◌');
+                let machine = self.machine_label(place.host.as_deref());
+                if asleep {
+                    item.group = Some("◌ not running".into());
+                } else if let Some(machine) = machine {
+                    item.hint = item
+                        .hint
+                        .replace(&format!(" · {machine}"), "")
+                        .replace(&machine, "");
+                    item.group = Some(machine);
+                }
+                (place, item)
+            })
+            .collect();
+        grouped.sort_by_key(|(_, item)| item.title.starts_with('◌'));
+        let (places, mut items): (Vec<Place>, Vec<menu::MenuItem>) = grouped
+            .into_iter()
+            .enumerate()
+            .map(|(i, (place, mut item))| {
+                item.key = list_key_char(i);
                 (place, item)
             })
             .unzip();
@@ -3374,6 +3422,7 @@ impl App {
             danger: false,
             apart: true,
             color: None,
+            group: None,
         });
         (places, items)
     }
@@ -3452,6 +3501,7 @@ impl App {
                     danger: false,
                     apart: false,
                     color: None,
+                    group: None,
                 }
             })
             .collect();
@@ -3529,6 +3579,7 @@ impl App {
                 danger: false,
                 apart: false,
                 color: None,
+                group: None,
             })
             .collect();
         (templates, items)
@@ -3835,6 +3886,7 @@ impl App {
                     danger: false,
                     apart: false,
                     color: None,
+                    group: None,
                 }
             })
             .collect()
@@ -3884,7 +3936,8 @@ impl App {
     /// where it is, for `agents_key`.
     fn agent_choices(&self) -> (Vec<AgentAt>, Vec<menu::MenuItem>) {
         let now = Instant::now();
-        let mut all: Vec<(AgentState, Duration, AgentAt, String, String)> = Vec::new();
+        let mut all: Vec<AgentEntry> = Vec::new();
+        let here = self.machine_label(None);
         for (&id, &(_, since)) in &self.agents {
             let (Some(pane), Some(state), Some(n)) = (
                 self.panes.get(&id),
@@ -3910,25 +3963,35 @@ impl App {
                 AgentAt::Here(id),
                 program,
                 "this session".into(),
+                here.clone(),
             ));
         }
         for (i, (place, agent)) in self.other_agents().into_iter().enumerate() {
             let Some(state) = AgentState::from_name(&agent.state) else {
                 continue;
             };
-            let machine = match self.machine_label(place.host.as_deref()) {
-                Some(machine) => format!("{machine} · "),
-                None => String::new(),
-            };
-            let at = format!("{machine}{}", place.name);
+            let group = self.machine_label(place.host.as_deref());
             let program = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
             let since = Duration::from_secs(agent.since);
-            all.push((state, since, AgentAt::Other(i), program, at));
+            all.push((state, since, AgentAt::Other(i), program, place.name, group));
         }
-        all.sort_by_key(|(state, since, ..)| (sidebar::urgency(*state), std::cmp::Reverse(*since)));
+        // By machine, this one first, and within each those waiting first.
+        let mut machines: Vec<Option<String>> = Vec::new();
+        for entry in &all {
+            if !machines.contains(&entry.5) {
+                machines.push(entry.5.clone());
+            }
+        }
+        all.sort_by_key(|(state, since, .., group)| {
+            (
+                machines.iter().position(|m| m == group),
+                sidebar::urgency(*state),
+                std::cmp::Reverse(*since),
+            )
+        });
         all.into_iter()
             .enumerate()
-            .map(|(i, (state, since, at, program, place))| {
+            .map(|(i, (state, since, at, program, place, group))| {
                 let item = menu::MenuItem {
                     key: if i < 9 {
                         char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
@@ -3940,13 +4003,13 @@ impl App {
                     danger: state == AgentState::Blocked,
                     apart: false,
                     color: sidebar::state_style(state).fg,
+                    group,
                 };
                 (at, item)
             })
             .unzip()
     }
 
-    /// Enter or a digit goes to that agent, here or wherever it runs.
     /// The panes of every other session, here and on the other machines,
     /// with where they are. Sessions from versions before list only their
     /// agents.
@@ -3981,15 +4044,6 @@ impl App {
             }
         }
         out
-    }
-
-    /// "machine · session" for a list entry elsewhere, the machine left out
-    /// when there is only this one.
-    fn where_label(&self, place: &Place) -> String {
-        match self.machine_label(place.host.as_deref()) {
-            Some(machine) => format!("{machine} · {}", place.name),
-            None => place.name.clone(),
-        }
     }
 
     /// Every window everywhere: this session's first, then those of the
@@ -4033,6 +4087,7 @@ impl App {
                 states,
                 programs,
                 at,
+                group: self.machine_label(None),
             });
         }
         let mut groups: Vec<(Place, u8, Vec<protocol::AgentInfo>)> = Vec::new();
@@ -4051,14 +4106,14 @@ impl App {
                 .filter_map(|p| AgentState::from_name(&p.state))
                 .collect();
             let programs = panes.iter().map(|p| p.program.clone()).collect();
-            let at = self.where_label(&place);
             entries.push(WindowEntry {
+                at: place.name.clone(),
+                group: self.machine_label(place.host.as_deref()),
                 spot: Spot::Elsewhere(place, panes[0].pane),
                 number: n,
                 name: panes[0].dir.clone(),
                 states,
                 programs,
-                at,
             });
         }
         entries
@@ -4072,6 +4127,7 @@ impl App {
                     states,
                     programs,
                     at,
+                    group,
                 } = entry;
                 let urgent = states.iter().copied().min_by_key(|s| sidebar::urgency(*s));
                 let mut hint = vec![at];
@@ -4090,6 +4146,7 @@ impl App {
                     danger: false,
                     apart: false,
                     color: urgent.and_then(|state| sidebar::state_style(state).fg),
+                    group,
                 };
                 (spot, item)
             })
@@ -4099,7 +4156,8 @@ impl App {
     /// Every pane everywhere: this session's, then those of the other
     /// sessions on every machine, each after its window.
     fn pane_items(&self) -> (Vec<Spot>, Vec<menu::MenuItem>) {
-        let mut entries: Vec<(Spot, String, Option<AgentState>, String)> = Vec::new();
+        let mut entries: Vec<PaneEntry> = Vec::new();
+        let here = self.machine_label(None);
         for n in self.workspaces() {
             let Some(ws) = self.workspace_ref(n) else {
                 continue;
@@ -4120,22 +4178,24 @@ impl App {
                     format!("{n} {window} › {program}"),
                     self.shown_state(id),
                     format!("this session · pane {id} · {dir}"),
+                    here.clone(),
                 ));
             }
         }
         for (place, pane) in self.other_panes() {
-            let at = self.where_label(&place);
+            let group = self.machine_label(place.host.as_deref());
             entries.push((
-                Spot::Elsewhere(place, pane.pane),
+                Spot::Elsewhere(place.clone(), pane.pane),
                 format!("{} {} › {}", pane.workspace, pane.dir, pane.program),
                 AgentState::from_name(&pane.state),
-                at,
+                place.name,
+                group,
             ));
         }
         entries
             .into_iter()
             .enumerate()
-            .map(|(i, (spot, label, state, hint))| {
+            .map(|(i, (spot, label, state, hint, group))| {
                 let item = menu::MenuItem {
                     key: list_key_char(i),
                     title: match state {
@@ -4146,6 +4206,7 @@ impl App {
                     danger: false,
                     apart: false,
                     color: state.and_then(|state| sidebar::state_style(state).fg),
+                    group,
                 };
                 (spot, item)
             })
@@ -4207,6 +4268,7 @@ impl App {
         }
     }
 
+    /// Enter or a digit goes to that agent, here or wherever it runs.
     fn agents_key(&mut self, key: KeyEvent, selected: usize) {
         let (targets, _) = self.agent_choices();
         let count = targets.len().max(1);
@@ -4257,6 +4319,7 @@ impl App {
                 danger: false,
                 apart: false,
                 color: None,
+                group: None,
             })
             .collect();
         items.push(menu::MenuItem {
@@ -4266,6 +4329,7 @@ impl App {
             danger: false,
             apart: true,
             color: None,
+            group: None,
         });
         (names, items)
     }
@@ -4349,6 +4413,7 @@ impl App {
                     danger: false,
                     apart: false,
                     color: None,
+                    group: None,
                 }
             })
             .collect();
@@ -6505,6 +6570,7 @@ impl App {
                         danger: false,
                         apart: false,
                         color: None,
+                        group: None,
                     });
                 }
                 self.draw_list(
@@ -6548,6 +6614,7 @@ impl App {
                         danger: false,
                         apart: false,
                         color: None,
+                        group: None,
                     });
                 }
                 self.draw_list(
@@ -6580,6 +6647,7 @@ impl App {
                         danger: false,
                         apart: false,
                         color: None,
+                        group: None,
                     });
                 }
                 self.draw_list(
@@ -6731,6 +6799,7 @@ impl App {
                 danger: false,
                 apart: false,
                 color: None,
+                group: None,
             });
         }
         let title = format!("{title}· /{query}▏ ");
@@ -6748,6 +6817,7 @@ impl App {
                     danger: false,
                     apart: false,
                     color: None,
+                    group: None,
                 },
                 MenuEntry::ClosePane => menu::MenuItem {
                     key,
@@ -6756,6 +6826,7 @@ impl App {
                     danger: true,
                     apart: false,
                     color: None,
+                    group: None,
                 },
                 MenuEntry::EndSession => menu::MenuItem {
                     key,
@@ -6767,6 +6838,7 @@ impl App {
                     danger: true,
                     apart: false,
                     color: None,
+                    group: None,
                 },
             })
             .collect()
@@ -7879,6 +7951,7 @@ mod tests {
             danger: false,
             apart: false,
             color: None,
+            group: None,
         };
         assert!(list_matches(&item, ""));
         assert!(list_matches(&item, "BRA"));

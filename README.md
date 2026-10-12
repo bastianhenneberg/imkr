@@ -378,7 +378,8 @@ Codex sessions known from the hooks are resumed (`claude --resume <id>`). Proces
 contents cannot survive a restart. Ending the session on purpose (`Ctrl+B Q`, `kill-server`, or
 exiting the last shell) deletes the file and keeps the layout in the hive `last`.
 
-Sessions that do not run are listed with `◌`, in `Ctrl+B S`, the sidebar and `imkr ls`:
+Sessions that do not run are listed with `◌`, in `Ctrl+B S` as a group of their own after the
+running ones, in the sidebar and in `imkr ls`:
 *stopped* ones (the machine restarted, or the server crashed) and *closed* ones (ended on
 purpose). Enter brings one back with its layout and agents, `x` forgets it. From a shell:
 
