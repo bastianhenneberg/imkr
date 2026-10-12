@@ -39,6 +39,15 @@ pub struct Handover {
     /// Every attached client.
     #[serde(default)]
     pub clients: Vec<HandoverClient>,
+    /// The popups: name, pane and title.
+    #[serde(default)]
+    pub popups: Vec<(String, PaneId, String)>,
+    /// The popup shown or shown last, and whether it is shown now.
+    #[serde(default)]
+    pub popup: Option<(String, bool)>,
+    /// Whether popups fill everything but the bars.
+    #[serde(default)]
+    pub popup_full: bool,
     pub focus_mode: bool,
     pub saved: Saved,
     pub panes: BTreeMap<PaneId, HandoverPane>,

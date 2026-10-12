@@ -52,6 +52,10 @@ pub enum Command {
     MoveWorkspace,
     /// Number the windows 1, 2, 3 … again, closing the gaps.
     RenumberWorkspaces,
+    /// Show or hide the popup used last.
+    TogglePopup,
+    /// Turn the shown popup into a pane of a window of its own.
+    BreakPopup,
     /// Give the sidebar the keyboard.
     FocusSidebar,
     /// Show or hide the sidebar.
@@ -271,7 +275,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         label: "z",
-        description: "zoom pane",
+        description: "zoom pane / popup",
         group: Group::Panes,
         keys: &[(Key::plain(Char('z')), C::Zoom)],
     },
@@ -400,6 +404,18 @@ pub const BINDINGS: &[Binding] = &[
         description: "focus mode",
         group: Group::View,
         keys: &[(Key::plain(Char('F')), C::FocusMode)],
+    },
+    Binding {
+        label: "Space",
+        description: "popup show/hide",
+        group: Group::View,
+        keys: &[(Key::plain(KeyCode::Char(' ')), C::TogglePopup)],
+    },
+    Binding {
+        label: "!",
+        description: "popup into a window",
+        group: Group::View,
+        keys: &[(Key::plain(Char('!')), C::BreakPopup)],
     },
     Binding {
         label: "q",

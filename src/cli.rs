@@ -260,6 +260,31 @@ pub fn rename(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `imkr popup [--name N] [--title T] [-- command args...]`: shows the
+/// popup `N`, or hides it if it is shown; the first time it starts the
+/// command (the shell without one) in this directory.
+pub fn popup(args: &[String]) -> Result<()> {
+    let (options, command) = match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (args.to_vec(), Vec::new()),
+    };
+    let mut options = options;
+    let title = take_value(&mut options, "--title")?;
+    let name = take_value(&mut options, "--name")?
+        .or_else(|| command.first().cloned())
+        .unwrap_or_else(|| "shell".into());
+    if let Some(unknown) = options.first() {
+        bail!("unknown option {unknown:?}, put the command after --");
+    }
+    client::request(Request::Popup {
+        name,
+        title,
+        command,
+        cwd: std::env::current_dir().ok(),
+    })?;
+    Ok(())
+}
+
 /// `imkr move-window [--window N] [--to] SESSION`: moves a window with its
 /// running panes to another session, started if needed.
 pub fn move_window(args: &[String]) -> Result<()> {

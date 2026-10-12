@@ -56,6 +56,12 @@ Projekt-Slug: `imkr`
   `pass_on` mit einfachem read/write. Test ohne sshd: Fake-`ssh` im Scratchpad vorn im PATH, der
   bis `--` überspringt und den Befehl mit `SHELL=/bin/sh sh -c` ausführt. Socket-Pfade max. 108
   Zeichen: für `XDG_RUNTIME_DIR` im Test ein kurzes Verzeichnis nehmen.
+- Popups (`App::popups`, `popup`, `popup_shown`): Panes in `panes`, aber in keinem Workspace;
+  `input_pane()` statt `ws.focus` für Tasten/Paste, `popup_rect()` für Größe/Maus, `draw_popup`
+  nach den Leisten. Nicht in `saved()` (Persistenz), aber im Handover (`popups`, `popup`), sonst
+  enden sie beim Update wie ein Pane ohne Platz. `close()` entfernt sie. `popup_full` (Ctrl+B z
+  über einem Popup) = Panes + Sidebar, `break_popup` (Ctrl+B !) macht ein Window daraus. Basis
+  für Plugins.
 - Mehrere Rechner in einem imkr: Hosts aus `Config::hosts` + gemerkte (`client::remembered_hosts`,
   `~/.local/state/imkr/hosts`). Thread `watch_places` füllt `App::places` (lokal alle 2 s per
   `client::local_sessions`, Hosts alle 15 s per `ssh … imkr ls --json`). Sidebar-Abschnitt

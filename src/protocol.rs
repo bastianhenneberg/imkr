@@ -159,6 +159,14 @@ pub enum Request {
     /// Replace the server with the binary at `exe`, keeping the session,
     /// see `upgrade`.
     Upgrade { exe: PathBuf },
+    /// Show or hide the popup `name`, starting `command` (the shell if
+    /// empty) in it the first time, titled `title`.
+    Popup {
+        name: String,
+        title: Option<String>,
+        command: Vec<String>,
+        cwd: Option<PathBuf>,
+    },
     /// Move a workspace, the active one without a number, with its running
     /// panes to session `to`, started if needed.
     MoveWindow { workspace: Option<u8>, to: String },

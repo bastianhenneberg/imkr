@@ -98,6 +98,8 @@ state comes from what imkr sees on the screen.
 | `Ctrl+B` `f` … | Floating panes menu: `f` float/tile, `n` new, `o` next, arrows move |
 | `Ctrl+B` `Shift+←↑↓→` | Move a floating pane |
 | `Ctrl+B` `n` | New window, asks for its name right away (Esc closes it again) |
+| `Ctrl+B` `Space` | Show or hide the popup used last |
+| `Ctrl+B` `z` / `!` | Over a popup: fill everything but the bars / turn it into a window of its own |
 | `Ctrl+B` `w` … | Windows menu: `1`–`9`, `c` new, `n`/`p` next/previous, `m` move to another session, `=` renumber 1, 2, 3 … |
 | `Ctrl+B` `1`–`9` | Go to window, an empty one starts a shell |
 | `Ctrl+B` `←↑↓→` | Focus the pane in that direction |
@@ -182,6 +184,17 @@ imkr notify --title build "done in 42 s"  # with a title of its own
 
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.
+
+## Popups
+
+A popup is a pane outside every window, shown over the active one: a TUI you want at hand
+without giving it a pane or a window. `imkr popup --name pm -- peppermint-tui` starts it the
+first time and shows it; the same command, or `Ctrl+B Space`, hides it and shows it again. It
+keeps running while hidden, so the program keeps its state, and it survives `imkr update`. Keys,
+pastes and the mouse go to it while it is shown; a click outside hides it. `Ctrl+B z` makes it
+fill everything but the bars, sidebar included, and back. `Ctrl+B !` turns it into the pane of a
+window of its own, named after it, for when it should stay. It closes when its program ends.
+Plugins build on this.
 
 ## Other machines
 

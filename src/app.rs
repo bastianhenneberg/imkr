@@ -237,6 +237,13 @@ impl Place {
     }
 }
 
+/// A pane outside every window, shown over the active one on demand, e.g.
+/// a plugin's TUI. It runs on while hidden.
+struct Popup {
+    pane: PaneId,
+    title: String,
+}
+
 /// How often the sessions here and on other machines are listed again.
 const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(15);
@@ -341,6 +348,12 @@ pub struct App {
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
+    /// The popups by name, and the one shown, if any, or shown last.
+    popups: BTreeMap<String, Popup>,
+    popup: Option<String>,
+    popup_shown: bool,
+    /// Popups fill everything but the bars, toggled with `Ctrl+B z`.
+    popup_full: bool,
     /// The other sessions, here and elsewhere, kept up to date by a thread.
     places: Arc<Mutex<Places>>,
     /// The hosts from the settings, for that thread.
@@ -444,6 +457,10 @@ impl App {
             socket,
             moved: HashMap::new(),
             places: Arc::default(),
+            popups: BTreeMap::new(),
+            popup: None,
+            popup_shown: false,
+            popup_full: false,
             watched_hosts: Arc::default(),
             first_shell: None,
             agents: HashMap::new(),
@@ -644,6 +661,25 @@ impl App {
                 }
             }
         }
+        for (name, id, title) in handover.popups {
+            let Some(rest) = handed.remove(&id) else {
+                continue;
+            };
+            match Pane::adopt(id, &rest, self.events.clone()) {
+                Ok(pane) => {
+                    self.panes.insert(id, pane);
+                    self.popups.insert(name, Popup { pane: id, title });
+                }
+                Err(e) => eprintln!("update: could not take over popup {name}: {e:#}"),
+            }
+        }
+        self.popup_full = handover.popup_full;
+        if let Some((name, shown)) = handover.popup
+            && self.popups.contains_key(&name)
+        {
+            self.popup = Some(name);
+            self.popup_shown = shown;
+        }
         // A pane without a place in the layout ends like a closed one.
         for (id, rest) in handed {
             if let Ok(pane) = Pane::adopt(id, &rest, self.events.clone()) {
@@ -715,6 +751,13 @@ impl App {
             screen: (self.screen.width, self.screen.height),
             caps: clients.first().map(|c| c.caps.clone()).unwrap_or_default(),
             clients,
+            popups: self
+                .popups
+                .iter()
+                .map(|(name, p)| (name.clone(), p.pane, p.title.clone()))
+                .collect(),
+            popup: self.popup.clone().map(|name| (name, self.popup_shown)),
+            popup_full: self.popup_full,
             focus_mode: self.focus_mode,
             saved: self.saved(),
             panes,
@@ -728,9 +771,11 @@ impl App {
     fn saved(&self) -> Saved {
         let mut workspaces = self.hidden.clone();
         workspaces.insert(self.workspace, self.ws.clone());
+        let popups: HashSet<PaneId> = self.popups.values().map(|p| p.pane).collect();
         let panes = self
             .panes
             .iter()
+            .filter(|(id, _)| !popups.contains(id))
             .map(|(&id, pane)| {
                 let argv = pane.foreground_argv();
                 let saved = SavedPane {
@@ -823,6 +868,12 @@ impl App {
 
     /// Gives every pty the size of the area inside its pane's border.
     fn sync_sizes(&mut self) {
+        if let Some(id) = self.shown_popup() {
+            let inner = pane_inner(self.popup_rect());
+            if let Some(pane) = self.panes.get_mut(&id) {
+                let _ = pane.resize(inner.height, inner.width);
+            }
+        }
         for (id, rect) in self.rects_of(&self.ws) {
             let inner = self.inner(rect);
             if let Some(pane) = self.panes.get_mut(&id)
@@ -1124,6 +1175,16 @@ impl App {
             }
             Request::List => Ok(self.list()),
             Request::Rename { target, name } => self.rename(target, name),
+            Request::Popup {
+                name,
+                title,
+                command,
+                cwd,
+            } => {
+                self.toggle_popup(&name, title, &command, cwd.as_deref())
+                    .map_err(|e| format!("{e:#}"))?;
+                Ok(serde_json::json!({ "popup": name, "shown": self.popup_shown }))
+            }
             Request::OpenSessions => {
                 self.open_sessions();
                 Ok(serde_json::json!({}))
@@ -1733,7 +1794,8 @@ impl App {
                 }
                 self.flash = None;
                 self.selection = None;
-                let Some(pane) = self.panes.get_mut(&self.ws.focus) else {
+                let target = self.input_pane();
+                let Some(pane) = self.panes.get_mut(&target) else {
                     return Ok(());
                 };
                 // Typing brings a scrolled back pane to its live screen.
@@ -1792,7 +1854,10 @@ impl App {
             Command::CopyMode => self.enter_copy(),
             Command::JumpToWaiting => self.jump_to_waiting(),
             Command::RenamePane => self.start_prompt(RenameTarget::Pane(self.ws.focus)),
+            // Over a popup, zoom makes it fill everything but the bars.
+            Command::Zoom if self.shown_popup().is_some() => self.popup_full = !self.popup_full,
             Command::Zoom => self.ws.toggle_zoom(),
+            Command::BreakPopup => self.break_popup(),
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::NewSession => {
@@ -1847,6 +1912,13 @@ impl App {
             }
             Command::RenameWorkspace => self.start_prompt(RenameTarget::Workspace(self.workspace)),
             Command::MoveWorkspace => self.mode = Mode::MoveTo(self.workspace, 0),
+            Command::TogglePopup => match self.popup.clone() {
+                Some(_) => self.popup_shown = !self.popup_shown,
+                None => {
+                    self.flash =
+                        Some("no popup open yet: plugins and `imkr popup` open them".into())
+                }
+            },
             Command::RenumberWorkspaces => {
                 self.flash = Some(if self.renumber_windows() {
                     "windows renumbered".into()
@@ -2233,6 +2305,16 @@ impl App {
             return Ok(());
         }
         let pos = Position::new(event.column, event.row);
+        // A popup takes the mouse inside it; a click outside hides it.
+        if let Some(popup) = self.shown_popup() {
+            let inner = pane_inner(self.popup_rect());
+            if inner.contains(pos) {
+                self.forward_mouse(popup, event, inner)?;
+            } else if matches!(event.kind, MouseEventKind::Down(_)) {
+                self.popup_shown = false;
+            }
+            return Ok(());
+        }
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.selection = None;
@@ -3451,7 +3533,9 @@ impl App {
         }
 
         let mut wanted: Placements = HashMap::new();
-        let quiet = matches!(self.mode, Mode::Normal | Mode::Repeat(..) | Mode::Copy);
+        // Nothing may be drawn over them, a popup included.
+        let quiet = matches!(self.mode, Mode::Normal | Mode::Repeat(..) | Mode::Copy)
+            && self.shown_popup().is_none();
         if enabled && quiet {
             let rects = self.rects_of(&self.ws);
             for (i, &(id, rect)) in rects.iter().enumerate() {
@@ -3912,6 +3996,19 @@ impl App {
         if self.panes.remove(&id).is_none() {
             return;
         }
+        // A popup whose program ended goes with it.
+        if let Some(name) = self
+            .popups
+            .iter()
+            .find_map(|(name, p)| (p.pane == id).then(|| name.clone()))
+        {
+            self.popups.remove(&name);
+            if self.popup.as_deref() == Some(name.as_str()) {
+                self.popup = self.popups.keys().next().cloned();
+                self.popup_shown = false;
+            }
+            return;
+        }
 
         if !self.ws.contains(id) {
             let Some(n) = self
@@ -4022,6 +4119,142 @@ impl App {
         self.ws = ws;
     }
 
+    /// The popup shown now, if any.
+    fn shown_popup(&self) -> Option<PaneId> {
+        let name = self.popup.as_ref().filter(|_| self.popup_shown)?;
+        self.popups.get(name).map(|p| p.pane)
+    }
+
+    /// The pane that keys and pastes go to: the shown popup, else the
+    /// focused pane.
+    fn input_pane(&self) -> PaneId {
+        self.shown_popup().unwrap_or(self.ws.focus)
+    }
+
+    /// Where a popup is drawn: most of the panes' area, centred, or with
+    /// `popup_full` the panes' area and the sidebar's.
+    fn popup_rect(&self) -> Rect {
+        let area = self.body;
+        if self.popup_full {
+            return match self.sidebar {
+                Some(sidebar) => area.union(sidebar),
+                None => area,
+            };
+        }
+        let width = (area.width * 17 / 20).max(20).min(area.width);
+        let height = (area.height * 17 / 20).max(6).min(area.height);
+        Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        )
+    }
+
+    /// Shows popup `name`, or hides it if it is shown. The first time it
+    /// starts `command` in the focused pane's directory, or in `cwd`.
+    fn toggle_popup(
+        &mut self,
+        name: &str,
+        title: Option<String>,
+        command: &[String],
+        cwd: Option<&std::path::Path>,
+    ) -> Result<()> {
+        if self.popups.contains_key(name) {
+            let same = self.popup.as_deref() == Some(name);
+            self.popup_shown = !(same && self.popup_shown);
+            self.popup = Some(name.to_owned());
+            return Ok(());
+        }
+        let inner = pane_inner(self.popup_rect());
+        let id = self.next_id;
+        let here = self.focused_cwd();
+        let pane = Pane::spawn(
+            Spawn {
+                id,
+                rows: inner.height,
+                cols: inner.width,
+                cwd: cwd.or(here.as_deref()),
+                command,
+                socket: &self.socket,
+            },
+            self.events.clone(),
+        )?;
+        self.next_id += 1;
+        self.panes.insert(id, pane);
+        let title = title.unwrap_or_else(|| name.to_owned());
+        self.popups
+            .insert(name.to_owned(), Popup { pane: id, title });
+        self.popup = Some(name.to_owned());
+        self.popup_shown = true;
+        Ok(())
+    }
+
+    /// Turns the shown popup into the only pane of a new window, named
+    /// after it and shown. Its program runs on.
+    fn break_popup(&mut self) {
+        let Some(id) = self.shown_popup() else {
+            self.flash = Some("no popup is shown".into());
+            return;
+        };
+        let Some(n) = self.free_workspace() else {
+            self.flash = Some("all 9 windows are in use".into());
+            return;
+        };
+        let Some(name) = self.popup.take() else {
+            return;
+        };
+        let title = self.popups.remove(&name).map(|p| p.title);
+        self.popup = self.popups.keys().next().cloned();
+        self.popup_shown = false;
+        let mut ws = Workspace::new(id);
+        ws.name = title;
+        self.hidden.insert(n, ws);
+        self.switch_workspace(n);
+    }
+
+    /// Draws the shown popup over the panes, with the cursor in it.
+    fn draw_popup(&self, frame: &mut Frame) {
+        let Some(id) = self.shown_popup() else {
+            return;
+        };
+        let (Some(pane), Some(name)) = (self.panes.get(&id), &self.popup) else {
+            return;
+        };
+        let rect = self.popup_rect();
+        let inner = pane_inner(rect);
+        let t = theme::current();
+        let title = self
+            .popups
+            .get(name)
+            .map_or(name.as_str(), |p| p.title.as_str());
+        frame.render_widget(Clear, rect);
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(t.accent))
+            .title(Line::from(vec![Span::styled(
+                format!(" ◆ {title} "),
+                Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
+            )]))
+            .title_bottom(
+                Line::styled(
+                    " ^B Space hide · z full · ! window ",
+                    Style::new().fg(t.muted),
+                )
+                .right_aligned(),
+            );
+        frame.render_widget(block, rect);
+        let parser = pane.screen();
+        let view = ScreenView::new(parser.screen());
+        let cursor = view.cursor(inner);
+        frame.render_widget(view, inner);
+        if matches!(self.mode, Mode::Normal | Mode::Repeat(..))
+            && let Some(position) = cursor
+        {
+            frame.set_cursor_position(position);
+        }
+    }
+
     /// Numbers the windows 1, 2, 3 … in their order, closing gaps. Whatever
     /// refers to a window by number follows. False if nothing changed.
     fn renumber_windows(&mut self) -> bool {
@@ -4062,7 +4295,8 @@ impl App {
     }
 
     fn paste(&mut self, text: &str) -> Result<()> {
-        let Some(pane) = self.panes.get_mut(&self.ws.focus) else {
+        let target = self.input_pane();
+        let Some(pane) = self.panes.get_mut(&target) else {
             return Ok(());
         };
         pane.note_input();
@@ -4201,6 +4435,7 @@ impl App {
         if let Some(area) = screen.bottom {
             self.draw_bar(frame, area, Placement::Bottom);
         }
+        self.draw_popup(frame);
         if self.focus_mode {
             self.draw_focus_overlay(frame, frame.area());
         }

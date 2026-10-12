@@ -72,6 +72,9 @@ For scripts and agents:
                                         name a pane or a window
   move-window [--window N] <session>    move a window with its running panes to
                                         another session, started if needed
+  popup [--name N] [--title T] [-- command args...]
+                                        show or hide a popup running the command,
+                                        started the first time; Ctrl+B Space too
   read [--pane N] [--lines N]           print a pane's screen, or its last N lines
   wait [--pane N] --until <state> [--timeout S]
                                         wait for an agent: working, blocked, idle,
@@ -146,6 +149,7 @@ fn main() -> Result<()> {
         ["new", ..] => cli::new(&args[1..]),
         ["rename", ..] => cli::rename(&args[1..]),
         ["move-window", ..] => cli::move_window(&args[1..]),
+        ["popup", ..] => cli::popup(&args[1..]),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks"] => cli::hooks(),
