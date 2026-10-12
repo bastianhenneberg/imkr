@@ -1638,12 +1638,12 @@ impl App {
             other_agents: self
                 .other_agents()
                 .into_iter()
-                .filter_map(|(place, agent)| {
+                .enumerate()
+                .filter_map(|(index, (place, agent))| {
                     Some(sidebar::OtherAgentRow {
-                        place: match self.machine_label(place.host.as_deref()) {
-                            Some(machine) => format!("{machine} · {}", place.name),
-                            None => place.name.clone(),
-                        },
+                        machine: self.machine_label(place.host.as_deref()),
+                        session: place.name,
+                        index,
                         program: agent.program,
                         workspace: agent.workspace,
                         dir: agent.dir,
@@ -1652,6 +1652,8 @@ impl App {
                     })
                 })
                 .collect(),
+            here: self.machine_label(None),
+            session: protocol::session_name(),
             popups: self.popup_rows(),
             agents,
             branch,

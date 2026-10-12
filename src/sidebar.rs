@@ -76,9 +76,12 @@ pub struct AgentRow {
 
 /// An agent of another session, here or on another machine.
 pub struct OtherAgentRow {
-    /// Where it runs: the session, with the machine in front if it is not
-    /// the one the user sits at.
-    pub place: String,
+    /// The machine as the user sees it (`⌂ …`, `⇄ …`), `None` for this one
+    /// when no other is known.
+    pub machine: Option<String>,
+    pub session: String,
+    /// Its index among `App::other_agents`, which a click goes to.
+    pub index: usize,
     pub program: String,
     pub workspace: u8,
     pub dir: String,
@@ -95,7 +98,11 @@ pub struct Data {
     pub sessions: Vec<SessionRow>,
     /// The popups, shown only when there are any.
     pub popups: Vec<PopupRow>,
+    /// This session's agents, and this machine and session as their
+    /// heading reads.
     pub agents: Vec<AgentRow>,
+    pub here: Option<String>,
+    pub session: String,
     pub branch: Option<String>,
     /// Changed files in the focused pane's repository, as `git status`
     /// shows them: two status letters and the path from the repository root.
@@ -279,50 +286,134 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
     if data.agents.is_empty() && data.other_agents.is_empty() {
         out.push((Line::styled("  none running", dim), None));
     }
-    for agent in &data.agents {
-        let age = age(agent.since);
-        let head = format!("{} {}", agent.state.symbol(), agent.program);
-        let place = format!(" {}·{}", agent.workspace, agent.dir);
+    // One line per agent: its state and program, window and directory,
+    // and how long it has been so.
+    let agent_line = |indent: &str,
+                      state: AgentState,
+                      program: &str,
+                      workspace: u8,
+                      dir: &str,
+                      since: Duration,
+                      focused: bool| {
+        let age = age(since);
+        let head = format!("{indent}{} {program}", state.symbol());
+        let place = format!(" {workspace}·{dir}");
         let room = width.saturating_sub(head.chars().count() + age.chars().count() + 1);
         let place = fit(&place, room);
         let pad = width
             .saturating_sub(head.chars().count() + place.chars().count() + age.chars().count());
-        let name_style = if agent.focused {
-            state_style(agent.state).add_modifier(Modifier::UNDERLINED)
+        let name_style = if focused {
+            state_style(state).add_modifier(Modifier::UNDERLINED)
         } else {
-            state_style(agent.state)
+            state_style(state)
         };
-        let line = Line::from(vec![
+        Line::from(vec![
             Span::styled(head, name_style),
-            Span::styled(place, Style::new().fg(t.workspace(agent.workspace))),
+            Span::styled(place, Style::new().fg(t.workspace(workspace))),
             Span::raw(" ".repeat(pad)),
             Span::styled(age, dim),
-        ]);
-        out.push((line, Some(Target::Pane(agent.pane))));
-    }
-    let mut place: Option<&str> = None;
-    for (i, agent) in data.other_agents.iter().enumerate() {
-        if place != Some(agent.place.as_str()) {
-            place = Some(agent.place.as_str());
+        ])
+    };
+    if data.other_agents.is_empty() {
+        // Just this session: no headings needed.
+        for agent in &data.agents {
+            let line = agent_line(
+                "",
+                agent.state,
+                &agent.program,
+                agent.workspace,
+                &agent.dir,
+                agent.since,
+                agent.focused,
+            );
+            out.push((line, Some(Target::Pane(agent.pane))));
+        }
+    } else {
+        // The same on every machine: machine, then session, then its
+        // agents; the user's own machine first, the rest by name, and this
+        // session marked rather than moved to the top.
+        struct Group<'a> {
+            machine: Option<&'a str>,
+            session: &'a str,
+            current: bool,
+            lines: Vec<(Line<'static>, Target)>,
+        }
+        let mut groups: Vec<Group> = Vec::new();
+        if !data.agents.is_empty() {
+            groups.push(Group {
+                machine: data.here.as_deref(),
+                session: &data.session,
+                current: true,
+                lines: data
+                    .agents
+                    .iter()
+                    .map(|a| {
+                        let line = agent_line(
+                            "    ",
+                            a.state,
+                            &a.program,
+                            a.workspace,
+                            &a.dir,
+                            a.since,
+                            a.focused,
+                        );
+                        (line, Target::Pane(a.pane))
+                    })
+                    .collect(),
+            });
+        }
+        for agent in &data.other_agents {
+            let line = agent_line(
+                "    ",
+                agent.state,
+                &agent.program,
+                agent.workspace,
+                &agent.dir,
+                agent.since,
+                false,
+            );
+            let found = groups.iter_mut().find(|g| {
+                !g.current && g.machine == agent.machine.as_deref() && g.session == agent.session
+            });
+            match found {
+                Some(group) => group.lines.push((line, Target::OtherAgent(agent.index))),
+                None => groups.push(Group {
+                    machine: agent.machine.as_deref(),
+                    session: &agent.session,
+                    current: false,
+                    lines: vec![(line, Target::OtherAgent(agent.index))],
+                }),
+            }
+        }
+        let rank = |m: Option<&str>| !(m.is_none() || m.is_some_and(|m| m.starts_with('⌂')));
+        groups.sort_by(|a, b| {
+            (rank(a.machine), a.machine, a.session).cmp(&(rank(b.machine), b.machine, b.session))
+        });
+        let mut machine: Option<Option<&str>> = None;
+        for group in groups {
+            if machine != Some(group.machine) {
+                machine = Some(group.machine);
+                if let Some(name) = group.machine {
+                    out.push((
+                        Line::styled(fit(name, width), Style::new().fg(t.cyan)),
+                        None,
+                    ));
+                }
+            }
+            let marker = if group.current { "▸ " } else { "  " };
+            let style = if group.current {
+                Style::new().add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            };
             out.push((
-                Line::styled(fit(&agent.place, width), Style::new().fg(t.cyan)),
+                Line::styled(fit(&format!("  {marker}{}", group.session), width), style),
                 None,
             ));
+            for (line, target) in group.lines {
+                out.push((line, Some(target)));
+            }
         }
-        let age = age(agent.since);
-        let head = format!("  {} {}", agent.state.symbol(), agent.program);
-        let where_ = format!(" {}·{}", agent.workspace, agent.dir);
-        let room = width.saturating_sub(head.chars().count() + age.chars().count() + 1);
-        let where_ = fit(&where_, room);
-        let pad = width
-            .saturating_sub(head.chars().count() + where_.chars().count() + age.chars().count());
-        let line = Line::from(vec![
-            Span::styled(head, state_style(agent.state)),
-            Span::styled(where_, dim),
-            Span::raw(" ".repeat(pad)),
-            Span::styled(age, dim),
-        ]);
-        out.push((line, Some(Target::OtherAgent(i))));
     }
 
     if let Some(branch) = &data.branch {
@@ -579,6 +670,8 @@ mod tests {
             sessions: Vec::new(),
             popups: Vec::new(),
             other_agents: Vec::new(),
+            here: None,
+            session: "default".into(),
             workspaces: vec![
                 WorkspaceRow {
                     number: 1,
@@ -759,4 +852,37 @@ mod tests {
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);
     }
+
+    #[test]
+    fn agents_are_grouped_the_same_on_every_machine() {
+        let other = |machine: &str, session: &str, index| OtherAgentRow {
+            machine: Some(machine.into()),
+            session: session.into(),
+            index,
+            program: "claude".into(),
+            workspace: 1,
+            dir: "d".into(),
+            state: AgentState::Idle,
+            since: Duration::from_secs(5),
+        };
+        let mut data = data();
+        // On codingmachine, in peppermint-tui, the user sitting at omarchy.
+        data.here = Some("⇄ codingmachine".into());
+        data.session = "peppermint-tui".into();
+        data.other_agents = vec![
+            other("⇄ codingmachine", "peppermint-verwaltung", 0),
+            other("⌂ omarchy", "imkr", 1),
+        ];
+        let text: Vec<String> = lines(&data, 30)
+            .into_iter()
+            .map(|(line, _)| line.to_string())
+            .collect();
+        let at = |needle: &str| text.iter().position(|l| l.contains(needle)).unwrap();
+        // The user's machine first, then the others; this session marked in
+        // its place, not on top.
+        assert!(at("⌂ omarchy") < at("⇄ codingmachine"));
+        assert!(at("  imkr") < at("▸ peppermint-tui"));
+        assert!(at("▸ peppermint-tui") < at("peppermint-verwaltung"));
+    }
+
 }
