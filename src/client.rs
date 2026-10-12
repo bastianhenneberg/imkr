@@ -585,6 +585,7 @@ fn caps() -> Caps {
             hosts,
             via,
             plugins: crate::plugin::load().0,
+            templates: crate::template::load().0,
         }
     });
     Caps {
@@ -981,6 +982,27 @@ pub fn restore_sessions(
         started.push(session);
     }
     Ok(started)
+}
+
+/// Starts session `name` here with `layout`, unless it runs. True when
+/// it was started.
+pub fn start_from(name: &str, layout: crate::persist::Saved) -> Result<bool> {
+    let session = crate::persist::HiveSession {
+        saved_at: crate::persist::now(),
+        layout,
+    };
+    let started = restore_sessions([(name.to_owned(), session)].into())?;
+    Ok(!started.is_empty())
+}
+
+/// Has `host` start session `name` with `layout`, unless it runs there.
+pub fn start_from_on(host: &str, name: &str, layout: crate::persist::Saved) -> Result<bool> {
+    let session = crate::persist::HiveSession {
+        saved_at: crate::persist::now(),
+        layout,
+    };
+    let started = remote_restore(host, &[(name.to_owned(), session)].into())?;
+    Ok(!started.is_empty())
 }
 
 /// Runs `imkr args...` on `host` through ssh without prompting.

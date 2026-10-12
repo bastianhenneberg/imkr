@@ -394,6 +394,44 @@ Machines are told apart by `/etc/machine-id`, so two machines set up alike may s
 ssh between the machines has to work without a password (keys, an agent) and they have to reach
 each other, e.g. over a VPN like NetBird or Tailscale; imkr only uses it.
 
+## Templates
+
+A template is what a new session starts with: its windows, their splits, the directories and
+the commands typed into them. When there are templates, `Ctrl+B s n` asks for one after the
+name, *empty* first. Each is a TOML file in `~/.config/imkr/templates/`:
+
+```toml
+title = "Coding"
+root = "~/Development/{session}"   # {session} is the new session's name
+
+[[window]]
+name = "claude"
+command = "claude"
+
+[[window]]
+name = "terminal"
+[[window.pane]]
+command = "nvim"
+[[window.pane]]
+split = "right"   # or "down": of the pane before, or of pane `of = 1`, 2, …
+size = 40         # percent the new pane gets
+cwd = "src"       # relative to root
+```
+
+Without `root` the session starts in the directory of the focused pane. Commands are typed
+into a fresh shell, so the shell stays when they end. Templates come along to other machines
+like plugins, and `~` is that machine's home.
+
+```bash
+imkr template save coding          # this session's windows, splits and agents as `coding`
+imkr template ls
+imkr template start coding api     # start session `api` from it, without a terminal
+```
+
+`template save` puts the directory the panes share into `root`, as `{session}` when it is
+named like the session, and writes agents as their command; other programs are left out, as
+the template should not run what happened to run.
+
 ## Images
 
 Programs that show images with the kitty graphics protocol (icat, chafa, yazi, timg, mpv's

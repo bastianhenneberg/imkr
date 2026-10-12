@@ -50,6 +50,16 @@ enum Node {
     },
 }
 
+/// One step of building a layout: `of` split along `axis`, keeping
+/// `ratio` of the space, with `new` in the rest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Split {
+    pub of: PaneId,
+    pub axis: Axis,
+    pub ratio: f32,
+    pub new: PaneId,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
     root: Option<Node>,
@@ -85,10 +95,26 @@ impl Layout {
     /// Splits `target` in half along `axis`, putting `new` second (right or
     /// below). Returns false if `target` is not in the layout.
     pub fn split(&mut self, target: PaneId, axis: Axis, new: PaneId) -> bool {
+        self.split_at(target, axis, new, 0.5)
+    }
+
+    /// Like `split`, with `ratio` the share `target` keeps.
+    pub fn split_at(&mut self, target: PaneId, axis: Axis, new: PaneId, ratio: f32) -> bool {
+        let ratio = ratio.clamp(0.05, 0.95);
         match &mut self.root {
-            Some(root) => root.split(target, axis, new),
+            Some(root) => root.split(target, axis, new, ratio),
             None => false,
         }
+    }
+
+    /// The first pane and the splits that build this layout from it, in
+    /// order: each splits an earlier pane with `split_at`.
+    pub fn splits(&self) -> Option<(PaneId, Vec<Split>)> {
+        let root = self.root.as_ref()?;
+        let first = root.first_leaf();
+        let mut out = Vec::new();
+        root.splits(first, &mut out);
+        Some((first, out))
     }
 
     /// Removes `target` and gives its space to its sibling. Returns the pane
@@ -346,12 +372,12 @@ impl Node {
         }
     }
 
-    fn split(&mut self, target: PaneId, axis: Axis, new: PaneId) -> bool {
+    fn split(&mut self, target: PaneId, axis: Axis, new: PaneId, ratio: f32) -> bool {
         match self {
             Node::Leaf(id) if *id == target => {
                 *self = Node::Split {
                     axis,
-                    ratio: 0.5,
+                    ratio,
                     first: Box::new(Node::Leaf(target)),
                     second: Box::new(Node::Leaf(new)),
                 };
@@ -359,8 +385,29 @@ impl Node {
             }
             Node::Leaf(_) => false,
             Node::Split { first, second, .. } => {
-                first.split(target, axis, new) || second.split(target, axis, new)
+                first.split(target, axis, new, ratio) || second.split(target, axis, new, ratio)
             }
+        }
+    }
+
+    /// Splits below this node, whose first leaf is `leaf`, onto `out`.
+    fn splits(&self, leaf: PaneId, out: &mut Vec<Split>) {
+        if let Node::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } = self
+        {
+            let new = second.first_leaf();
+            out.push(Split {
+                of: leaf,
+                axis: *axis,
+                ratio: *ratio,
+                new,
+            });
+            first.splits(leaf, out);
+            second.splits(new, out);
         }
     }
 
@@ -617,5 +664,24 @@ mod tests {
         // Pane 1 spans the full height, there is no row divider to move.
         assert!(!layout.resize(1, Direction::Down, 1, AREA));
         assert!(!Layout::new(1).resize(1, Direction::Left, 1, AREA));
+    }
+
+    #[test]
+    fn splits_build_the_same_layout_again() {
+        // 1 | 2      split 1 first, then each side on its own
+        // - | -
+        // 4 | 3
+        let mut layout = Layout::new(1);
+        assert!(layout.split_at(1, Axis::Row, 2, 0.3));
+        assert!(layout.split(2, Axis::Column, 3));
+        assert!(layout.split(1, Axis::Column, 4));
+        let (first, splits) = layout.splits().unwrap();
+        assert_eq!(first, 1);
+        let mut again = Layout::new(first);
+        for s in &splits {
+            assert!(again.split_at(s.of, s.axis, s.new, s.ratio));
+        }
+        assert_eq!(again, layout);
+        assert_eq!(Layout::empty().splits(), None);
     }
 }

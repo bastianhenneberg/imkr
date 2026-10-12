@@ -88,6 +88,12 @@ Projekt-Slug: `imkr`
   über einem Popup) = Panes + Sidebar, `break_popup` (Ctrl+B !) macht ein Window daraus; auf einem Vollbild-Popup verkleinert `!`
   erst (wie z). Basis
   für Plugins.
+- Session-Vorlagen: `src/template.rs` (TOML in `templates/` neben der Config) → `to_saved` macht
+  daraus ein `persist::Saved` (mit `SavedPane::command`, `Saved::template`), gestartet wie ein Hive:
+  lokal `client::start_from`, remote `start_from_on` (`hive start` per ssh), danach `Request::Go`.
+  `~` bleibt bis `App::restore` (`template::home_dir`, Home des Zielrechners). Folgen dem Operator
+  über `Origin::templates`. Splits ↔ Layout: `Layout::splits`/`split_at`. Laufende Sessions
+  speichern nie `command` (nach einem Crash startet nichts von selbst).
 - OSC 52 aus Panes: `clipboard::Osc52Scanner` im Pane-Reader (vor dem Grafik-Scanner, über
   Lesegrenzen), `AppEvent::Clipboard` → `send_active`. Clipboard-Abfragen (`?`) werden verworfen.
   Test verschachtelt: im Pane `ssh -t -- server <scratchpad>/bin/imkr` aufrufen, nicht `imkr`

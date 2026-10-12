@@ -85,6 +85,10 @@ pub struct Origin {
     /// the user works; they run where they are opened.
     #[serde(default)]
     pub plugins: Vec<crate::plugin::Plugin>,
+    /// The session templates of the client's machine, for new sessions
+    /// started from wherever the user works.
+    #[serde(default)]
+    pub templates: Vec<crate::template::Template>,
 }
 
 /// A machine with its sessions.
@@ -252,6 +256,9 @@ pub enum Request {
     },
     /// Show `text` in the control bar, e.g. why a switch failed.
     Flash { text: String },
+    /// Send the active client to `target` (`host:session`), e.g. once a
+    /// session started from a template on another machine runs.
+    Go { target: String },
     /// Show pane `pane` and focus it, e.g. after switching to its session.
     Reveal { pane: PaneId },
     /// Open a new window and ask for its name, as `Ctrl+B n` does, e.g.
@@ -528,6 +535,7 @@ mod tests {
                     hosts: Vec::new(),
                     via: Some("codingmachine".into()),
                     plugins: Vec::new(),
+                    templates: Vec::new(),
                 }),
             }),
             ClientMsg::Request(Request::Status {

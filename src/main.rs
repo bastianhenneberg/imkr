@@ -20,6 +20,7 @@ mod release;
 mod render;
 mod server;
 mod sidebar;
+mod template;
 mod theme;
 mod upgrade;
 mod workspace;
@@ -54,6 +55,11 @@ Commands:
                 rename a hive
   save, restore short for `hive save` and `hive restore`
   plugins       list the plugins (~/.config/imkr/plugins/*.toml) and broken files
+  template ls   list the session templates (~/.config/imkr/templates/*.toml)
+  template save NAME
+                save this session's windows, splits and agents as template NAME
+  template start NAME [SESSION]
+                start session SESSION (default: the template's name) from it
   hosts [add NAME | rm NAME]
                 the other machines shown, from the settings and remembered
   rename-session NAME
@@ -165,6 +171,7 @@ fn main() -> Result<()> {
         ["popup", ..] => cli::popup(&args[1..]),
         ["hosts", ..] => cli::hosts(&args[1..]),
         ["plugins"] => cli::plugins(),
+        ["template", ..] => cli::template(&args[1..]),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks", ..] => cli::hooks(&args[1..]),

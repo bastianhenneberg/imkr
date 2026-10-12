@@ -109,6 +109,8 @@ enum Mode {
     NewSessionWhere(usize),
     /// Choosing the session, on any machine, for a new window.
     NewWindowWhere(usize),
+    /// Choosing the template for the new session `App::new_session`.
+    NewSessionTemplate(usize),
     /// The marks, that one selected.
     Marks(usize),
 }
@@ -483,6 +485,8 @@ pub struct App {
     /// The session or hive a confirmed `Action` is about, by name: a list
     /// index could point elsewhere by the time `y` is pressed.
     confirm_target: Option<String>,
+    /// The session named last, while its template is chosen.
+    new_session: Option<Place>,
     prompt: Option<Prompt>,
     picker: Option<Picker>,
     /// The last copy mode search and its direction, for n and N.
@@ -564,6 +568,7 @@ impl App {
             copy: None,
             flash: None,
             confirm_target: None,
+            new_session: None,
             prompt: None,
             picker: None,
             search: None,
@@ -648,17 +653,19 @@ impl App {
             }
         };
 
+        let template = saved.template.clone();
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
             for (id, rect) in ws.rects(self.body) {
                 let spec = saved.panes.get(&id).cloned().unwrap_or_default();
+                let cwd = spec.cwd.as_deref().map(crate::template::home_dir);
                 let inner = pane_inner(rect);
                 let spawned = Pane::spawn(
                     Spawn {
                         id,
                         rows: inner.height,
                         cols: inner.width,
-                        cwd: spec.cwd.as_deref(),
+                        cwd: cwd.as_deref(),
                         command: &[],
                         socket: &self.socket,
                     },
@@ -666,7 +673,7 @@ impl App {
                 );
                 match spawned {
                     Ok(mut pane) => {
-                        if let Some(command) = spec.resume_command() {
+                        if let Some(command) = spec.resume_command().or(spec.command.clone()) {
                             let _ = pane.write(format!("{command}\r").as_bytes());
                         }
                         pane.session = spec.session.clone();
@@ -684,10 +691,11 @@ impl App {
             return;
         }
         let count = self.panes.len();
-        self.flash = Some(format!(
-            "restored {count} {} from before the restart",
-            if count == 1 { "pane" } else { "panes" }
-        ));
+        let panes = if count == 1 { "pane" } else { "panes" };
+        self.flash = Some(match template {
+            Some(template) => format!("started {count} {panes} from template {template}"),
+            None => format!("restored {count} {panes} from before the restart"),
+        });
     }
 
     /// Shows `active` of `workspaces`, or the first if it is gone, and
@@ -859,6 +867,7 @@ impl App {
                     agent: agent::agent_name(&argv).map(str::to_owned),
                     session: pane.session.clone(),
                     name: pane.name.clone(),
+                    command: None,
                 };
                 (id, saved)
             })
@@ -1299,6 +1308,10 @@ impl App {
             }
             Request::Flash { text } => {
                 self.flash = Some(text);
+                Ok(serde_json::json!({}))
+            }
+            Request::Go { target } => {
+                self.switch_session(target);
                 Ok(serde_json::json!({}))
             }
             Request::MoveWindow { workspace, to } => {
@@ -2038,6 +2051,10 @@ impl App {
             }
             Mode::NewSessionWhere(selected) => {
                 self.new_session_where_key(key, selected);
+                Ok(())
+            }
+            Mode::NewSessionTemplate(selected) => {
+                self.new_session_template_key(key, selected);
                 Ok(())
             }
             Mode::NewWindowWhere(selected) => {
@@ -3173,6 +3190,136 @@ impl App {
         Ok(())
     }
 
+    /// The templates a new session can start from: this machine's, then
+    /// those of the user's own machine it does not have. "empty" first.
+    fn templates(&self) -> Vec<crate::template::Template> {
+        let mut all = crate::template::load().0;
+        if let Some(origin) = &self.origin {
+            for template in &origin.templates {
+                if !all.iter().any(|t| t.name == template.name) {
+                    all.push(template.clone());
+                }
+            }
+        }
+        all
+    }
+
+    fn template_choices(&self) -> (Vec<Option<crate::template::Template>>, Vec<menu::MenuItem>) {
+        let mut templates: Vec<Option<crate::template::Template>> = vec![None];
+        templates.extend(self.templates().into_iter().map(Some));
+        let items = templates
+            .iter()
+            .enumerate()
+            .map(|(i, template)| menu::MenuItem {
+                key: char::from_digit((i as u32 + 1) % 10, 10).unwrap_or(' '),
+                title: template
+                    .as_ref()
+                    .map_or("empty".into(), |t| t.title().to_owned()),
+                hint: template
+                    .as_ref()
+                    .map_or("one shell".into(), |t| t.summary()),
+                danger: false,
+                apart: false,
+            })
+            .collect();
+        (templates, items)
+    }
+
+    /// Asks for the template of the new session `place` when there are
+    /// any, else goes there right away.
+    fn choose_template(&mut self, place: Place) {
+        if self.templates().is_empty() || self.session_exists(&place) {
+            self.go_to(&place);
+            return;
+        }
+        self.new_session = Some(place);
+        self.mode = Mode::NewSessionTemplate(0);
+    }
+
+    /// Whether session `place` runs already, as far as this server knows.
+    fn session_exists(&self, place: &Place) -> bool {
+        let places = self.places.lock().unwrap();
+        match &place.host {
+            None => {
+                place.name == protocol::session_name()
+                    || places.local.iter().any(|s| s.name == place.name)
+            }
+            Some(host) => places.hosts.iter().any(|(h, sessions)| {
+                h == host
+                    && sessions
+                        .as_ref()
+                        .is_ok_and(|s| s.iter().any(|s| s.name == place.name))
+            }),
+        }
+    }
+
+    fn new_session_template_key(&mut self, key: KeyEvent, selected: usize) {
+        let (templates, _) = self.template_choices();
+        let count = templates.len().max(1);
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.new_session = None;
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::NewSessionTemplate((selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::NewSessionTemplate((selected + 1) % count);
+                return;
+            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
+            _ => return,
+        };
+        self.mode = Mode::Normal;
+        let Some(place) = self.new_session.take() else {
+            return;
+        };
+        match templates.get(pick).cloned().flatten() {
+            Some(template) => self.start_from_template(place, &template),
+            None => self.go_to(&place),
+        }
+    }
+
+    /// Starts session `place` from `template` and goes there: here right
+    /// away, on another machine once it runs there.
+    fn start_from_template(&mut self, place: Place, template: &crate::template::Template) {
+        // Without a root of its own it starts where the user is, on this
+        // machine; elsewhere that directory means nothing.
+        let here = match place.host {
+            None => self.panes.get(&self.ws.focus).and_then(|p| p.cwd()),
+            Some(_) => None,
+        };
+        let saved = template.to_saved(&place.name, here.as_deref());
+        match place.host.clone() {
+            None => match crate::client::start_from(&place.name, saved) {
+                Ok(_) => self.go_to(&place),
+                Err(e) => self.flash = Some(format!("{} did not start: {e:#}", place.name)),
+            },
+            Some(host) => {
+                if !self.active_caps().is_some_and(|caps| caps.hosts) {
+                    self.go_to(&place);
+                    return;
+                }
+                self.flash = Some(format!("starting {} on {host} …", place.name));
+                let socket = self.socket.clone();
+                let target = place.target();
+                thread::spawn(move || {
+                    let request = match crate::client::start_from_on(&host, &place.name, saved) {
+                        Ok(_) => Request::Go { target },
+                        Err(e) => Request::Flash {
+                            text: format!("{} did not start on {host}: {e:#}", place.name),
+                        },
+                    };
+                    let _ = crate::client::request_at(&socket, request);
+                });
+            }
+        }
+    }
+
     fn new_session_where_key(&mut self, key: KeyEvent, selected: usize) {
         let (machines, _) = self.machine_choices();
         let count = machines.len().max(1);
@@ -4218,7 +4365,7 @@ impl App {
                     PromptFor::NewSession(host) => {
                         let name = text.trim().to_owned();
                         if protocol::valid_session_name(&name) {
-                            self.go_to(&Place { host, name });
+                            self.choose_template(Place { host, name });
                         } else {
                             self.flash = Some("session names use letters, digits, - and _".into());
                         }
@@ -5406,6 +5553,7 @@ impl App {
                         | Mode::MoveTo(..)
                         | Mode::Agents(_)
                         | Mode::NewSessionWhere(_)
+                        | Mode::NewSessionTemplate(_)
                         | Mode::NewWindowWhere(_)
                         | Mode::Marks(_)
                 )
@@ -5506,6 +5654,18 @@ impl App {
                     bindings::CHOOSE_LIST_KEYS,
                 );
             }
+            Mode::NewSessionTemplate(selected) => {
+                let (_, items) = self.template_choices();
+                let name = self.new_session.as_ref().map_or("", |p| p.name.as_str());
+                self.draw_list(
+                    frame,
+                    body,
+                    &format!(" ⬢ {name} starts with "),
+                    &items,
+                    selected,
+                    bindings::CHOOSE_LIST_KEYS,
+                );
+            }
             Mode::Marks(selected) => {
                 let mut items = self.mark_items();
                 if items.is_empty() {
@@ -5595,6 +5755,7 @@ impl App {
                 (items, s)
             }
             Mode::NewSessionWhere(s) => (self.machine_choices().1, s),
+            Mode::NewSessionTemplate(s) => (self.template_choices().1, s),
             _ => return None,
         })
     }
@@ -5607,6 +5768,7 @@ impl App {
             | Mode::Marks(s)
             | Mode::NewWindowWhere(s)
             | Mode::NewSessionWhere(s)
+            | Mode::NewSessionTemplate(s)
             | Mode::MoveTo(_, s) => *s = i,
             _ => {}
         }
@@ -6072,6 +6234,11 @@ impl App {
                 "NEW SESSION",
                 t.magenta,
                 "↑↓ choose the machine · Enter or digit · Esc cancel",
+            ),
+            Mode::NewSessionTemplate(_) => (
+                "NEW SESSION",
+                t.magenta,
+                "↑↓ choose the template · Enter or digit · Esc cancel",
             ),
             Mode::Marks(_) => (
                 "MARKS",

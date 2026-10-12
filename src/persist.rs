@@ -24,6 +24,9 @@ pub struct Saved {
     pub active: u8,
     pub workspaces: BTreeMap<u8, Workspace>,
     pub panes: BTreeMap<PaneId, SavedPane>,
+    /// The template it was made from, when it is a new session's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -36,6 +39,10 @@ pub struct SavedPane {
     /// The name the user gave the pane.
     #[serde(default)]
     pub name: Option<String>,
+    /// Typed into the fresh shell, from a template. Running sessions never
+    /// save one: what ran before a crash is not started again on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 impl Saved {
@@ -49,6 +56,7 @@ impl Saved {
             active,
             workspaces,
             panes,
+            template: None,
         }
     }
 }
@@ -385,6 +393,7 @@ mod tests {
                     agent: Some("claude".into()),
                     session: Some("0b8a-42".into()),
                     name: Some("backend".into()),
+                    command: None,
                 },
             ),
             (2, SavedPane::default()),

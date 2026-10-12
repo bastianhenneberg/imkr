@@ -668,6 +668,64 @@ pub fn plugins() -> Result<()> {
     Ok(())
 }
 
+/// `imkr template <ls | save NAME | start NAME [SESSION]>`: session
+/// templates, the windows a new session starts with.
+pub fn template(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr template <ls | save NAME | start NAME [SESSION]>";
+    match args {
+        [] => bail!(USAGE),
+        [ls] if ls == "ls" => {
+            let (templates, broken) = crate::template::load();
+            if let Some(dir) = crate::template::dir() {
+                println!("templates in {}", dir.display());
+            }
+            if templates.is_empty() && broken.is_empty() {
+                println!("none yet, `imkr template save NAME` makes one of this session");
+            }
+            for template in &templates {
+                println!("  {:<16} {}", template.name, template.summary());
+            }
+            for file in &broken {
+                println!("  {:<16} broken: {}", file.name, file.problem);
+            }
+            Ok(())
+        }
+        [save, name] if save == "save" => {
+            if !crate::protocol::valid_session_name(name) {
+                bail!("template names use letters, digits, - and _");
+            }
+            let session = crate::protocol::session_name();
+            let reply = client::request(Request::Snapshot)?;
+            let saved: crate::persist::Saved = serde_json::from_value(reply)?;
+            let template = crate::template::Template::from_saved(name, &session, &saved);
+            let path = crate::template::write(&template)?;
+            println!("{}: {}", path.display(), template.summary());
+            Ok(())
+        }
+        [start, name, rest @ ..] if start == "start" && rest.len() <= 1 => {
+            let session = rest.first().unwrap_or(name);
+            if !crate::protocol::valid_session_name(session) {
+                bail!("session names use letters, digits, - and _");
+            }
+            let template = crate::template::load()
+                .0
+                .into_iter()
+                .find(|t| t.name == *name)
+                .with_context(|| format!("no template {name}, see `imkr template ls`"))?;
+            let cwd = std::env::current_dir().ok();
+            let saved = template.to_saved(session, cwd.as_deref());
+            let started = client::start_from(session, saved)?;
+            if started {
+                println!("started {session} from {name}, attach with `imkr -s {session}`");
+            } else {
+                println!("{session} runs already, attach with `imkr -s {session}`");
+            }
+            Ok(())
+        }
+        _ => bail!(USAGE),
+    }
+}
+
 /// `imkr hosts [add NAME | rm NAME]`: the other machines this one shows,
 /// from the settings and remembered.
 pub fn hosts(args: &[String]) -> Result<()> {
