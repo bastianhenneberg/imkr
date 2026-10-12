@@ -76,6 +76,17 @@ For scripts and agents:
   list [--json]                         list the panes with program and agent state
   status <working|blocked|idle|clear>   report this pane's agent state (for hooks)
   send [--pane N] [--no-enter] <text>   type text into a pane
+  agents [--all] [--json]               every agent in every session here, with
+                                        --all also on the other machines, and
+                                        its address for msg
+  msg [--wait] <to> <text>              message an agent: <to> is a pane number,
+                                        name or program, `session/<to>` or
+                                        `machine:session/<to>`. Typed in once it
+                                        is idle, never into a question; --wait
+                                        waits for it to finish and prints its
+                                        screen
+  skill [--install]                     the guide for agents driving imkr, or
+                                        install it as a Claude Code skill
   notify [--title T] [--pane N] <text>  show a notification (desktop, terminal or
                                         off, as set in the settings)
   new [--float] [--window N] [-- command args...]
@@ -164,6 +175,10 @@ fn main() -> Result<()> {
         ["status", ..] => cli::status(&args[1..]),
         ["list", ..] => cli::list(&args[1..]),
         ["send", ..] => cli::send(&args[1..]),
+        ["msg", ..] => cli::msg(&args[1..]),
+        ["agents", ..] => cli::agents(&args[1..]),
+        ["skill", ..] => cli::skill(&args[1..]),
+        ["--skill"] => cli::skill(&[]),
         ["notify", ..] => cli::notify(&args[1..]),
         ["new", ..] => cli::new(&args[1..]),
         ["rename", ..] => cli::rename(&args[1..]),

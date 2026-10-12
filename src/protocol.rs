@@ -235,6 +235,14 @@ pub enum Request {
         text: String,
         enter: bool,
     },
+    /// A message for the agent in pane `to` (its number, name or program),
+    /// typed in once it is idle, never into a question. `from` is the
+    /// sender's address, for the answer.
+    Message {
+        to: String,
+        text: String,
+        from: String,
+    },
     /// The text on a pane's screen, or its last `lines` lines including the
     /// history.
     Read { pane: PaneId, lines: Option<usize> },

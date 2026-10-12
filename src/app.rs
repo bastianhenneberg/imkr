@@ -512,6 +512,11 @@ pub struct App {
     confirm_target: Option<String>,
     /// The session named last, while its template is chosen.
     new_session: Option<Place>,
+    /// Messages for agents that are busy or asking something: pane and
+    /// text, typed in once the agent is idle.
+    mailbox: Vec<(PaneId, String)>,
+    /// When each pane last got a message, so the next one waits a little.
+    mail_sent: HashMap<PaneId, Instant>,
     prompt: Option<Prompt>,
     picker: Option<Picker>,
     /// The last copy mode search and its direction, for n and N.
@@ -594,6 +599,8 @@ impl App {
             flash: None,
             confirm_target: None,
             new_session: None,
+            mailbox: Vec::new(),
+            mail_sent: HashMap::new(),
             prompt: None,
             picker: None,
             search: None,
@@ -1342,6 +1349,20 @@ impl App {
             Request::MoveWindow { workspace, to } => {
                 self.move_window(workspace.unwrap_or(self.workspace), &to)
             }
+            Request::Message { to, text, from } => {
+                let pane = self.addressee(&to)?;
+                let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                // An address can be answered; the user in a terminal is no pane.
+                let header = if from.contains(':') {
+                    format!("[imkr message from {from}, answer with: imkr msg {from} <text>]")
+                } else {
+                    format!("[imkr message from {from}]")
+                };
+                self.mailbox.push((pane, format!("{header} {text}")));
+                self.deliver_mail();
+                let queued = self.mailbox.iter().any(|(p, _)| *p == pane);
+                Ok(serde_json::json!({ "pane": pane, "queued": queued }))
+            }
             Request::Read { pane, lines } => {
                 let p = self.panes.get(&pane).ok_or(format!("no pane {pane}"))?;
                 Ok(serde_json::json!({ "pane": pane, "text": p.read(lines) }))
@@ -1415,6 +1436,89 @@ impl App {
             }
         }
         serde_json::Value::Array(panes)
+    }
+
+    /// The pane a message `to` means: its number, or the one pane with that
+    /// name or program.
+    fn addressee(&self, to: &str) -> Result<PaneId, String> {
+        if let Ok(id) = to.parse::<PaneId>() {
+            return self
+                .panes
+                .contains_key(&id)
+                .then_some(id)
+                .ok_or(format!("no pane {id}"));
+        }
+        let popups: HashSet<PaneId> = self.popups.values().map(|p| p.pane).collect();
+        let wanted = to.to_lowercase();
+        let mut found: Vec<PaneId> = self
+            .panes
+            .iter()
+            .filter(|(id, _)| !popups.contains(id))
+            .filter(|(_, pane)| {
+                pane.name.as_deref().map(str::to_lowercase).as_deref() == Some(wanted.as_str())
+                    || pane.program().map(|p| p.to_lowercase()).as_deref() == Some(wanted.as_str())
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        found.sort_unstable();
+        match found.as_slice() {
+            [id] => Ok(*id),
+            [] => Err(format!("no pane named {to}, see `imkr agents`")),
+            many => Err(format!(
+                "{} panes are {to} ({}), name one with its number",
+                many.len(),
+                many.iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+
+    /// Types waiting messages into their panes: right away into a pane
+    /// without an agent, into an agent once it is idle or done. Never while
+    /// it works, and never into a question, which is the user's to answer.
+    fn deliver_mail(&mut self) {
+        let mail = std::mem::take(&mut self.mailbox);
+        for (id, text) in mail {
+            if !self.panes.contains_key(&id) {
+                continue;
+            }
+            let ready = matches!(
+                self.shown_state(id),
+                None | Some(AgentState::Idle | AgentState::Done)
+            );
+            // One at a time: after a message the agent gets a few seconds to
+            // start on it, and older messages for it go first.
+            let settling = self
+                .mail_sent
+                .get(&id)
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(3));
+            if !ready || settling || self.mailbox.iter().any(|(p, _)| *p == id) {
+                self.mailbox.push((id, text));
+                continue;
+            }
+            let Some(pane) = self.panes.get_mut(&id) else {
+                continue;
+            };
+            let mut bytes = Vec::new();
+            if pane.screen().screen().bracketed_paste() {
+                bytes.extend_from_slice(b"\x1b[200~");
+                bytes.extend_from_slice(text.as_bytes());
+                bytes.extend_from_slice(b"\x1b[201~");
+            } else {
+                bytes.extend_from_slice(text.as_bytes());
+            }
+            if pane.write(&bytes).is_err() {
+                continue;
+            }
+            thread::sleep(Duration::from_millis(20));
+            let _ = pane.write(b"\r");
+            self.mail_sent.insert(id, Instant::now());
+            self.flash = Some(format!("✉ message for pane {id} delivered"));
+        }
+        self.mail_sent
+            .retain(|_, at| at.elapsed() < Duration::from_secs(3));
     }
 
     /// Starts `command` in a new pane: floating or split off the focused one,
@@ -1518,6 +1622,7 @@ impl App {
             }
         }
         self.unseen.retain(|id| seen.contains_key(id));
+        self.deliver_mail();
         if !self.clients.is_empty() {
             self.unseen.remove(&self.ws.focus);
         }

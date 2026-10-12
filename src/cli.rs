@@ -157,6 +157,238 @@ pub fn send(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// This pane's address for answers: `machine:session/pane`, with the
+/// program in front when it is known (`claude@laptop:imkr/3`).
+fn own_address() -> String {
+    let machine = protocol::machine_name();
+    let Some(pane) = std::env::var("IMKR_PANE").ok() else {
+        return format!("the user at {machine}");
+    };
+    let session = protocol::session_name();
+    let program = client::request(Request::List).ok().and_then(|panes| {
+        panes
+                .as_array()?
+                .iter()
+                .find(|p| p["pane"].as_u64().map(|n| n.to_string()).as_deref() == Some(&pane))?
+                ["program"]
+                .as_str()
+                .map(str::to_owned)
+    });
+    match program {
+        Some(program) => format!("{program}@{machine}:{session}/{pane}"),
+        None => format!("{machine}:{session}/{pane}"),
+    }
+}
+
+/// `machine:session/who`, `session/who` or `who`, the machine left out
+/// when it is this one.
+fn parse_address(to: &str) -> Result<(Option<String>, Option<String>, String)> {
+    let to = to.rsplit_once('@').map_or(to, |(_, at)| at);
+    let (machine, rest) = match to.split_once(':') {
+        Some((machine, rest)) => (Some(machine.to_owned()), rest),
+        None => (None, to),
+    };
+    let (session, who) = match rest.split_once('/') {
+        Some((session, who)) => (Some(session.to_owned()), who.to_owned()),
+        None if machine.is_some() => bail!("{to}: say the pane, e.g. {to}/claude"),
+        None => (None, rest.to_owned()),
+    };
+    if who.is_empty() {
+        bail!("{to}: say the pane, a number, name or program");
+    }
+    let machine = machine.filter(|m| *m != protocol::machine_name());
+    Ok((machine, session, who))
+}
+
+/// `imkr msg [--wait] <to> <text>...`
+///
+/// Sends a message to an agent, here or on another machine. The server
+/// types it in once the agent is idle, never into a question, with this
+/// pane's address to answer to. `--stdin` reads the text, `--from` keeps
+/// the sender when the message is passed on over ssh.
+pub fn msg(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr msg [--wait] <to> <text>...";
+    let mut rest = args.to_vec();
+    let wait = take_flag(&mut rest, "--wait");
+    let stdin = take_flag(&mut rest, "--stdin");
+    let from = match take_value(&mut rest, "--from")? {
+        Some(from) => from,
+        None => own_address(),
+    };
+    let Some((to, words)) = rest.split_first() else {
+        bail!(USAGE);
+    };
+    let text = if stdin {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text)?;
+        text
+    } else {
+        words.join(" ")
+    };
+    if text.trim().is_empty() {
+        bail!(USAGE);
+    }
+    let (machine, session, who) = parse_address(to)?;
+    if let Some(machine) = machine {
+        let session = session.unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned());
+        let mut args = vec!["-s", &session, "msg", "--stdin", "--from", &from];
+        if wait {
+            args.push("--wait");
+        }
+        args.push(&who);
+        print!("{}", client::remote_output(&machine, &args, &text)?);
+        return Ok(());
+    }
+    let socket = match &session {
+        Some(session) => protocol::session_socket(session)?,
+        None => protocol::socket_path()?,
+    };
+    let reply = client::request_at(
+        &socket,
+        Request::Message {
+            to: who.clone(),
+            text,
+            from,
+        },
+    )?;
+    let pane = reply["pane"].as_u64().unwrap_or_default() as PaneId;
+    if reply["queued"].as_bool() == Some(true) {
+        println!("queued for pane {pane}: it is busy or asking something, it gets it when idle");
+    } else {
+        println!("delivered to pane {pane}");
+    }
+    if wait {
+        wait_for_answer(&socket, pane)?;
+    }
+    Ok(())
+}
+
+/// Waits until the agent in `pane` has taken up a message and finished,
+/// then prints the end of its screen.
+fn wait_for_answer(socket: &std::path::Path, pane: PaneId) -> Result<()> {
+    let state = |socket: &std::path::Path| -> Result<Option<String>> {
+        let panes = client::request_at(socket, Request::List)?;
+        let entry = panes
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["pane"].as_u64() == Some(pane as u64))
+            .with_context(|| format!("pane {pane} is gone"))?;
+        Ok(entry["state"].as_str().map(str::to_owned))
+    };
+    let start = std::time::Instant::now();
+    let mut started = false;
+    loop {
+        let now = state(socket)?;
+        match now.as_deref() {
+            Some("working") => started = true,
+            Some("blocked") if started => {
+                println!("pane {pane} is asking something, see it with `imkr read --pane {pane}`");
+                break;
+            }
+            // Never an agent, or done with it.
+            None if start.elapsed() > std::time::Duration::from_secs(5) => break,
+            Some("idle" | "done") if started => break,
+            _ => {}
+        }
+        if start.elapsed() > std::time::Duration::from_secs(30 * 60) {
+            bail!("pane {pane} did not finish in 30 minutes");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    let screen = client::request_at(
+        socket,
+        Request::Read {
+            pane,
+            lines: Some(40),
+        },
+    )?;
+    println!("{}", screen["text"].as_str().unwrap_or_default());
+    Ok(())
+}
+
+/// `imkr agents [--all] [--json]`: every agent in every session on this
+/// machine, with `--all` also on the other machines known, each with its
+/// address for `imkr msg`.
+pub fn agents(args: &[String]) -> Result<()> {
+    let mut rest = args.to_vec();
+    let json = take_flag(&mut rest, "--json");
+    let all = take_flag(&mut rest, "--all");
+    if !rest.is_empty() {
+        bail!("usage: imkr agents [--all] [--json]");
+    }
+    let here = protocol::machine_name();
+    let mut machines = vec![(here.clone(), Ok(client::local_sessions()))];
+    if all {
+        for host in client::known_hosts() {
+            let sessions = client::remote_sessions(&host);
+            machines.push((host, sessions));
+        }
+    }
+    let mut out = Vec::new();
+    for (machine, sessions) in machines {
+        let sessions = match sessions {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                if !json {
+                    println!("{machine}: offline ({e:#})");
+                }
+                continue;
+            }
+        };
+        for session in sessions {
+            for agent in session.agent_panes {
+                let address = format!("{machine}:{}/{}", session.name, agent.pane);
+                if json {
+                    out.push(serde_json::json!({
+                        "address": address,
+                        "machine": machine,
+                        "session": session.name,
+                        "pane": agent.pane,
+                        "program": agent.program,
+                        "state": agent.state,
+                        "window": agent.workspace,
+                        "dir": agent.dir,
+                    }));
+                } else {
+                    println!(
+                        "{address:<28} {:<10} {:<8} window {} · {}",
+                        agent.program, agent.state, agent.workspace, agent.dir
+                    );
+                }
+            }
+        }
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    }
+    Ok(())
+}
+
+/// The guide for an agent in an imkr pane, as `imkr skill` prints it and
+/// `--install` puts it into Claude Code's skills.
+const SKILL: &str = include_str!("../skills/imkr/SKILL.md");
+
+/// `imkr skill [--install]`
+pub fn skill(args: &[String]) -> Result<()> {
+    match args {
+        [] => {
+            print!("{SKILL}");
+            Ok(())
+        }
+        [install] if install == "--install" => {
+            let home = std::env::var_os("HOME").context("HOME is not set")?;
+            let dir = std::path::PathBuf::from(home).join(".claude/skills/imkr");
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join("SKILL.md");
+            std::fs::write(&path, SKILL)?;
+            println!("installed {}", path.display());
+            Ok(())
+        }
+        _ => bail!("usage: imkr skill [--install]"),
+    }
+}
+
 /// `imkr notify [--title T] [--pane N] <text>...`
 ///
 /// Shows `text` as a notification, the way the settings say, and in the
@@ -816,5 +1048,24 @@ mod tests {
             assert!(status(&args(&["working"])).is_ok());
         }
         assert!(status(&args(&["sleeping"])).is_err());
+    }
+
+    #[test]
+    fn addresses_name_machine_session_and_pane() {
+        let here = protocol::machine_name();
+        let parse = |to: &str| parse_address(to).unwrap();
+        assert_eq!(parse("claude"), (None, None, "claude".into()));
+        assert_eq!(parse("api/3"), (None, Some("api".into()), "3".into()));
+        assert_eq!(
+            parse("claude@server:api/3"),
+            (Some("server".into()), Some("api".into()), "3".into())
+        );
+        // This machine's own name is no reason for ssh.
+        assert_eq!(
+            parse(&format!("{here}:api/3")),
+            (None, Some("api".into()), "3".into())
+        );
+        assert!(parse_address("server:api").is_err());
+        assert!(parse_address("api/").is_err());
     }
 }

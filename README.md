@@ -220,6 +220,22 @@ imkr notify --title build "done in 42 s"  # with a title of its own
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.
 
+### Agents talking to each other
+
+Agents in imkr can find, read and message each other, on this machine and on the others:
+
+```bash
+imkr agents --all                                  # every agent with its address
+imkr msg server:api/claude "The API returns 409 on duplicates now, please update the client."
+imkr msg --wait api/3 "Which port does the dev server use?"   # waits, prints its screen
+```
+
+An address is `machine:session/pane`; in the own session a pane number, name or program is
+enough. imkr types the message in once the agent is idle, one at a time, never while it works
+and never into a question it asks, which stays yours. Each message says who sent it and how to
+answer. `imkr skill` prints the guide for agents, `imkr skill --install` puts it into Claude
+Code's skills, so the agents use it on their own.
+
 ## Clipboard
 
 Text you select is copied with OSC 52, so it lands in the clipboard of the machine your terminal

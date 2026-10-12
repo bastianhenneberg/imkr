@@ -154,6 +154,11 @@ Projekt-Slug: `imkr`
 - Suche `Ctrl+B /`: der Pane-Picker mit `Picker::global`; `App::found` sammelt `Found` (Art, Text,
   Hinweis, Ziel `Go`) aus Panes, Windows, `session_items`, `agent_choices`, Plugins, Marken, Hives
   (beim Öffnen gelesen, nicht je Frame) und `BINDINGS` (nur Befehle mit genau einer Taste).
+- Agents untereinander: `imkr msg` (`cli::msg`, Adresse `machine:session/pane`, `parse_address`,
+  fremde Rechner per `client::remote_output` mit Text auf stdin) → `Request::Message` → `App::mailbox`,
+  `deliver_mail` (je Tick) tippt nur bei idle/done/ohne Agent, nie bei blocked, 3 s Abstand je Pane.
+  `imkr agents [--all]`, Skill-Text in `skills/imkr/SKILL.md` (`imkr skill [--install]`).
+  Test-Falle: `imkr status` liest stdin (Hook-JSON) – in Heredoc-Tests `</dev/null` anhängen.
 - Tastenbelegung nach dem Prefix steht **nur** in `src/bindings.rs` (`BINDINGS`). Which-Key-Menü,
   Hilfe-Overlay und `imkr keys` lesen daraus, neue Befehle dort eintragen, nicht in `app.rs`.
 - Einstellungen: `src/config.rs` (serde/TOML, `SETTINGS`-Tabelle fürs Settings-Menü). Neue

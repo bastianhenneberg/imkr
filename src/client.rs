@@ -1005,6 +1005,36 @@ pub fn start_from_on(host: &str, name: &str, layout: crate::persist::Saved) -> R
     Ok(!started.is_empty())
 }
 
+/// Runs `imkr args...` on `host` through ssh without prompting, with
+/// `input` on its stdin, and returns what it printed.
+pub fn remote_output(host: &str, args: &[&str], input: &str) -> Result<String> {
+    let mut child = Command::new("ssh")
+        .args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "--",
+            host,
+        ])
+        .arg(remote_command(args))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not run ssh")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes())?;
+    }
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        let why = String::from_utf8_lossy(&output.stderr);
+        bail!("{host}: {}", why.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// Runs `imkr args...` on `host` through ssh without prompting.
 fn remote_run(host: &str, args: &[&str]) -> Result<()> {
     let status = Command::new("ssh")
