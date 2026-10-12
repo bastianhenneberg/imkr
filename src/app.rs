@@ -1531,6 +1531,14 @@ impl App {
         sidebar::Data {
             workspaces,
             sessions: self.session_rows(),
+            popups: self
+                .popups
+                .iter()
+                .map(|(name, p)| sidebar::PopupRow {
+                    title: p.title.clone(),
+                    shown: self.popup_shown && self.popup.as_ref() == Some(name),
+                })
+                .collect(),
             agents,
             branch,
             changes: self
@@ -1857,7 +1865,8 @@ impl App {
             // Over a popup, zoom makes it fill everything but the bars.
             Command::Zoom if self.shown_popup().is_some() => self.popup_full = !self.popup_full,
             Command::Zoom => self.ws.toggle_zoom(),
-            Command::BreakPopup => self.break_popup(),
+            Command::BreakPopup if self.shown_popup().is_some() => self.break_popup(),
+            Command::BreakPopup => self.pane_to_popup(),
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::NewSession => {
@@ -2311,7 +2320,17 @@ impl App {
             if inner.contains(pos) {
                 self.forward_mouse(popup, event, inner)?;
             } else if matches!(event.kind, MouseEventKind::Down(_)) {
-                self.popup_shown = false;
+                // A popup's row in the sidebar switches to it, or hides it.
+                let row = self
+                    .sidebar
+                    .filter(|area| area.contains(pos))
+                    .and_then(|area| {
+                        sidebar::target_at(&self.sidebar_data(), area, pos, self.sidebar_scroll)
+                    });
+                match row {
+                    Some(sidebar::Target::Popup(i)) => self.toggle_popup_at(i),
+                    _ => self.popup_shown = false,
+                }
             }
             return Ok(());
         }
@@ -2340,6 +2359,7 @@ impl App {
                     match sidebar::target_at(&data, area, pos, self.sidebar_scroll) {
                         Some(sidebar::Target::Workspace(n)) => self.switch_workspace(n),
                         Some(sidebar::Target::Session(i)) => self.go_to_row(i),
+                        Some(sidebar::Target::Popup(i)) => self.toggle_popup_at(i),
                         Some(sidebar::Target::Pane(id)) => self.reveal(id),
                         Some(sidebar::Target::Change(i)) => self.open_change(i, false),
                         Some(sidebar::Target::File(i)) => {
@@ -3288,6 +3308,7 @@ impl App {
                 match target {
                     sidebar::Target::Workspace(n) => self.switch_workspace(n),
                     sidebar::Target::Session(i) => self.go_to_row(i),
+                    sidebar::Target::Popup(i) => self.toggle_popup_at(i),
                     sidebar::Target::Pane(id) => self.reveal(id),
                     sidebar::Target::Change(i) => self.open_change(i, false),
                     sidebar::Target::File(i) => {
@@ -3327,13 +3348,18 @@ impl App {
                 sidebar::Target::Pane(id) => self.start_prompt(RenameTarget::Pane(id)),
                 sidebar::Target::Change(_)
                 | sidebar::Target::File(_)
-                | sidebar::Target::Session(_) => {}
+                | sidebar::Target::Session(_)
+                | sidebar::Target::Popup(_) => {}
             },
-            KeyCode::Char('x') => {
-                if let sidebar::Target::Pane(id) = target {
-                    self.mode = Mode::Confirm(Action::ClosePane(id));
+            KeyCode::Char('x') => match target {
+                sidebar::Target::Pane(id) => self.mode = Mode::Confirm(Action::ClosePane(id)),
+                sidebar::Target::Popup(i) => {
+                    if let Some(popup) = self.popups.values().nth(i) {
+                        self.mode = Mode::Confirm(Action::ClosePane(popup.pane));
+                    }
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -4009,7 +4035,12 @@ impl App {
             }
             return;
         }
+        self.unplace(id);
+    }
 
+    /// Takes pane `id` out of its window, which goes when it is empty; the
+    /// pane itself stays. With no window left the session ends.
+    fn unplace(&mut self, id: PaneId) {
         if !self.ws.contains(id) {
             let Some(n) = self
                 .hidden
@@ -4211,6 +4242,52 @@ impl App {
         ws.name = title;
         self.hidden.insert(n, ws);
         self.switch_workspace(n);
+    }
+
+    /// Shows the popup at index `i` of the sidebar, or hides it if shown.
+    fn toggle_popup_at(&mut self, i: usize) {
+        let Some(name) = self.popups.keys().nth(i).cloned() else {
+            return;
+        };
+        let shown = self.popup_shown && self.popup.as_deref() == Some(name.as_str());
+        self.popup = Some(name);
+        self.popup_shown = !shown;
+        // The keys go to the popup, not on in the sidebar.
+        if self.popup_shown && matches!(self.mode, Mode::Sidebar(_)) {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    /// Turns the focused pane into a popup, shown, named after its window if
+    /// it is alone there, else after itself. Its program runs on.
+    fn pane_to_popup(&mut self) {
+        let id = self.ws.focus;
+        let Some(pane) = self.panes.get(&id) else {
+            return;
+        };
+        let popups: HashSet<PaneId> = self.popups.values().map(|p| p.pane).collect();
+        if self.panes.keys().filter(|id| !popups.contains(id)).count() < 2 {
+            self.flash = Some("the last pane cannot become a popup".into());
+            return;
+        }
+        let title = match &self.ws.name {
+            Some(name) if self.ws.panes().len() == 1 => name.clone(),
+            _ => pane
+                .name
+                .clone()
+                .or_else(|| pane.program())
+                .unwrap_or_else(|| "popup".into()),
+        };
+        let mut name = title.to_lowercase();
+        let mut n = 2;
+        while self.popups.contains_key(&name) {
+            name = format!("{}-{n}", title.to_lowercase());
+            n += 1;
+        }
+        self.unplace(id);
+        self.popups.insert(name.clone(), Popup { pane: id, title });
+        self.popup = Some(name);
+        self.popup_shown = true;
     }
 
     /// Draws the shown popup over the panes, with the cursor in it.

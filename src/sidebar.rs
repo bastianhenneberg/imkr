@@ -31,6 +31,12 @@ pub struct WorkspaceRow {
     pub agents: usize,
 }
 
+/// A popup in the sidebar.
+pub struct PopupRow {
+    pub title: String,
+    pub shown: bool,
+}
+
 /// A session in the sidebar, here or on another machine.
 pub struct SessionRow {
     /// The machine, `None` for this one.
@@ -60,6 +66,8 @@ pub struct Data {
     /// Every session, this one included, grouped by machine. Shown only
     /// when there is more than this one.
     pub sessions: Vec<SessionRow>,
+    /// The popups, shown only when there are any.
+    pub popups: Vec<PopupRow>,
     pub agents: Vec<AgentRow>,
     pub branch: Option<String>,
     /// Changed files in the focused pane's repository, as `git status`
@@ -84,6 +92,8 @@ pub enum Target {
     Workspace(u8),
     /// The session at this index in `Data::sessions`.
     Session(usize),
+    /// The popup at this index in `Data::popups`.
+    Popup(usize),
     Pane(PaneId),
     /// The changed file at this index in `Data::changes`.
     Change(usize),
@@ -145,6 +155,21 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             spans.push(Span::styled(right, state_style(state)));
         }
         out.push((Line::from(spans), Some(Target::Workspace(ws.number))));
+    }
+
+    if !data.popups.is_empty() {
+        out.push((Line::default(), None));
+        out.push((Line::styled("Popups", heading(t.accent)), None));
+        for (i, popup) in data.popups.iter().enumerate() {
+            let marker = if popup.shown { "▸ ◆ " } else { "  ◆ " };
+            let style = if popup.shown {
+                Style::new().fg(t.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(t.accent)
+            };
+            let line = Line::styled(fit(&format!("{marker}{}", popup.title), width), style);
+            out.push((line, Some(Target::Popup(i))));
+        }
     }
 
     if data.sessions.len() > 1 || data.sessions.iter().any(|s| s.host.is_some()) {
@@ -472,6 +497,7 @@ mod tests {
     fn data() -> Data {
         Data {
             sessions: Vec::new(),
+            popups: Vec::new(),
             workspaces: vec![
                 WorkspaceRow {
                     number: 1,

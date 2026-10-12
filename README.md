@@ -99,7 +99,8 @@ state comes from what imkr sees on the screen.
 | `Ctrl+B` `Shift+←↑↓→` | Move a floating pane |
 | `Ctrl+B` `n` | New window, asks for its name right away (Esc closes it again) |
 | `Ctrl+B` `Space` | Show or hide the popup used last |
-| `Ctrl+B` `z` / `!` | Over a popup: fill everything but the bars / turn it into a window of its own |
+| `Ctrl+B` `z` | Over a popup: fill everything but the bars, and back |
+| `Ctrl+B` `!` | Popup ⇄ pane: the shown popup becomes a window of its own, else the focused pane a popup |
 | `Ctrl+B` `w` … | Windows menu: `1`–`9`, `c` new, `n`/`p` next/previous, `m` move to another session, `=` renumber 1, 2, 3 … |
 | `Ctrl+B` `1`–`9` | Go to window, an empty one starts a shell |
 | `Ctrl+B` `←↑↓→` | Focus the pane in that direction |
@@ -193,7 +194,9 @@ first time and shows it; the same command, or `Ctrl+B Space`, hides it and shows
 keeps running while hidden, so the program keeps its state, and it survives `imkr update`. Keys,
 pastes and the mouse go to it while it is shown; a click outside hides it. `Ctrl+B z` makes it
 fill everything but the bars, sidebar included, and back. `Ctrl+B !` turns it into the pane of a
-window of its own, named after it, for when it should stay. It closes when its program ends.
+window of its own, named after it, for when it should stay, and back: on a pane without a popup
+shown, `Ctrl+B !` makes the pane a popup. The sidebar lists the popups under *Popups*: a click
+shows one, or hides it, `x` in the sidebar (`Ctrl+B e`) ends it. It closes when its program ends.
 Plugins build on this.
 
 ## Other machines

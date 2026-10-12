@@ -54,7 +54,8 @@ pub enum Command {
     RenumberWorkspaces,
     /// Show or hide the popup used last.
     TogglePopup,
-    /// Turn the shown popup into a pane of a window of its own.
+    /// Turn the shown popup into a pane of a window of its own, or the
+    /// focused pane into a popup.
     BreakPopup,
     /// Give the sidebar the keyboard.
     FocusSidebar,
@@ -413,7 +414,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         label: "!",
-        description: "popup into a window",
+        description: "popup ⇄ pane",
         group: Group::View,
         keys: &[(Key::plain(Char('!')), C::BreakPopup)],
     },
