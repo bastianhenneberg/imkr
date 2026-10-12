@@ -99,6 +99,9 @@ pub enum Command {
     PaneToNewWindow,
     /// Asks for a branch and opens a window in a git worktree of it.
     WorktreeWindow,
+    /// The changes of the focused pane's repository, to note on lines and
+    /// send the notes to its agent.
+    Review,
     /// Goes back from a submenu to the main menu.
     Back,
     Cancel,
@@ -395,9 +398,15 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         label: "i",
-        description: "inbox: answer waiting agents…",
+        description: "inbox: answer agents…",
         group: Group::Navigate,
         keys: &[(Key::plain(Char('i')), C::Inbox)],
+    },
+    Binding {
+        label: "v",
+        description: "review changes…",
+        group: Group::Navigate,
+        keys: &[(Key::plain(Char('v')), C::Review)],
     },
     Binding {
         label: "A",

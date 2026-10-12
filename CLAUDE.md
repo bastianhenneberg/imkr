@@ -198,6 +198,10 @@ Projekt-Slug: `imkr`
   Panes stehen überall hinter ihrem Window: `1 api › claude` (`window_name_of`).
   Listen gruppieren nach Rechner: `MenuItem::group` (Überschrift über dem ersten Eintrag jeder
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
+- Review `Ctrl+B v`: `src/review.rs` (`diff` liest nur: `git diff HEAD` plus `--no-index` je neuer
+  Datei, nie `add -N`; `parse` nummeriert je Datei; `Note` hängt an Datei/Nummer/Code, nicht am
+  Index; `prompt`). `App::review` (`Review`), `open_review`, `review_key`, `draw_review`, Notiz per
+  `PromptFor::ReviewNote` (Esc/Enter zurück in `Mode::Review`), Senden über `mailbox`.
 - tmux-Shim: `src/tmux.rs` (`run` übersetzt tmux-Befehle in Requests, `Options::parse`,
   `target_pane`, `expand` für `#{…}`, `key_bytes`), `main` erkennt argv0 `tmux`. Einstellung
   `tmux_shim` → `pane::set_tmux_shim(tmux::shim_dir())` in `apply_theme` (Link in

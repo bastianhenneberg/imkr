@@ -19,6 +19,7 @@ mod plugin;
 mod protocol;
 mod release;
 mod render;
+mod review;
 mod server;
 mod sidebar;
 mod template;

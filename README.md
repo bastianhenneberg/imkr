@@ -167,6 +167,7 @@ Worktrees stay when the window closes; `git worktree remove` deletes one once it
 | `Ctrl+B` `/` | Search everything: panes, windows, sessions and agents on every machine, plugins, marks, hives and every command with its keys. Words in any order, Enter goes there or does it |
 | `Ctrl+B` `a` | Jump to the agent that has waited longest for you, then to finished ones |
 | `Ctrl+B` `A` | Every agent here and on other machines, those waiting first: Enter or digit goes there |
+| `Ctrl+B` `v` | Review the changes of the focused pane's repository (against the last commit, new files too): `j` `k` move, `n` `p` next / previous file, `c` notes the line, `x` removes the note, `s` sends all notes to the pane as one prompt, typed in once its agent is idle. Notes not sent stay for the next review |
 | `Ctrl+B` `i` | Inbox: the agents on every machine that wait for you, then those done, each with its question. A digit picks that option, typed text and Enter answer, Enter alone goes there. Answers only ever go to the agent whose question is shown |
 | `Ctrl+B` `W` | Every window everywhere, in every session on every machine, with its agents' state and programs: Enter or digit goes there, `/` searches |
 | `Ctrl+B` `P` | Every pane everywhere, after its window (`1 api › claude`): Enter or digit goes there, `/` searches |

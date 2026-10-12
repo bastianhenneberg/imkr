@@ -120,6 +120,19 @@ enum Mode {
     Panes(usize),
     /// The marks, that one selected.
     Marks(usize),
+    /// Reviewing the changes in `App::review`.
+    Review,
+}
+
+/// A review open with `Ctrl+B v`: the diff, where the cursor is, the
+/// notes so far, and the pane they go to.
+struct Review {
+    target: PaneId,
+    root: PathBuf,
+    lines: Vec<crate::review::Line>,
+    cursor: usize,
+    scroll: usize,
+    notes: Vec<crate::review::Note>,
 }
 
 /// The pane picker: every pane in every workspace, filtered by what is
@@ -256,6 +269,8 @@ enum PromptFor {
     MoveWindow(u8),
     /// The branch of a new worktree window.
     Worktree,
+    /// A note on the line under the review's cursor.
+    ReviewNote,
     /// The name of a window just opened. Esc closes it again and goes back
     /// to the window it was opened from.
     NewWindow {
@@ -537,6 +552,8 @@ pub struct App {
     list_query: Option<String>,
     /// The answer typed in the inbox for the agent selected there.
     inbox_answer: String,
+    /// The review, kept with its notes while closed until they are sent.
+    review: Option<Review>,
     /// The agent selected in the inbox. The list changes while it is open,
     /// answers must not go to whichever agent moved into its place.
     inbox_on: Option<InboxId>,
@@ -679,6 +696,7 @@ impl App {
             marks: load_marks(),
             list_query: None,
             inbox_answer: String::new(),
+            review: None,
             inbox_on: None,
             popups: BTreeMap::new(),
             popup: None,
@@ -1835,6 +1853,200 @@ impl App {
 
     /// Starts `command` in a new pane: floating or split off the focused one,
     /// in workspace `n` or the active one. Hidden workspaces stay hidden.
+    /// Opens the review of the focused pane's repository: its diff read
+    /// anew, the notes not sent yet kept.
+    fn open_review(&mut self) {
+        let target = self.ws.focus;
+        let Some(root) = self.git.as_ref().map(|git| git.root.clone()) else {
+            self.flash = Some("the focused pane is in no git repository".into());
+            return;
+        };
+        let lines = match crate::review::diff(&root) {
+            Ok(lines) => lines,
+            Err(e) => {
+                self.flash = Some(format!("no diff: {e:#}"));
+                return;
+            }
+        };
+        if lines.is_empty() {
+            self.flash = Some("no changes to review".into());
+            return;
+        }
+        let notes = match self.review.take() {
+            Some(old) if old.root == root => old.notes,
+            _ => Vec::new(),
+        };
+        // The first changed line.
+        let cursor = lines
+            .iter()
+            .position(|l| {
+                matches!(
+                    l.kind,
+                    crate::review::Kind::Added | crate::review::Kind::Removed
+                )
+            })
+            .unwrap_or(0);
+        self.review = Some(Review {
+            target,
+            root,
+            lines,
+            cursor,
+            scroll: 0,
+            notes,
+        });
+        self.mode = Mode::Review;
+    }
+
+    /// Moves through the diff, notes lines, sends the notes.
+    fn review_key(&mut self, key: KeyEvent) {
+        use crate::review::Kind;
+        let page = usize::from(self.body.height.saturating_sub(4)).max(1);
+        let Some(review) = &mut self.review else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        let last = review.lines.len().saturating_sub(1);
+        let file_starts = |review: &Review| -> Vec<usize> {
+            review
+                .lines
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.kind == Kind::File)
+                .map(|(i, _)| i)
+                .collect()
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
+            KeyCode::Down | KeyCode::Char('j') => review.cursor = (review.cursor + 1).min(last),
+            KeyCode::Up | KeyCode::Char('k') => review.cursor = review.cursor.saturating_sub(1),
+            KeyCode::PageDown | KeyCode::Char(' ') => {
+                review.cursor = (review.cursor + page).min(last)
+            }
+            KeyCode::PageUp => review.cursor = review.cursor.saturating_sub(page),
+            KeyCode::Char('g') | KeyCode::Home => review.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => review.cursor = last,
+            KeyCode::Char('n') => {
+                if let Some(&next) = file_starts(review).iter().find(|&&i| i > review.cursor) {
+                    review.cursor = next;
+                }
+            }
+            KeyCode::Char('p') => {
+                if let Some(&prev) = file_starts(review)
+                    .iter()
+                    .rev()
+                    .find(|&&i| i < review.cursor)
+                {
+                    review.cursor = prev;
+                }
+            }
+            KeyCode::Char('c') | KeyCode::Enter => {
+                let text = review
+                    .lines
+                    .get(review.cursor)
+                    .and_then(|line| review.notes.iter().find(|n| n.is_on(line)))
+                    .map(|n| n.text.clone())
+                    .unwrap_or_default();
+                self.prompt = Some(Prompt {
+                    purpose: PromptFor::ReviewNote,
+                    text,
+                });
+                self.mode = Mode::Prompt;
+            }
+            KeyCode::Char('x') => {
+                if let Some(line) = review.lines.get(review.cursor) {
+                    review.notes.retain(|n| !n.is_on(line));
+                }
+            }
+            KeyCode::Char('s') => {
+                if review.notes.is_empty() {
+                    self.flash = Some("no notes yet: c notes the line".into());
+                    return;
+                }
+                let (target, count) = (review.target, review.notes.len());
+                let text = crate::review::prompt(&review.notes);
+                if !self.panes.contains_key(&target) {
+                    self.flash = Some(format!("pane {target} is gone, the notes stay"));
+                    return;
+                }
+                self.mailbox.push((target, text));
+                self.review = None;
+                self.mode = Mode::Normal;
+                let notes = if count == 1 { "note" } else { "notes" };
+                self.flash = Some(format!(
+                    "{count} {notes} for pane {target}, typed in once it is idle"
+                ));
+            }
+            _ => {}
+        }
+        // Keep the cursor in view.
+        if let Some(review) = &mut self.review {
+            if review.cursor < review.scroll {
+                review.scroll = review.cursor;
+            } else if review.cursor >= review.scroll + page {
+                review.scroll = review.cursor + 1 - page;
+            }
+        }
+    }
+
+    /// The diff over the panes: changed lines in the theme's colours, the
+    /// cursor line marked, notes under their lines.
+    fn draw_review(&self, frame: &mut Frame, body: Rect) {
+        use crate::review::Kind;
+        let Some(review) = &self.review else {
+            return;
+        };
+        let t = theme::current();
+        let name = review
+            .root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let notes = review.notes.len();
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(t.accent))
+            .title(format!(
+                " ⬢ Review {name} · {notes} note{} for pane {} ",
+                if notes == 1 { "" } else { "s" },
+                review.target
+            ));
+        let inner = block.inner(body);
+        frame.render_widget(Clear, body);
+        frame.render_widget(block, body);
+        let height = usize::from(inner.height);
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, line) in review.lines.iter().enumerate().skip(review.scroll) {
+            if lines.len() >= height {
+                break;
+            }
+            let mut style = match line.kind {
+                Kind::File => Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
+                Kind::Hunk => Style::new().fg(t.cyan),
+                Kind::Added => Style::new().fg(t.success),
+                Kind::Removed => Style::new().fg(t.danger),
+                Kind::Meta => Style::new().fg(t.subtle),
+                Kind::Context => Style::new(),
+            };
+            if i == review.cursor {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            let number = line
+                .number
+                .map_or("     ".to_owned(), |n| format!("{n:>5}"));
+            lines.push(Line::from(vec![
+                Span::styled(format!("{number} "), Style::new().fg(t.subtle)),
+                Span::styled(line.text.clone(), style),
+            ]));
+            for note in review.notes.iter().filter(|n| n.is_on(line)) {
+                lines.push(Line::styled(
+                    format!("      ✎ {}", note.text),
+                    Style::new().fg(t.warning).add_modifier(Modifier::ITALIC),
+                ));
+            }
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
     /// Opens window `name` in git worktree `name` of the repository `cwd`
     /// (else the focused pane's directory) is in, running `command`, and
     /// shows it.
@@ -2531,6 +2743,10 @@ impl App {
                 self.inbox_key(key, selected);
                 Ok(())
             }
+            Mode::Review => {
+                self.review_key(key);
+                Ok(())
+            }
             Mode::Windows(selected) => {
                 self.spot_list_key(key, selected, false);
                 Ok(())
@@ -2670,6 +2886,7 @@ impl App {
             Command::BreakPopup => self.pane_to_popup(),
             Command::PaneToWindow(n) => self.pane_to_window(Some(n)),
             Command::PaneToNewWindow => self.pane_to_window(None),
+            Command::Review => self.open_review(),
             Command::WorktreeWindow => {
                 self.prompt = Some(Prompt {
                     purpose: PromptFor::Worktree,
@@ -5682,8 +5899,15 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 let searching = matches!(prompt.purpose, PromptFor::Search { .. });
+                let noting = prompt.purpose == PromptFor::ReviewNote;
                 let purpose = self.prompt.take().map(|p| p.purpose);
-                self.mode = if searching { Mode::Copy } else { Mode::Normal };
+                self.mode = if searching {
+                    Mode::Copy
+                } else if noting {
+                    Mode::Review
+                } else {
+                    Mode::Normal
+                };
                 if let Some(PromptFor::NewWindow { pane, back, .. }) = purpose {
                     self.cancel_new_window(pane, back);
                 }
@@ -5716,6 +5940,18 @@ impl App {
                     PromptFor::Worktree => {
                         if let Err(e) = self.worktree_window(text.trim(), &[], None) {
                             self.flash = Some(e);
+                        }
+                    }
+                    PromptFor::ReviewNote => {
+                        self.mode = Mode::Review;
+                        if let Some(review) = &mut self.review
+                            && let Some(line) = review.lines.get(review.cursor)
+                        {
+                            review.notes.retain(|n| !n.is_on(line));
+                            if !text.trim().is_empty() {
+                                let note = crate::review::Note::on(line, text.trim().to_owned());
+                                review.notes.push(note);
+                            }
                         }
                     }
                     PromptFor::NewSession(host) => {
@@ -6965,6 +7201,7 @@ impl App {
                         | Mode::MoveTo(..)
                         | Mode::Agents(_)
                         | Mode::Inbox(_)
+                        | Mode::Review
                         | Mode::Windows(_)
                         | Mode::Panes(_)
                         | Mode::NewSessionWhere(_)
@@ -7033,7 +7270,16 @@ impl App {
             Mode::Help(scroll) => menu::draw_help(frame, body, scroll),
             Mode::Menu(selected) => menu::draw_quit_menu(frame, body, &self.menu_items(), selected),
             Mode::Confirm(action) => self.draw_confirm(frame, body, action),
-            Mode::Prompt => self.draw_prompt(frame, body),
+            Mode::Prompt => {
+                if self
+                    .prompt
+                    .as_ref()
+                    .is_some_and(|p| p.purpose == PromptFor::ReviewNote)
+                {
+                    self.draw_review(frame, body);
+                }
+                self.draw_prompt(frame, body)
+            }
             Mode::Picker => self.draw_picker(frame, body),
             Mode::Sessions(selected) => {
                 let (_, items) = self.session_items();
@@ -7148,6 +7394,7 @@ impl App {
                 );
             }
             Mode::Inbox(selected) => self.draw_inbox(frame, body, selected),
+            Mode::Review => self.draw_review(frame, body),
             Mode::MoveTo(window, selected) => {
                 let (_, items) = self.move_to_items();
                 self.draw_list(
@@ -7470,6 +7717,7 @@ impl App {
             PromptFor::NewSession(Some(host)) => format!(" New session on {host} "),
             PromptFor::MoveWindow(n) => format!(" Move window {n} to session "),
             PromptFor::Worktree => " New window in a git worktree, branch ".to_owned(),
+            PromptFor::ReviewNote => " Note on this line ".to_owned(),
             PromptFor::SaveHive => " Save running sessions as hive ".to_owned(),
             PromptFor::RenameHive(old) => format!(" Rename hive {old} "),
             PromptFor::RenameSession(old) => format!(" Rename session {old} "),
@@ -7495,6 +7743,7 @@ impl App {
                     PromptFor::Worktree => {
                         "Enter open · new branch from here, or the one of that name · Esc cancel"
                     }
+                    PromptFor::ReviewNote => "Enter keep · empty removes it · Esc cancel",
                 },
                 hint,
             ),
@@ -7824,6 +8073,11 @@ impl App {
                 "MARKS",
                 t.magenta,
                 "↑↓ choose · Enter or digit go there · J K move · x remove · Esc cancel",
+            ),
+            Mode::Review => (
+                "REVIEW",
+                t.magenta,
+                "j k move · n p file · c note · x remove · s send to the agent · Esc close",
             ),
             Mode::Inbox(_) => (
                 "INBOX",
