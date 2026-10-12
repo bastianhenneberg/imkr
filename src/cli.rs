@@ -649,6 +649,25 @@ pub fn hive(args: &[String]) -> Result<()> {
     }
 }
 
+/// `imkr plugins`: the plugins and what is wrong with broken files.
+pub fn plugins() -> Result<()> {
+    let (plugins, broken) = crate::plugin::load();
+    if let Some(dir) = crate::plugin::dir() {
+        println!("plugins in {}", dir.display());
+    }
+    if plugins.is_empty() && broken.is_empty() {
+        println!("none yet");
+    }
+    for plugin in &plugins {
+        let key = plugin.key.map(|k| format!("^B p {k}")).unwrap_or_default();
+        println!("  {:<16} {:<10} {}", plugin.name, key, plugin.command);
+    }
+    for file in &broken {
+        println!("  {:<16} broken: {}", file.name, file.problem);
+    }
+    Ok(())
+}
+
 /// `imkr hosts [add NAME | rm NAME]`: the other machines this one shows,
 /// from the settings and remembered.
 pub fn hosts(args: &[String]) -> Result<()> {

@@ -105,15 +105,18 @@ pub enum Menu {
     Commands,
     /// Sessions and hives.
     Session,
+    /// The plugins, from `plugins/*.toml` next to the config.
+    Plugins,
 }
 
 impl Menu {
-    pub const ALL: [Menu; 5] = [
+    pub const ALL: [Menu; 6] = [
         Menu::Root,
         Menu::Floating,
         Menu::Workspaces,
         Menu::Session,
         Menu::Commands,
+        Menu::Plugins,
     ];
 
     pub fn groups(self) -> &'static [Group] {
@@ -123,6 +126,7 @@ impl Menu {
             Menu::Workspaces => &[Group::Workspaces],
             Menu::Commands => &[Group::Commands],
             Menu::Session => &[Group::Sessions],
+            Menu::Plugins => &[Group::Plugins],
         }
     }
 
@@ -134,6 +138,7 @@ impl Menu {
             Menu::Workspaces => "w",
             Menu::Commands => "c",
             Menu::Session => "s",
+            Menu::Plugins => "p",
         }
     }
 }
@@ -152,6 +157,7 @@ pub enum Group {
     Commands,
     /// The session submenu.
     Sessions,
+    Plugins,
 }
 
 impl Group {
@@ -166,6 +172,7 @@ impl Group {
             Group::Workspaces => "Windows",
             Group::Commands => "Your commands",
             Group::Sessions => "Sessions and hives",
+            Group::Plugins => "Plugins",
         }
     }
 
@@ -176,7 +183,7 @@ impl Group {
             Group::Panes | Group::Workspaces => t.blue,
             Group::Navigate | Group::Floating => t.cyan,
             Group::View => t.orange,
-            Group::Session | Group::Commands | Group::Sessions => t.magenta,
+            Group::Session | Group::Commands | Group::Sessions | Group::Plugins => t.magenta,
             Group::More => t.muted,
         }
     }
@@ -190,6 +197,7 @@ impl Group {
             Group::Workspaces => Menu::Workspaces,
             Group::Commands => Menu::Commands,
             Group::Sessions => Menu::Session,
+            Group::Plugins => Menu::Plugins,
         }
     }
 }
@@ -443,6 +451,12 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Char('c')), C::Open(Menu::Commands))],
     },
     Binding {
+        label: "p",
+        description: "plugins…",
+        group: Group::Session,
+        keys: &[(Key::plain(Char('p')), C::Open(Menu::Plugins))],
+    },
+    Binding {
         label: ",",
         description: "settings",
         group: Group::Session,
@@ -596,6 +610,19 @@ pub const BINDINGS: &[Binding] = &[
         label: "Esc",
         description: "cancel",
         group: Group::Commands,
+        keys: &[(Key::plain(Esc), C::Cancel)],
+    },
+    // The plugins' own keys come from their files, like the commands'.
+    Binding {
+        label: "⌫",
+        description: "back",
+        group: Group::Plugins,
+        keys: &[(Key::plain(KeyCode::Backspace), C::Back)],
+    },
+    Binding {
+        label: "Esc",
+        description: "cancel",
+        group: Group::Plugins,
         keys: &[(Key::plain(Esc), C::Cancel)],
     },
     // Workspaces, after the prefix and `w`.

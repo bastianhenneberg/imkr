@@ -59,6 +59,11 @@ Projekt-Slug: `imkr`
   `pass_on` mit einfachem read/write. Test ohne sshd: Fake-`ssh` im Scratchpad vorn im PATH, der
   bis `--` überspringt und den Befehl mit `SHELL=/bin/sh sh -c` ausführt. Socket-Pfade max. 108
   Zeichen: für `XDG_RUNTIME_DIR` im Test ein kurzes Verzeichnis nehmen.
+- Plugins: `src/plugin.rs` (TOML je Datei in `plugins/` neben der Config, `deny_unknown_fields`,
+  kaputte → `Broken`), `App::plugins` (Arc, geteilt mit `watch_statuses`, das die `status`-Befehle
+  mit 10 s Zeitlimit laufen lässt), `run_plugin` = Popup mit Namen des Plugins. Menü `Ctrl+B p`
+  wie `Ctrl+B c` (Tasten aus den Dateien). Sidebar „Plugins“: `popup_entries`/`popup_rows`
+  (alle Plugins, dann Hand-Popups, kaputte zuletzt). Test: Plugins neben `IMKR_CONFIG`.
 - Hives über Rechner: `Hive::machine` + `machines` (`HiveMachine`: ssh-Name, Hostname, Sessions);
   `client::snapshot_everywhere` (per ssh `imkr hive snapshot`), `push_hive` (`hive import`, nur wenn
   neuer) und `pull_hives` (`hive export`, minütlich im `watch_places`), `last` bleibt lokal.

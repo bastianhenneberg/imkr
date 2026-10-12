@@ -365,6 +365,11 @@ pub struct App {
     popup_shown: bool,
     /// Popups fill everything but the bars, toggled with `Ctrl+B z`.
     popup_full: bool,
+    /// The plugins, see `plugin`, shared with the thread that runs their
+    /// status commands, and the files that are broken.
+    plugins: Arc<Mutex<Vec<crate::plugin::Plugin>>>,
+    broken_plugins: Vec<crate::plugin::Broken>,
+    plugin_status: crate::plugin::Statuses,
     /// The other sessions, here and elsewhere, kept up to date by a thread.
     places: Arc<Mutex<Places>>,
     /// The hosts from the settings, for that thread.
@@ -472,6 +477,9 @@ impl App {
             popup: None,
             popup_shown: false,
             popup_full: false,
+            plugins: Arc::default(),
+            broken_plugins: Vec::new(),
+            plugin_status: Arc::default(),
             watched_hosts: Arc::default(),
             first_shell: None,
             agents: HashMap::new(),
@@ -508,6 +516,8 @@ impl App {
             quit: false,
         };
         app.apply_theme();
+        app.load_plugins();
+        crate::plugin::watch_statuses(Arc::clone(&app.plugins), Arc::clone(&app.plugin_status));
         *app.watched_hosts.lock().unwrap() = app.config.hosts.clone();
         watch_places(Arc::clone(&app.places), Arc::clone(&app.watched_hosts));
         match handover {
@@ -1586,14 +1596,7 @@ impl App {
                     })
                 })
                 .collect(),
-            popups: self
-                .popups
-                .iter()
-                .map(|(name, p)| sidebar::PopupRow {
-                    title: p.title.clone(),
-                    shown: self.popup_shown && self.popup.as_ref() == Some(name),
-                })
-                .collect(),
+            popups: self.popup_rows(),
             agents,
             branch,
             changes: self
@@ -2007,10 +2010,23 @@ impl App {
     /// end the prefix.
     fn command(&mut self, menu: Menu, key: KeyEvent) -> Result<()> {
         let Some(command) = bindings::lookup(menu, key) else {
-            if menu == Menu::Commands
-                && let KeyCode::Char(c) = key.code
-            {
-                self.run_user_command(c);
+            if let KeyCode::Char(c) = key.code {
+                match menu {
+                    Menu::Commands => self.run_user_command(c),
+                    Menu::Plugins => {
+                        let plugin = self
+                            .plugins
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .find(|p| p.key == Some(c))
+                            .cloned();
+                        if let Some(plugin) = plugin {
+                            self.run_plugin(&plugin);
+                        }
+                    }
+                    _ => {}
+                }
             }
             return Ok(());
         };
@@ -2089,6 +2105,7 @@ impl App {
                 let (config, error) = Config::load();
                 self.config = config;
                 self.apply_theme();
+                self.load_plugins();
                 self.flash = Some(match error {
                     Some(e) => format!("config has an error, using defaults: {e}"),
                     None => "config reloaded".into(),
@@ -3581,7 +3598,12 @@ impl App {
             KeyCode::Char('x') => match target {
                 sidebar::Target::Pane(id) => self.mode = Mode::Confirm(Action::ClosePane(id)),
                 sidebar::Target::Popup(i) => {
-                    if let Some(popup) = self.popups.values().nth(i) {
+                    let name = self
+                        .popup_entries()
+                        .into_iter()
+                        .nth(i)
+                        .map(|(name, _)| name);
+                    if let Some(popup) = name.and_then(|name| self.popups.get(&name)) {
                         self.mode = Mode::Confirm(Action::ClosePane(popup.pane));
                     }
                 }
@@ -4473,9 +4495,19 @@ impl App {
 
     /// Shows the popup at index `i` of the sidebar, or hides it if shown.
     fn toggle_popup_at(&mut self, i: usize) {
-        let Some(name) = self.popups.keys().nth(i).cloned() else {
+        let Some((name, plugin)) = self.popup_entries().into_iter().nth(i) else {
             return;
         };
+        // A plugin not running yet starts.
+        if let Some(plugin) = plugin
+            && !self.popups.contains_key(&name)
+        {
+            self.run_plugin(&plugin);
+            if matches!(self.mode, Mode::Sidebar(_)) {
+                self.mode = Mode::Normal;
+            }
+            return;
+        }
         let shown = self.popup_shown && self.popup.as_deref() == Some(name.as_str());
         self.popup = Some(name);
         self.popup_shown = !shown;
@@ -4483,6 +4515,78 @@ impl App {
         if self.popup_shown && matches!(self.mode, Mode::Sidebar(_)) {
             self.mode = Mode::Normal;
         }
+    }
+
+    /// Reads the plugin files again.
+    fn load_plugins(&mut self) {
+        let (plugins, broken) = crate::plugin::load();
+        *self.plugins.lock().unwrap() = plugins;
+        self.broken_plugins = broken;
+    }
+
+    /// Opens plugin `plugin` as a popup, starting it the first time, or
+    /// hides it if it is shown.
+    fn run_plugin(&mut self, plugin: &crate::plugin::Plugin) {
+        let command = vec!["sh".to_owned(), "-c".to_owned(), plugin.command.clone()];
+        let title = Some(plugin.title().to_owned());
+        match self.toggle_popup(&plugin.name, title, &command, None) {
+            Ok(()) if self.popup_shown => {
+                self.popup_full = plugin.mode == crate::plugin::Mode::Fullscreen;
+            }
+            Ok(()) => {}
+            Err(e) => self.flash = Some(format!("plugin {}: {e:#}", plugin.name)),
+        }
+    }
+
+    /// What the sidebar lists under plugins: every plugin, running or not,
+    /// then the popups opened by hand. Names, with the plugin if it is one.
+    fn popup_entries(&self) -> Vec<(String, Option<crate::plugin::Plugin>)> {
+        let plugins = self.plugins.lock().unwrap().clone();
+        let mut entries: Vec<(String, Option<crate::plugin::Plugin>)> = plugins
+            .iter()
+            .map(|p| (p.name.clone(), Some(p.clone())))
+            .collect();
+        for name in self.popups.keys() {
+            if !plugins.iter().any(|p| p.name == *name) {
+                entries.push((name.clone(), None));
+            }
+        }
+        entries
+    }
+
+    /// The sidebar's rows for `popup_entries`, broken plugin files last.
+    fn popup_rows(&self) -> Vec<sidebar::PopupRow> {
+        let statuses = self.plugin_status.lock().unwrap().clone();
+        let mut rows: Vec<sidebar::PopupRow> = self
+            .popup_entries()
+            .into_iter()
+            .map(|(name, plugin)| sidebar::PopupRow {
+                title: match (&plugin, self.popups.get(&name)) {
+                    (Some(plugin), _) => plugin.title().to_owned(),
+                    (None, Some(popup)) => popup.title.clone(),
+                    (None, None) => name.clone(),
+                },
+                shown: self.popup_shown && self.popup.as_ref() == Some(&name),
+                running: self.popups.contains_key(&name),
+                plugin: plugin.is_some(),
+                key: plugin
+                    .as_ref()
+                    .and_then(|p| p.key)
+                    .map(|k| format!("^B p {k}")),
+                status: statuses.get(&name).cloned().unwrap_or_default(),
+            })
+            .collect();
+        for broken in &self.broken_plugins {
+            rows.push(sidebar::PopupRow {
+                title: format!("{} (broken)", broken.name),
+                shown: false,
+                running: false,
+                plugin: true,
+                key: None,
+                status: vec![broken.problem.clone()],
+            });
+        }
+        rows
     }
 
     /// Turns the focused pane into a popup, shown, named after its window if
@@ -4746,12 +4850,21 @@ impl App {
 
         match self.mode {
             Mode::Prefix(menu) if self.config.which_key.enabled => {
-                let commands: Vec<(char, String)> = self
-                    .config
-                    .commands
-                    .iter()
-                    .map(|c| (c.key, c.name.clone()))
-                    .collect();
+                let commands: Vec<(char, String)> = match menu {
+                    Menu::Plugins => self
+                        .plugins
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|p| Some((p.key?, p.title().to_owned())))
+                        .collect(),
+                    _ => self
+                        .config
+                        .commands
+                        .iter()
+                        .map(|c| (c.key, c.name.clone()))
+                        .collect(),
+                };
                 menu::draw_which_key(frame, body, self.config.which_key.position, menu, &commands);
             }
             Mode::Settings(selected) => menu::draw_settings(

@@ -28,7 +28,16 @@ pub fn draw_which_key(
     // Border and one column of padding on each side.
     let max_width = usize::from(area.width).saturating_sub(4);
     let mut lines = match menu {
-        Menu::Commands => command_lines(commands),
+        Menu::Commands => command_lines(
+            Group::Commands,
+            commands,
+            "none yet, add [[commands]] to config.toml",
+        ),
+        Menu::Plugins => command_lines(
+            Group::Plugins,
+            commands,
+            "none yet, add plugins/NAME.toml next to config.toml",
+        ),
         menu => groups(menu.groups(), max_width),
     };
     // Rare keys of the main menu in one quiet line at the bottom.
@@ -454,12 +463,12 @@ fn key_style() -> Style {
 
 /// The commands menu: the user's commands from the config, then back and
 /// cancel.
-fn command_lines(commands: &[(char, String)]) -> Vec<Line<'static>> {
-    let mut lines = group_lines(Group::Commands);
+fn command_lines(group: Group, commands: &[(char, String)], none: &str) -> Vec<Line<'static>> {
+    let mut lines = group_lines(group);
     let fixed = lines.split_off(1);
     if commands.is_empty() {
         lines.push(Line::styled(
-            "none yet, add [[commands]] to config.toml",
+            none.to_owned(),
             Style::new().add_modifier(Modifier::DIM),
         ));
     }

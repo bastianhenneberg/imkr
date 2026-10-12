@@ -14,6 +14,7 @@ mod menu;
 mod mouse;
 mod pane;
 mod persist;
+mod plugin;
 mod protocol;
 mod release;
 mod render;
@@ -48,12 +49,13 @@ Commands:
                 start, machines that are off show as offline. --from fetches
                 it first (a new machine), --take restores that machine's
                 sessions here (one that replaces it)
-  hosts [add NAME | rm NAME]
-                the other machines shown, from the settings and remembered
   hive rm NAME  delete a hive, running sessions keep running
   hive rename OLD NEW
                 rename a hive
   save, restore short for `hive save` and `hive restore`
+  plugins       list the plugins (~/.config/imkr/plugins/*.toml) and broken files
+  hosts [add NAME | rm NAME]
+                the other machines shown, from the settings and remembered
   rename-session NAME
                 rename the session (`-s OLD rename-session NEW` for another)
   kill-server   shut down the session's server and every pane in it
@@ -156,6 +158,7 @@ fn main() -> Result<()> {
         ["move-window", ..] => cli::move_window(&args[1..]),
         ["popup", ..] => cli::popup(&args[1..]),
         ["hosts", ..] => cli::hosts(&args[1..]),
+        ["plugins"] => cli::plugins(),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),
         ["hooks", ..] => cli::hooks(&args[1..]),

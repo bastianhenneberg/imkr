@@ -31,10 +31,18 @@ pub struct WorkspaceRow {
     pub agents: usize,
 }
 
-/// A popup in the sidebar.
+/// A plugin or popup in the sidebar.
 pub struct PopupRow {
     pub title: String,
     pub shown: bool,
+    /// Its program runs, shown or not.
+    pub running: bool,
+    /// A plugin, as opposed to a popup opened by hand.
+    pub plugin: bool,
+    /// Its key, e.g. `^B p p`.
+    pub key: Option<String>,
+    /// What its status command last printed.
+    pub status: Vec<String>,
 }
 
 /// A session in the sidebar, here or on another machine.
@@ -179,17 +187,42 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
     }
 
     if !data.popups.is_empty() {
+        let plugins = data.popups.iter().any(|p| p.plugin);
         out.push((Line::default(), None));
-        out.push((Line::styled("Popups", heading(t.accent)), None));
+        out.push((
+            Line::styled(
+                if plugins { "Plugins" } else { "Popups" },
+                heading(t.accent),
+            ),
+            None,
+        ));
         for (i, popup) in data.popups.iter().enumerate() {
-            let marker = if popup.shown { "▸ ◆ " } else { "  ◆ " };
+            // ◆ runs, ◇ starts on a click.
+            let symbol = if popup.running { "◆" } else { "◇" };
+            let marker = if popup.shown { "▸" } else { " " };
+            let right = popup.key.clone().unwrap_or_default();
+            let left = fit(
+                &format!("{marker} {symbol} {}", popup.title),
+                width.saturating_sub(right.chars().count() + 1),
+            );
+            let pad = width.saturating_sub(left.chars().count() + right.chars().count());
             let style = if popup.shown {
                 Style::new().fg(t.accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::new().fg(t.accent)
             };
-            let line = Line::styled(fit(&format!("{marker}{}", popup.title), width), style);
+            let line = Line::from(vec![
+                Span::styled(left, style),
+                Span::raw(" ".repeat(pad)),
+                Span::styled(right, dim),
+            ]);
             out.push((line, Some(Target::Popup(i))));
+            for status in &popup.status {
+                out.push((
+                    Line::styled(fit(&format!("    {status}"), width), dim),
+                    Some(Target::Popup(i)),
+                ));
+            }
         }
     }
 

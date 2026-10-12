@@ -212,6 +212,29 @@ shown, `Ctrl+B !` makes the pane a popup. The sidebar lists the popups under *Po
 shows one, or hides it, `x` in the sidebar (`Ctrl+B e`) ends it. It closes when its program ends.
 Plugins build on this.
 
+## Plugins
+
+A plugin is a program of yours at hand in the sidebar and on a key, without a pane or window
+of its own: a TUI like a task manager, a dashboard, notes. Each is a file in
+`~/.config/imkr/plugins/`, e.g. `peppermint.toml`:
+
+```toml
+title = "Peppermint"
+command = "peppermint-tui"        # run with sh -c, as a popup
+key = "p"                         # Ctrl+B p p opens it; optional
+mode = "popup"                    # or "fullscreen"
+status = "peppermint-tui status"  # its first lines show in the sidebar; optional
+interval = 30                     # seconds between them
+enabled = true                    # false keeps the file but leaves it out
+```
+
+The sidebar lists every plugin under *Plugins*, `◇` until it runs and `◆` after, with its status
+lines below. A click or its key starts it the first time and shows it, the same again hides it;
+it runs on hidden, keeps its state, and has every popup key (`Ctrl+B z`, `!`, `Space`).
+`Ctrl+B p` lists the plugins' keys. Since a plugin is just a program, it can be written in
+any language and cannot take imkr down; a file with a mistake shows in the sidebar with what is
+wrong, `imkr plugins` lists them all, and `Ctrl+B R` reads them again.
+
 ## Other machines
 
 The machine you sit at is the **operator**: like the beekeeper with their hives, it looks after
