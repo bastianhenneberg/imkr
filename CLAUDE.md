@@ -80,6 +80,19 @@ Projekt-Slug: `imkr`
   `pass_on` mit einfachem read/write. Test ohne sshd: Fake-`ssh` im Scratchpad vorn im PATH, der
   bis `--` überspringt und den Befehl mit `SHELL=/bin/sh sh -c` ausführt. Socket-Pfade max. 108
   Zeichen: für `XDG_RUNTIME_DIR` im Test ein kurzes Verzeichnis nehmen.
+- Hosted Windows (Programm auf anderem Rechner): `cli::new_hosted` (`imkr --host H new`, `here` =
+  Socket vor `-s`) legt per ssh `imkr new --start --window 0` (0 = freies Window) dort an und lokal
+  ein Window mit `imkr hosted H PANE [SESSION]` (`cli::hosted`, Schleife: ssh -t + `attach-pane`,
+  neu verbinden bei 255/`LOST`=75/Signal, sonst Ende). `attach-pane` schickt `Request::Tap` →
+  `App::tap` (Verbindung in `App::taps`), danach `ServerMsg::Output` roh, Eingabe als
+  `ClientMsg::Input` (Tag 8), Größe als Resize-Event. `Pane::tap`: Verlauf + `state_formatted`
+  unter dem Parser-Lock, dann Kanal (`TAP_BACKLOG`, wer zurückfällt fliegt raus und verbindet neu);
+  leerer Chunk = Pane zu Ende → `Exited`. Angezapfte Panes beantworten Terminal-Abfragen nicht
+  (das zeigende Terminal tut es) und `sync_sizes` lässt ihre Größe in Ruhe. `saved()` speichert
+  für `imkr hosted` die Zeile als `SavedPane::command` (`hosted_command`), damit es nach
+  Neustart wieder anhängt. UI: `Ctrl+B w h` → `Mode::NewSessionWhere` mit `App::hosting`.
+  Test: Fake-ssh (`env -u IMKR_SOCKET … PATH=<fake-home>/.cargo/bin:…`), Datei `down` → 255.
+  Direkte `ssh server 'imkr …'` im Test nehmen sonst das installierte imkr!
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
   `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet

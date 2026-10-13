@@ -466,6 +466,14 @@ where it is missing, upgraded with all its running sessions everywhere else. Wit
 Tailscale, the machines of your tailnet that are online and not used yet show as suggestions when
 you start a session on another machine (`Ctrl+B s n`), by their MagicDNS name.
 
+A single window can run on another machine too, in the session you are in: `Ctrl+B w h` asks
+for the machine, or `imkr --host server new [--dir D] [-- command]` from a pane. The program
+runs in a new window of the session there (started if needed), and this window shows it, at its
+size, typing into it. If the connection drops, it connects again on its own; if this machine
+restarts, the window comes back with the session and finds the program still running there.
+It closes when the program there ends; closing it here leaves the program running, in its window
+there. Under the hood it is `imkr hosted server PANE` here and `imkr attach-pane PANE` there.
+
 Agents of the other sessions, here and on other machines, are listed under *Agents* below this
 session's own, grouped by session (`⇄ codingmachine · brain`), those that need you first. A click
 goes to the session and shows the agent's pane. When one elsewhere comes to need you or finishes,

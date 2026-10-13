@@ -134,8 +134,10 @@ For scripts and agents:
                                         install it as a Claude Code skill
   notify [--title T] [--pane N] <text>  show a notification (desktop, terminal or
                                         off, as set in the settings)
-  new [--float] [--window N] [-- command args...]
-                                        start a command in a new pane
+  new [--float] [--window N] [--dir D] [-- command args...]
+                                        start a command in a new pane (window 0:
+                                        a new window)
+  --host H new [--dir D] [-- command]   a window here whose program runs on H
   rename [--pane N | --window N] [--clear | <name>]
                                         name a pane or a window
   move-window [--window N] <session>    move a window with its running panes to
@@ -180,6 +182,9 @@ fn main() -> Result<()> {
         }
         None => None,
     };
+    // The session asked from, before `-s` changes it: a hosted window
+    // shows up there.
+    let here = protocol::socket_path().ok();
     let mut session = None;
     // `-s NAME` anywhere, or `attach -t NAME` as in tmux, picks the session.
     if let Some(i) = args.iter().position(|a| {
@@ -217,6 +222,10 @@ fn main() -> Result<()> {
         ["attach" | "a", "-d"] => client::run(false, true, remote, false),
         ["proxy"] => client::proxy(false),
         ["proxy", "--start"] => client::proxy(true),
+        ["new", ..] if remote.is_some() => match (&here, &remote) {
+            (Some(here), Some(remote)) => cli::new_hosted(here, remote, &args[1..]),
+            _ => bail!("no session here to show the window in"),
+        },
         _ if remote.is_some() => bail!("--host works with attach only, run other commands there"),
         ["kill-server"] => client::kill_server(),
         ["ls", ..] => cli::ls(&args[1..]),
@@ -247,6 +256,8 @@ fn main() -> Result<()> {
         ["--skill"] => cli::skill(&[]),
         ["notify", ..] => cli::notify(&args[1..]),
         ["new", ..] => cli::new(&args[1..]),
+        ["hosted", ..] => cli::hosted(&args[1..]),
+        ["attach-pane", ..] => cli::attach_pane(&args[1..]),
         ["rename", ..] => cli::rename(&args[1..]),
         ["move-window", ..] => cli::move_window(&args[1..]),
         ["popup", ..] => cli::popup(&args[1..]),

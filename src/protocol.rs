@@ -39,6 +39,8 @@ pub enum ClientMsg {
     /// ptys follow right after as descriptors, see `fdpass`; the answer is
     /// a `ServerMsg::Reply`.
     Move(Vec<u8>),
+    /// Typed into the pane this connection taps, see `Request::Tap`.
+    Input(Vec<u8>),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -390,6 +392,11 @@ pub enum Request {
         workspace: Option<u8>,
         cwd: Option<PathBuf>,
     },
+    /// Shows pane `pane` on this connection from now on: after the reply,
+    /// its history and screen and then its output come as
+    /// `ServerMsg::Output`, `ServerMsg::Exited` when it ends. Input goes
+    /// back as `ClientMsg::Input`, the size as a resize event.
+    Tap { pane: PaneId },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +439,7 @@ impl ClientMsg {
             ClientMsg::Request(request) => write_frame(w, 4, &serde_json::to_vec(request)?),
             ClientMsg::Caps(caps) => write_frame(w, 6, &serde_json::to_vec(caps)?),
             ClientMsg::Move(json) => write_frame(w, 7, json),
+            ClientMsg::Input(bytes) => write_frame(w, 8, bytes),
         }
     }
 
@@ -449,6 +457,7 @@ impl ClientMsg {
             4 => Ok(Some(ClientMsg::Request(serde_json::from_slice(&payload)?))),
             6 => Ok(Some(ClientMsg::Caps(serde_json::from_slice(&payload)?))),
             7 => Ok(Some(ClientMsg::Move(payload))),
+            8 => Ok(Some(ClientMsg::Input(payload))),
             _ => Err(invalid(format!("unknown client message {tag}"))),
         }
     }
@@ -660,6 +669,8 @@ mod tests {
                 workspace: Some(2),
                 cwd: None,
             }),
+            ClientMsg::Request(Request::Tap { pane: 4 }),
+            ClientMsg::Input(b"\x1b[A\r".to_vec()),
         ];
         let mut wire = Vec::new();
         for msg in &msgs {

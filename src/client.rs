@@ -252,12 +252,25 @@ const PROXY_READY: u8 = 0x06;
 /// ssh: in a login shell for the profile's PATH, with ~/.cargo/bin and
 /// ~/.local/bin added, which are often only on the PATH of interactive
 /// shells. `args` are session names and fixed words, nothing to quote.
-fn remote_command(args: &[&str]) -> String {
+pub fn remote_command(args: &[&str]) -> String {
     let command = format!(
         "PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH exec imkr {}",
         args.join(" ")
     );
-    format!("exec \"${{SHELL:-sh}}\" -lc '{command}'")
+    format!("exec \"${{SHELL:-sh}}\" -lc {}", sh_quote(&command))
+}
+
+/// `word` as one word for sh, quoted when needed.
+pub fn sh_quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:=@%+,".contains(c));
+    if plain {
+        word.to_owned()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
+    }
 }
 
 /// The machine the client shows a session of, `None` for this one. Read by
@@ -1371,6 +1384,17 @@ fn pass_on(from: &mut impl Read, to: &mut impl Write) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn words_are_quoted_for_sh() {
+        assert_eq!(sh_quote("claude"), "claude");
+        assert_eq!(sh_quote("~/a b"), "'~/a b'");
+        assert_eq!(sh_quote("it's"), r"'it'\''s'");
+        assert_eq!(sh_quote(""), "''");
+        // A quoted word survives the login shell's `-lc` around it.
+        let line = remote_command(&[&sh_quote("echo 'x y'")]);
+        assert!(line.starts_with("exec \"${SHELL:-sh}\" -lc '"), "{line}");
+    }
 
     #[test]
     fn tailnet_peers_by_their_magicdns_name() {

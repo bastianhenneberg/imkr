@@ -1071,7 +1071,8 @@ pub fn worktree(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `imkr new [--float] [--window N] [-- command args...]`
+/// `imkr new [--float] [--window N] [--dir D] [-- command args...]`; window 0
+/// is a new one.
 pub fn new(args: &[String]) -> Result<()> {
     let (options, command) = match args.iter().position(|a| a == "--") {
         Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
@@ -1080,6 +1081,15 @@ pub fn new(args: &[String]) -> Result<()> {
     let mut options = options;
     let float = take_flag(&mut options, "--float");
     let workspace = take_window(&mut options)?;
+    let dir = take_value(&mut options, "--dir")?.map(std::path::PathBuf::from);
+    // `--start`: the session is started first if it does not run.
+    if take_flag(&mut options, "--start") {
+        let path = protocol::socket_path()?;
+        if std::os::unix::net::UnixStream::connect(&path).is_err() {
+            let session = std::env::var("IMKR_SESSION").ok();
+            client::start_server(&path, session.as_deref())?;
+        }
+    }
     if let Some(unknown) = options.first() {
         bail!("unknown option {unknown:?}, put the command after --");
     }
@@ -1087,10 +1097,226 @@ pub fn new(args: &[String]) -> Result<()> {
         command,
         float,
         workspace,
-        cwd: std::env::current_dir().ok(),
+        cwd: dir.or_else(|| std::env::current_dir().ok()),
     })?;
     println!("{}", value["pane"]);
     Ok(())
+}
+
+/// `imkr --host H [-s S] new [--window N] [--dir D] [--focus] [-- command…]`: a
+/// window whose program runs on H, in a new window of session S there
+/// (the default one without), shown here in a new window of `here` (or
+/// window N). The program keeps running there when this machine goes.
+pub fn new_hosted(here: &std::path::Path, remote: &client::Remote, args: &[String]) -> Result<()> {
+    let (options, command) = match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (args.to_vec(), Vec::new()),
+    };
+    let mut options = options;
+    let workspace = take_window(&mut options)?;
+    let dir = take_value(&mut options, "--dir")?;
+    let focus = take_flag(&mut options, "--focus");
+    if let Some(unknown) = options.first() {
+        bail!("unknown option {unknown:?}, put the command after --");
+    }
+    let host = remote.host.as_str();
+    let mut there: Vec<String> = Vec::new();
+    if let Some(session) = &remote.session {
+        there.extend(["-s".into(), session.clone()]);
+    }
+    let mut new = there.clone();
+    new.extend([
+        "new".into(),
+        "--start".into(),
+        "--window".into(),
+        "0".into(),
+    ]);
+    if let Some(dir) = &dir {
+        new.extend(["--dir".into(), dir.clone()]);
+    }
+    if !command.is_empty() {
+        new.push("--".into());
+        new.extend(command.iter().cloned());
+    }
+    let quoted: Vec<String> = new.iter().map(|w| client::sh_quote(w)).collect();
+    let words: Vec<&str> = quoted.iter().map(String::as_str).collect();
+    let pane = client::remote_output(host, &words, "")?;
+    // Its sessions and agents show up here from now on.
+    client::remember_host(host);
+    let pane = pane.trim();
+    if pane.parse::<PaneId>().is_err() {
+        bail!("{host} answered {pane:?} instead of a pane");
+    }
+    let exe = std::env::current_exe().context("cannot find imkr")?;
+    let mut hosted = vec![
+        exe.to_string_lossy().into_owned(),
+        "hosted".into(),
+        host.to_owned(),
+        pane.to_owned(),
+    ];
+    hosted.extend(remote.session.iter().cloned());
+    let value = client::request_at(
+        here,
+        Request::New {
+            command: hosted,
+            float: false,
+            workspace: Some(workspace.unwrap_or(0)),
+            cwd: None,
+        },
+    )?;
+    let window = value["workspace"].as_u64().unwrap_or_default() as u8;
+    if focus && let Some(shown) = value["pane"].as_u64() {
+        let _ = client::request_at(
+            here,
+            Request::Reveal {
+                pane: shown as PaneId,
+            },
+        );
+    }
+    // A window of its own is named after where it runs.
+    if workspace.is_none() {
+        let _ = client::request_at(
+            here,
+            Request::Rename {
+                target: RenameTarget::Workspace(window),
+                name: Some(host.to_owned()),
+            },
+        );
+    }
+    println!("window {window}: pane {pane} on {host}");
+    Ok(())
+}
+
+/// `imkr hosted HOST PANE [SESSION]`, the program of a window from
+/// `new_hosted`: shows pane PANE of HOST here, connecting again when the
+/// connection drops, until the pane ends there.
+pub fn hosted(args: &[String]) -> Result<()> {
+    let (host, pane, session) = match args {
+        [host, pane] => (host, pane, None),
+        [host, pane, session] => (host, pane, Some(session)),
+        _ => bail!("usage: imkr hosted HOST PANE [SESSION]"),
+    };
+    let mut words: Vec<&str> = Vec::new();
+    if let Some(session) = session {
+        words.extend(["-s", session]);
+    }
+    words.extend(["attach-pane", pane]);
+    loop {
+        let status = std::process::Command::new("ssh")
+            .args([
+                "-t",
+                "-o",
+                "ServerAliveInterval=10",
+                "-o",
+                "ServerAliveCountMax=3",
+                "--",
+                host,
+            ])
+            .arg(client::remote_command(&words))
+            .status()
+            .context("could not run ssh")?;
+        // 255: ssh lost or found no connection, LOST: imkr there lost its
+        // server; anything else is the pane's or imkr's answer there.
+        let again = matches!(status.code(), Some(255 | LOST) | None);
+        if !again {
+            if !status.success() {
+                eprintln!("\r\n[imkr] pane {pane} on {host} is gone. Enter closes this.");
+                let mut line = String::new();
+                let _ = std::io::stdin().read_line(&mut line);
+            }
+            return Ok(());
+        }
+        eprint!("\r\n[imkr] no connection to {host}, trying again in 3 s\r\n");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+}
+
+/// `attach-pane`'s exit code when the connection to its server broke.
+const LOST: i32 = 75;
+
+/// `imkr attach-pane PANE`: shows that pane of this machine's session in
+/// this terminal, see `Request::Tap`, the other end of `hosted`.
+pub fn attach_pane(args: &[String]) -> Result<()> {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    let [pane] = args else {
+        bail!("usage: imkr attach-pane PANE");
+    };
+    let pane: PaneId = pane.parse().context("PANE is a number")?;
+    let mut stream = std::os::unix::net::UnixStream::connect(protocol::socket_path()?)
+        .context("no imkr server running")?;
+    protocol::ClientMsg::Request(Request::Tap { pane }).write_to(&mut stream)?;
+    match protocol::ServerMsg::read_from(&mut stream)? {
+        Some(protocol::ServerMsg::Reply(Ok(_))) => {}
+        Some(protocol::ServerMsg::Reply(Err(message))) => bail!(message),
+        _ => bail!("the server does not show panes elsewhere, update it"),
+    }
+    let out = Arc::new(Mutex::new(stream.try_clone()?));
+    let send = {
+        let out = Arc::clone(&out);
+        move |msg: protocol::ClientMsg| msg.write_to(&mut *out.lock().unwrap())
+    };
+    crossterm::terminal::enable_raw_mode()?;
+    let size = || crossterm::terminal::size().ok();
+    let mut last = size();
+    if let Some((cols, rows)) = last {
+        send(protocol::ClientMsg::Event(crossterm::event::Event::Resize(
+            cols, rows,
+        )))?;
+    }
+    {
+        let send = send.clone();
+        std::thread::spawn(move || {
+            let mut stdin = std::io::stdin().lock();
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = stdin.read(&mut buf) {
+                if n == 0 || send(protocol::ClientMsg::Input(buf[..n].to_vec())).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let now = size();
+            if now != last
+                && let Some((cols, rows)) = now
+            {
+                last = now;
+                let resize = crossterm::event::Event::Resize(cols, rows);
+                if send(protocol::ClientMsg::Event(resize)).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    let mut stdout = std::io::stdout().lock();
+    let ended = loop {
+        match protocol::ServerMsg::read_from(&mut stream) {
+            Ok(Some(protocol::ServerMsg::Output(bytes))) => {
+                if stdout
+                    .write_all(&bytes)
+                    .and_then(|()| stdout.flush())
+                    .is_err()
+                {
+                    break false;
+                }
+            }
+            Ok(Some(protocol::ServerMsg::Exited)) => break true,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break false,
+        }
+    };
+    let _ = crossterm::terminal::disable_raw_mode();
+    if !ended {
+        // `hosted` connects again: the server was updated, or cut this
+        // connection off for falling behind.
+        eprintln!("lost the connection to the server");
+        std::process::exit(LOST);
+    }
+    // The pane ended there: the window here closes as well.
+    std::process::exit(0);
 }
 
 /// The Claude Code events that report the agent state, with the matcher

@@ -103,6 +103,8 @@ pub enum Command {
     PaneToNewWindow,
     /// Asks for a branch and opens a window in a git worktree of it.
     WorktreeWindow,
+    /// Asks for a machine and opens a window whose program runs there.
+    HostedWindow,
     /// The changes of the focused pane's repository, to note on lines and
     /// send the notes to its agent.
     Review,
@@ -783,6 +785,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "new window in a git worktree…",
         group: Group::Workspaces,
         keys: &[(Key::plain(Char('t')), C::WorktreeWindow)],
+    },
+    Binding {
+        label: "h",
+        description: "new window on another machine…",
+        group: Group::Workspaces,
+        keys: &[(Key::plain(Char('h')), C::HostedWindow)],
     },
     Binding {
         label: "m",

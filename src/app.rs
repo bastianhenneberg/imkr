@@ -581,6 +581,11 @@ pub struct App {
     active: Option<ClientId>,
     /// Every open connection, attached or not, to answer requests on.
     conns: HashMap<ClientId, UnixStream>,
+    /// Connections showing a pane elsewhere, see `Request::Tap`.
+    taps: HashMap<ClientId, PaneId>,
+    /// The machine list (`Mode::NewSessionWhere`) picks where a window
+    /// runs, not a session.
+    hosting: bool,
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
@@ -733,6 +738,8 @@ impl App {
             attached: 0,
             origin: None,
             active: None,
+            taps: HashMap::new(),
+            hosting: false,
             conns: HashMap::new(),
             next_client_id: 0,
             socket,
@@ -1119,7 +1126,7 @@ impl App {
                     agent: agent::agent_name(&argv),
                     session: pane.session.clone(),
                     name: pane.name.clone(),
-                    command: None,
+                    command: hosted_command(&argv),
                 };
                 (id, saved)
             })
@@ -1268,7 +1275,7 @@ impl App {
         }
         for (id, rect) in self.rects_of(&self.ws) {
             let inner = self.inner(rect);
-            if let Some(pane) = self.panes.get_mut(&id)
+            if let Some(pane) = self.panes.get_mut(&id).filter(|p| !p.tapped())
                 && let Err(e) = pane.resize(inner.height, inner.width)
             {
                 eprintln!("failed to resize pane {id}: {e:#}");
@@ -1379,6 +1386,25 @@ impl App {
                 }
                 Ok(())
             }
+            AppEvent::ClientMsg(id, ClientMsg::Request(Request::Tap { pane })) => {
+                self.tap(id, pane)
+            }
+            AppEvent::ClientMsg(id, ClientMsg::Input(bytes)) => {
+                if let Some(pane) = self.taps.get(&id).and_then(|p| self.panes.get_mut(p)) {
+                    pane.note_input();
+                    pane.write(&bytes)
+                } else {
+                    Ok(())
+                }
+            }
+            AppEvent::ClientMsg(id, ClientMsg::Event(Event::Resize(cols, rows)))
+                if self.taps.contains_key(&id) =>
+            {
+                match self.taps.get(&id).and_then(|p| self.panes.get_mut(p)) {
+                    Some(pane) => pane.resize(rows, cols),
+                    None => Ok(()),
+                }
+            }
             AppEvent::ClientMsg(id, ClientMsg::Request(request)) => {
                 let reply = self.request(request);
                 match self.conns.get_mut(&id) {
@@ -1403,6 +1429,7 @@ impl App {
             }
             AppEvent::ClientGone(id) => {
                 self.conns.remove(&id);
+                self.taps.remove(&id);
                 if self.take_client(id).is_some() {
                     self.fit_screen(false);
                 }
@@ -1413,6 +1440,44 @@ impl App {
             eprintln!("{e:#}");
         }
         self.follow_active();
+    }
+
+    /// Shows pane `pane` on connection `id`, see `Request::Tap`.
+    fn tap(&mut self, id: ClientId, pane: PaneId) -> Result<()> {
+        let Some(stream) = self.conns.get_mut(&id) else {
+            return Ok(());
+        };
+        let Some(shown) = self.panes.get(&pane) else {
+            return ServerMsg::Reply(Err(format!("no pane {pane}")))
+                .write_to(stream)
+                .map_err(Into::into);
+        };
+        ServerMsg::Reply(Ok(serde_json::json!({ "pane": pane }))).write_to(stream)?;
+        let mut stream = stream.try_clone()?;
+        let (screen, output) = shown.tap();
+        self.taps.insert(id, pane);
+        thread::Builder::new()
+            .name(format!("tap-{id}"))
+            .spawn(move || {
+                let mut send = |bytes| ServerMsg::Output(bytes).write_to(&mut stream);
+                if send(screen).is_err() {
+                    return;
+                }
+                for bytes in output {
+                    if bytes.is_empty() {
+                        // The pane ended: so does the window showing it.
+                        let _ = ServerMsg::Exited.write_to(&mut stream);
+                        break;
+                    }
+                    if send(bytes).is_err() {
+                        return;
+                    }
+                }
+                // Ended, or cut off for falling behind: the other side
+                // connects again for a fresh screen.
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            })?;
+        Ok(())
     }
 
     /// Starts reading from a new connection. It only shows the session once
@@ -1793,6 +1858,8 @@ impl App {
     /// Answers a request from `imkr status`, `list`, `send` or `new`.
     fn request(&mut self, request: Request) -> Reply {
         match request {
+            // Needs the connection, see `handle`.
+            Request::Tap { .. } => Err("a tap is asked for on its own connection".into()),
             Request::Status {
                 pane,
                 state,
@@ -2113,6 +2180,7 @@ impl App {
                         ('m', "move to session…", Command::MoveWorkspace),
                         ('c', "new window", Command::NewWorkspace),
                         ('t', "new window in a worktree…", Command::WorktreeWindow),
+                        ('h', "new window on another machine…", Command::HostedWindow),
                     ],
                 )
             } else if let Some((id, rect)) = self.pane_at(pos) {
@@ -2594,7 +2662,11 @@ impl App {
         workspace: Option<u8>,
         cwd: Option<PathBuf>,
     ) -> Reply {
-        let n = workspace.unwrap_or(self.workspace);
+        // 0: a window of its own, the first free number.
+        let n = match workspace {
+            Some(0) => self.free_workspace().ok_or("all 9 windows are in use")?,
+            n => n.unwrap_or(self.workspace),
+        };
         if !(1..=9).contains(&n) {
             return Err(format!("no window {n}, there are 1 to 9"));
         }
@@ -3467,6 +3539,10 @@ impl App {
                     text: String::new(),
                 });
                 self.mode = Mode::Prompt;
+            }
+            Command::HostedWindow => {
+                self.hosting = true;
+                self.mode = Mode::NewSessionWhere(0);
             }
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
@@ -4538,6 +4614,7 @@ impl App {
     /// Asks where a new session goes when other machines are known, else
     /// straight for its name.
     fn new_session(&mut self) {
+        self.hosting = false;
         let (machines, _) = self.machine_choices();
         if machines.len() > 1 {
             self.mode = Mode::NewSessionWhere(0);
@@ -4800,9 +4877,48 @@ impl App {
             KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
             _ => return,
         };
-        if let Some(host) = machines.get(pick).cloned() {
-            self.ask_session_name(host);
+        match machines.get(pick).cloned() {
+            Some(host) if self.hosting => {
+                self.mode = Mode::Normal;
+                match host {
+                    Some(host) => self.hosted_window(host),
+                    None => self.switch_workspace(self.free_workspace().unwrap_or(9)),
+                }
+            }
+            Some(host) => self.ask_session_name(host),
+            None => {}
         }
+    }
+
+    /// Opens a window whose program runs on `host`, see `cli::new_hosted`,
+    /// in the background: ssh may take a while.
+    fn hosted_window(&mut self, host: String) {
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let socket = self.socket.clone();
+        self.flash = Some(format!("opening a window on {host}…"));
+        let _ = thread::Builder::new()
+            .name("hosted-window".into())
+            .spawn(move || {
+                let output = std::process::Command::new(exe)
+                    .args(["--host", &host, "new", "--focus"])
+                    .env("IMKR_SOCKET", &socket)
+                    .env_remove("IMKR_SESSION")
+                    .stdin(std::process::Stdio::null())
+                    .output();
+                let message = match output {
+                    Ok(o) if o.status.success() => return,
+                    Ok(o) => String::from_utf8_lossy(&o.stderr).trim().to_owned(),
+                    Err(e) => e.to_string(),
+                };
+                let _ = crate::client::request_at(
+                    &socket,
+                    Request::Flash {
+                        text: format!("no window on {host}: {message}"),
+                    },
+                );
+            });
     }
 
     /// Marks the focused pane for Alt+1 … Alt+9, after the marks there are.
@@ -8006,7 +8122,11 @@ impl App {
                 self.draw_list(
                     frame,
                     body,
-                    " ⬢ New session on ",
+                    if self.hosting {
+                        " ⬢ New window running on "
+                    } else {
+                        " ⬢ New session on "
+                    },
                     &items,
                     selected,
                     bindings::CHOOSE_LIST_KEYS,
@@ -9535,6 +9655,18 @@ fn shell_name() -> String {
         .unwrap_or_else(|| "shell".into())
 }
 
+/// For a window whose program runs on another machine (`imkr hosted`):
+/// the line that shows it again after a restart here. Started again on
+/// its own, unlike other programs: it restarts nothing there.
+fn hosted_command(argv: &[String]) -> Option<String> {
+    let imkr = argv.first()?.rsplit('/').next() == Some("imkr");
+    if !imkr || argv.get(1).map(String::as_str) != Some("hosted") {
+        return None;
+    }
+    let words: Vec<String> = argv.iter().map(|w| crate::client::sh_quote(w)).collect();
+    Some(format!("exec {}", words.join(" ")))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -9551,6 +9683,19 @@ mod tests {
         assert!(pane_buttons(Rect::new(0, 0, 20, 10), false).is_empty());
     }
     use super::*;
+
+    #[test]
+    fn hosted_windows_come_back_after_a_restart() {
+        let argv: Vec<String> = ["/home/u/.cargo/bin/imkr", "hosted", "box", "3", "dev"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            hosted_command(&argv).as_deref(),
+            Some("exec /home/u/.cargo/bin/imkr hosted box 3 dev")
+        );
+        let shell: Vec<String> = ["zsh"].map(String::from).to_vec();
+        assert_eq!(hosted_command(&shell), None);
+    }
 
     #[test]
     fn edge_bars_stay_at_the_edge_around_the_margin() {

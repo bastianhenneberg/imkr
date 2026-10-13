@@ -54,7 +54,18 @@ pub struct Pane {
     /// The process went to another session with the pty: it is not ended
     /// with the pane.
     released: bool,
+    /// Connections showing this pane elsewhere (`imkr attach-pane`): they
+    /// get its output as read, unchanged.
+    taps: Taps,
 }
+
+/// How much of its history a tapped pane sends first.
+const TAPPED_HISTORY: usize = 2000;
+
+/// See `Pane::taps`. Bounded: a tap that falls this far behind is cut off,
+/// rather than holding up the pane or filling memory.
+type Taps = Arc<Mutex<Vec<std::sync::mpsc::SyncSender<Vec<u8>>>>>;
+const TAP_BACKLOG: usize = 1024;
 
 /// A finished command: where its output starts and ends, its exit code.
 type Finished = ((usize, u16), (usize, u16), Option<i32>);
@@ -287,6 +298,7 @@ impl Pane {
             events,
             reader: None,
             released: false,
+            taps: Arc::default(),
         };
         pane.read_on()?;
         Ok(pane)
@@ -315,6 +327,7 @@ impl Pane {
         let reader_graphics = Arc::clone(&self.graphics);
         let reader_links = Arc::clone(&self.links);
         let reader_shell = Arc::clone(&self.shell);
+        let reader_taps = Arc::clone(&self.taps);
         let events = self.events.clone();
         let thread = thread::Builder::new()
             .name("pty-reader".into())
@@ -408,8 +421,18 @@ impl Pane {
                                 }
                             }
                             let answers = parser.answers();
+                            // Under the parser's lock, so a new tap gets
+                            // everything after the screen it was sent.
+                            let tapped = {
+                                let mut taps = reader_taps.lock().unwrap();
+                                taps.retain(|tap| tap.try_send(buf[..n].to_vec()).is_ok());
+                                !taps.is_empty()
+                            };
                             drop(parser);
+                            // A tapped pane's terminal is the one showing it,
+                            // which answers itself.
                             if !answers.is_empty()
+                                && !tapped
                                 && let Some(out) = &mut answer_to
                             {
                                 let _ = out.write_all(&answers);
@@ -421,10 +444,44 @@ impl Pane {
                         }
                     }
                 }
+                // An empty chunk tells taps the pane ended, rather than
+                // that they were cut off.
+                for tap in reader_taps.lock().unwrap().drain(..) {
+                    let _ = tap.try_send(Vec::new());
+                }
                 let _ = events.send(AppEvent::PtyExited(id));
             })?;
         self.reader = Some(Reader { stop, thread });
         Ok(())
+    }
+
+    /// Shows the pane elsewhere: the bytes that draw its history and
+    /// screen as they are now, and a receiver for everything it outputs
+    /// from then on.
+    pub fn tap(&self) -> (Vec<u8>, std::sync::mpsc::Receiver<Vec<u8>>) {
+        let (tx, rx) = std::sync::mpsc::sync_channel(TAP_BACKLOG);
+        let parser = self.parser.lock().unwrap();
+        let mut out = Vec::new();
+        let history = parser.history_len();
+        let (_, cols) = parser.size();
+        for abs in history.saturating_sub(TAPPED_HISTORY)..history {
+            if let Some((text, wrapped)) = parser.abs_row(abs, 0, cols) {
+                out.extend_from_slice(text.trim_end().as_bytes());
+                if !wrapped {
+                    out.extend_from_slice(b"\r\n");
+                }
+            }
+        }
+        out.extend_from_slice(&parser.state_formatted());
+        self.taps.lock().unwrap().push(tx);
+        drop(parser);
+        (out, rx)
+    }
+
+    /// Whether the pane is shown elsewhere, see `tap`; its size is then
+    /// that of the terminal showing it.
+    pub fn tapped(&self) -> bool {
+        !self.taps.lock().unwrap().is_empty()
     }
 
     /// Stops reading the pty and waits until the reader is done, so the
