@@ -214,6 +214,88 @@ fn parse_address(to: &str) -> Result<(Option<String>, Option<String>, String)> {
     Ok((machine, session, who))
 }
 
+/// The working directory of the pane `address` means (as for `msg`): on
+/// which machine (`None`: this one) and where.
+fn pane_dir(address: &str) -> Result<(Option<String>, String)> {
+    let (machine, session, who) = parse_address(address)?;
+    let panes: serde_json::Value = match &machine {
+        Some(host) => {
+            let session = session
+                .clone()
+                .unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned());
+            let text = client::remote_output(host, &["-s", &session, "list", "--json"], "")?;
+            serde_json::from_str(&text).context("no pane list from there")?
+        }
+        None => match &session {
+            Some(name) => {
+                if !protocol::sessions().contains(name) {
+                    bail!("no session {name} here");
+                }
+                client::request_at(&protocol::session_socket(name)?, Request::List)?
+            }
+            None => client::request(Request::List)?,
+        },
+    };
+    let wanted = who.to_lowercase();
+    let found = panes.as_array().into_iter().flatten().find(|p| {
+        p["pane"].as_u64().map(|n| n.to_string()) == Some(who.clone())
+            || p["name"].as_str().map(str::to_lowercase).as_deref() == Some(wanted.as_str())
+            || p["program"].as_str().map(str::to_lowercase).as_deref() == Some(wanted.as_str())
+    });
+    let dir = found
+        .and_then(|p| p["cwd"].as_str())
+        .with_context(|| format!("no pane {address} with a directory"))?;
+    Ok((machine, dir.to_owned()))
+}
+
+/// `imkr cp SOURCE… DEST`: copies files like scp; any of them may be
+/// `machine:path`, or `@pane` (`@3`, `@api/claude`, `@server:api/claude`)
+/// for the directory that pane works in, with `@pane/sub/path` below it.
+pub fn cp(args: &[String]) -> Result<()> {
+    if args.len() < 2 {
+        bail!("usage: imkr cp SOURCE… DEST   (machine:path, or @pane for its directory)");
+    }
+    let mut remote = false;
+    let mut resolved = Vec::new();
+    for arg in args {
+        let Some(address) = arg.strip_prefix('@') else {
+            remote |= arg
+                .split_once(':')
+                .is_some_and(|(host, _)| !host.contains('/'));
+            resolved.push(arg.clone());
+            continue;
+        };
+        // `@api/claude:sub/path`: below the pane's directory.
+        let (address, below) = match address.split_once("::") {
+            Some((address, below)) => (address, Some(below)),
+            None => (address, None),
+        };
+        let (machine, dir) = pane_dir(address)?;
+        let path = match below {
+            Some(below) => format!("{}/{below}", dir.trim_end_matches('/')),
+            None => format!("{}/", dir.trim_end_matches('/')),
+        };
+        match machine {
+            Some(host) => {
+                remote = true;
+                resolved.push(format!("{host}:{path}"));
+            }
+            None => resolved.push(path),
+        }
+    }
+    let program = if remote { "scp" } else { "cp" };
+    let mut command = std::process::Command::new(program);
+    command.arg("-rp").args(&resolved);
+    eprintln!("{program} -rp {}", resolved.join(" "));
+    let status = command
+        .status()
+        .with_context(|| format!("could not run {program}"))?;
+    if !status.success() {
+        bail!("{program} failed");
+    }
+    Ok(())
+}
+
 /// `imkr msg [--wait] <to> <text>...`
 ///
 /// Sends a message to an agent, here or on another machine. The server

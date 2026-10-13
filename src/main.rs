@@ -107,6 +107,10 @@ For scripts and agents:
                 the active window's, or give it one; its programs run on
   explain [--pane N] [--json]
                 why a pane counts as the agent it is, in its state
+  cp SOURCE… DEST
+                copy files like scp: machine:path, or @pane (@3, @api/claude,
+                @server:api/claude) for that pane's directory, @pane::sub/path
+                below it
   fleet NAME [-n N] [--agent A] PROMPT
                 N agents (3, claude) on the same prompt, each in a worktree
                 window NAME-1 …; `fleet NAME --diff` compares what they did
@@ -228,6 +232,7 @@ fn main() -> Result<()> {
         ["subscribe", ..] => cli::subscribe(&args[1..], chosen),
         ["worktree", ..] => cli::worktree(&args[1..]),
         ["fleet", ..] => cli::fleet(&args[1..]),
+        ["cp", ..] => cli::cp(&args[1..]),
         ["explain", ..] => cli::explain(&args[1..]),
         ["layout", ..] => cli::layout(&args[1..]),
         ["mcp"] => mcp::serve(),

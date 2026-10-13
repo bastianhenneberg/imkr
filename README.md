@@ -337,6 +337,17 @@ imkr run --pane 3 -- cargo test   # types it in, waits, prints the output, exits
 imkr wait --pane 3                # waits for the command running there (--timeout S)
 ```
 
+### Copying files
+
+`imkr cp` copies like scp, and also to and from the directory a pane works in, here or in
+another session or on another machine:
+
+```bash
+imkr cp notes.md @3                     # into pane 3's directory
+imkr cp report.pdf @server:api/claude   # into the directory of claude in session api on server
+imkr cp @api/claude::target/out.log .   # a file below that pane's directory, here
+```
+
 ### Events
 
 `imkr subscribe` prints what changes in the sessions on this machine, one JSON object per line,
