@@ -205,6 +205,9 @@ Projekt-Slug: `imkr`
   Remote-Wechsel nach blocked/done erkennt `watch_places` per `remote_change` und legt sie in
   `Places::alerts`, `pass_on_alerts` meldet wie lokal (lokale Sessions melden sich selbst).
   Falle: `pkill -f <pfad>` trifft die eigene Shell, deren Befehlszeile den Pfad enthält.
+  Session endet (`ServerMsg::Exited`): Client geht per `other_running_session` in eine andere
+  laufende Session hier (Session-Liste offen, Flash), sonst Ende und `forget_place` (sonst
+  startet `imkr` die beendete leer neu). Testwelten immer mit `unset IMKR_SOCKET`!
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe
   „Tailscale“), `imkr hosts tailnet`. Test: Fake-`tailscale` im Scratchpad-bin.

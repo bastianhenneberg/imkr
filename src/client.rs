@@ -360,6 +360,28 @@ fn last_place() -> Option<(Option<String>, String)> {
     Some((host.map(str::to_owned), name.to_owned()))
 }
 
+/// Forgets where the client was: that session is gone.
+fn forget_place() {
+    if let Ok(path) = last_file() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// A session running on this machine besides `but`, the one used last
+/// first: something to go to when the shown one ends.
+fn other_running_session(but: Option<&str>) -> Option<String> {
+    let running: Vec<String> = local_sessions()
+        .into_iter()
+        .filter(|s| s.dormant.is_none() && Some(s.name.as_str()) != but)
+        .map(|s| s.name)
+        .collect();
+    let last = last_place()
+        .filter(|(host, _)| host.is_none())
+        .map(|(_, name)| name);
+    last.filter(|name| running.contains(name))
+        .or_else(|| running.into_iter().next())
+}
+
 /// Notes `host` for the session list, once it was reached.
 pub fn remember_host(host: &str) {
     let mut hosts = remembered_hosts();
@@ -688,6 +710,29 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                         }
                     }
                 };
+                execute!(stdout(), Clear(ClearType::All))?;
+            }
+            // The session ended: on to another one running here, with the
+            // session list open, rather than out of imkr.
+            Ok(Outcome::Exited) => {
+                let ended = name.clone();
+                let next = other_running_session(host.is_none().then_some(ended.as_str()))
+                    .and_then(|next| Some((connect(None, &next).ok()?, next)));
+                let Some((next_conn, next)) = next else {
+                    // Else plain `imkr` would start it again, empty.
+                    forget_place();
+                    break Ok(Outcome::Exited);
+                };
+                let ended = match &host {
+                    Some(h) => format!("{h}:{ended}"),
+                    None => ended,
+                };
+                (host, name) = (None, next);
+                *SHOWN_HOST.lock().unwrap() = None;
+                *SHOWN_SESSION.lock().unwrap() = name.clone();
+                remember_place(None, &name);
+                hello = Some((true, Some(format!("session {ended} ended"))));
+                conn = next_conn;
                 execute!(stdout(), Clear(ClearType::All))?;
             }
             other => break other,

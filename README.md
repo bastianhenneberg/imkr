@@ -585,6 +585,11 @@ stands out among many; a session without agents shows neither time nor state. `o
 ones (not running, no agents, or quiet for 12 hours) and shows them again. `imkr ls` gives the
 time too.
 
+When the session you are in ends, imkr does not drop you: you land in another session running
+on this machine, with the session list open, to go on from there (`Esc` stays, `Ctrl+B d`
+leaves). Only when none runs does imkr end, and plain `imkr` then starts afresh instead of
+bringing back an empty copy of the ended one.
+
 Sessions that do not run are listed with `◌`, in `Ctrl+B S` as a group of their own after the
 running ones, in the sidebar and in `imkr ls`:
 *stopped* ones (the machine restarted, or the server crashed) and *closed* ones (ended on
