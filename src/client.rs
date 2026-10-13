@@ -1133,29 +1133,8 @@ pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Resul
         bail!("there is no hive called {name}");
     };
     let here = crate::protocol::machine_name();
-    // The machine it was saved on, then the others; hives from before
-    // know only the one.
-    let saver = if hive.machine.is_empty() {
-        here.clone()
-    } else {
-        hive.machine.clone()
-    };
-    let mut machines = vec![crate::persist::HiveMachine {
-        name: saver.clone(),
-        hostname: saver,
-        id: hive.machine_id,
-        sessions: hive.sessions,
-    }];
-    // This machine by its id; hives from before only know names.
-    let id = crate::protocol::machine_id();
-    let is_here = |m: &crate::persist::HiveMachine| {
-        if m.id.is_empty() {
-            m.hostname == here
-        } else {
-            m.id == id
-        }
-    };
-    machines.extend(hive.machines);
+    let machines = hive_machines(hive);
+    let is_here = is_this_machine;
 
     if let Some(take) = take
         && !machines
@@ -1199,6 +1178,91 @@ pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Resul
             Ok(started) => format!("⇄ {}: started {}", machine.name, started.join(", ")),
             Err(_) => format!("⇄ {}: offline, shown as such", machine.name),
         });
+    }
+    Ok(report)
+}
+
+/// The machines of `hive`: the one it was saved on, then the others;
+/// hives from before know only the one.
+pub fn hive_machines(hive: crate::persist::Hive) -> Vec<crate::persist::HiveMachine> {
+    let saver = if hive.machine.is_empty() {
+        crate::protocol::machine_name()
+    } else {
+        hive.machine.clone()
+    };
+    let mut machines = vec![crate::persist::HiveMachine {
+        name: saver.clone(),
+        hostname: saver,
+        id: hive.machine_id,
+        sessions: hive.sessions,
+    }];
+    machines.extend(hive.machines);
+    machines
+}
+
+/// Whether `machine` of a hive is this one: by its id, by name for hives
+/// from before ids.
+pub fn is_this_machine(machine: &crate::persist::HiveMachine) -> bool {
+    if machine.id.is_empty() {
+        machine.hostname == crate::protocol::machine_name()
+    } else {
+        machine.id == crate::protocol::machine_id()
+    }
+}
+
+/// The sessions running now that hive `name` does not have, on this
+/// machine and the other machines in it that answer: what switching to it
+/// ends. As machine (`None` here) and session.
+pub fn hive_outsiders(name: &str) -> Result<Vec<(Option<String>, String)>> {
+    let Some(hive) = crate::persist::load_hive(name)? else {
+        bail!("there is no hive called {name}");
+    };
+    let mut outsiders = Vec::new();
+    for machine in hive_machines(hive) {
+        let here = is_this_machine(&machine);
+        let running = if here {
+            local_sessions()
+        } else {
+            match remote_sessions(&machine.name) {
+                Ok(sessions) => sessions,
+                Err(_) => continue,
+            }
+        };
+        for session in running {
+            if session.dormant.is_none() && !machine.sessions.contains_key(&session.name) {
+                let host = (!here).then(|| machine.name.clone());
+                outsiders.push((host, session.name));
+            }
+        }
+    }
+    Ok(outsiders)
+}
+
+/// Switches to hive `name`: brings it back (see `restore_hive`), then ends
+/// `outsiders` (from `hive_outsiders`), which go into the hive `last` as
+/// any ended session does. `keep`, the session asking, is left to it.
+pub fn switch_hive(
+    name: &str,
+    outsiders: &[(Option<String>, String)],
+    keep: Option<&str>,
+) -> Result<Vec<String>> {
+    let mut report = restore_hive(name, None, None)?;
+    let mut ended = Vec::new();
+    for (host, session) in outsiders {
+        let done = match host {
+            None if Some(session.as_str()) == keep => continue,
+            None => session_socket(session).and_then(|socket| kill_server_at(&socket)),
+            Some(host) => remote_run(host, &["-s", session, "kill-server"]),
+        };
+        if done.is_ok() {
+            ended.push(match host {
+                Some(host) => format!("{host}:{session}"),
+                None => session.clone(),
+            });
+        }
+    }
+    if !ended.is_empty() {
+        report.push(format!("ended {}", ended.join(", ")));
     }
     Ok(report)
 }

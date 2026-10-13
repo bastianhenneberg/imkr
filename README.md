@@ -678,9 +678,14 @@ session is marked with ● in the list.
 imkr hive save work       # the running sessions as the hive `work`
 imkr hive ls              # every hive with its sessions and age
 imkr hive restore work    # start what of `work` does not run
+imkr hive switch work     # only `work`: bring it back, end the rest (asks, naming them)
 imkr hive rename work api
 imkr hive rm api
 ```
+
+Switching (`w` in `Ctrl+B H`) changes context, say from one customer to another: the hive comes
+back, then every running session it does not have ends, on its machines too, and goes into
+`last` as any ended session does. It asks first and names them, because work can end with them.
 
 `imkr save` and `imkr restore` are short for `hive save` and `hive restore`. Hives live in
 `~/.local/state/imkr/saves/`, plain JSON, easy to copy or back up.

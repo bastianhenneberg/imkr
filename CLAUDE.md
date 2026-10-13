@@ -156,7 +156,11 @@ Projekt-Slug: `imkr`
   `client::snapshot_everywhere` (per ssh `imkr hive snapshot`), `push_hive` (`hive import`, nur wenn
   neuer) und `pull_hives` (`hive export`, minütlich im `watch_places`), `last` bleibt lokal.
   `restore_hive(name, from, take)`: eigener Rechner lokal, andere per `hive start` + `hosts add`
-  (Einklinken), offline bleibt offline. Test mit mehreren Welten: `IMKR_HOSTNAME` je Welt setzen,
+  (Einklinken), offline bleibt offline. Wechseln: `client::hive_outsiders` (laufende Sessions
+  der Hive-Rechner, die er nicht hat; `hive_machines`/`is_this_machine`) → `switch_hive`
+  (restore, dann `kill-server` je Außenseiter, die eigene Session lässt `keep` dem Aufrufer).
+  UI `w` in `Ctrl+B H` → `Action::SwitchHive` mit `confirm_list` (`hive_switch_ends` aus
+  `places`), `App::switch_hive` beendet die eigene Session zuletzt (Clients ziehen weiter). Test mit mehreren Welten: `IMKR_HOSTNAME` je Welt setzen,
   sonst halten sich alle für denselben Rechner.
 - Popups (`App::popups`, `popup`, `popup_shown`): Panes in `panes`, aber in keinem Workspace;
   `input_pane()` statt `ws.focus` für Tasten/Paste, `popup_rect()` für Größe/Maus, `draw_popup`

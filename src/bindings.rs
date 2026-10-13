@@ -986,6 +986,7 @@ pub const HIVE_LIST_KEYS: &[KeyHint] = &[
     ("Enter", "or digit bring back"),
     ("s", "save new"),
     ("u", "update"),
+    ("w", "switch: only this hive runs"),
     ("r", "rename"),
     ("x", "delete"),
     ("Esc", "cancel"),

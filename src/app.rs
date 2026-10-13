@@ -382,6 +382,9 @@ enum Action {
     DeleteHive,
     /// Save the running sessions over the hive named in `App::confirm_target`.
     OverwriteHive,
+    /// Switch to the hive named in `App::confirm_target`, ending the
+    /// sessions in `App::confirm_list`.
+    SwitchHive,
 }
 
 /// The sessions besides this one, here and on other machines, as the
@@ -719,6 +722,8 @@ pub struct App {
     /// The session or hive a confirmed `Action` is about, by name: a list
     /// index could point elsewhere by the time `y` is pressed.
     confirm_target: Option<String>,
+    /// What a confirmation lists, e.g. the sessions switching hives ends.
+    confirm_list: Vec<String>,
     /// The session named last, while its template is chosen.
     new_session: Option<Place>,
     /// Messages for agents that are busy or asking something: pane and
@@ -833,6 +838,7 @@ impl App {
             copy: None,
             flash: None,
             confirm_target: None,
+            confirm_list: Vec::new(),
             new_session: None,
             mailbox: Vec::new(),
             mail_sent: HashMap::new(),
@@ -6367,6 +6373,13 @@ impl App {
                     self.mode = Mode::Confirm(Action::DeleteHive);
                 }
             }
+            KeyCode::Char('w') => {
+                if let Some(name) = chosen {
+                    self.confirm_list = self.hive_switch_ends(&name);
+                    self.confirm_target = Some(name);
+                    self.mode = Mode::Confirm(Action::SwitchHive);
+                }
+            }
             KeyCode::Enter => {
                 if let Some(name) = chosen {
                     self.mode = Mode::Normal;
@@ -6384,6 +6397,78 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// What switching to hive `name` would end, as the session lists know
+    /// it now: running sessions of its machines that it does not have. The
+    /// switch itself asks the machines again.
+    fn hive_switch_ends(&self, name: &str) -> Vec<String> {
+        let Ok(Some(hive)) = persist::load_hive(name) else {
+            return Vec::new();
+        };
+        let machines: Vec<(bool, Vec<String>, String)> = crate::client::hive_machines(hive)
+            .into_iter()
+            .map(|m| {
+                let here = crate::client::is_this_machine(&m);
+                (here, m.sessions.keys().cloned().collect(), m.name)
+            })
+            .collect();
+        let in_hive_here: Vec<String> = machines
+            .iter()
+            .filter(|m| m.0)
+            .flat_map(|m| m.1.clone())
+            .collect();
+        let mut ends = Vec::new();
+        let own = protocol::session_name();
+        if !in_hive_here.contains(&own) {
+            ends.push(format!("{own} (this one)"));
+        }
+        let places = self.places.lock().unwrap().clone();
+        for session in places.local.iter().filter(|s| s.dormant.is_none()) {
+            if !in_hive_here.contains(&session.name) {
+                ends.push(session.name.clone());
+            }
+        }
+        for (_, sessions, host) in machines.iter().filter(|m| !m.0) {
+            if let Some((_, Ok(running))) = places.hosts.iter().find(|(h, _)| h == host) {
+                for session in running.iter().filter(|s| s.dormant.is_none()) {
+                    if !sessions.contains(&session.name) {
+                        ends.push(format!("{host}: {}", session.name));
+                    }
+                }
+            }
+        }
+        ends
+    }
+
+    /// Switches to hive `name`: brings it back, ends what is not in it,
+    /// this session last, on a thread that says how it went.
+    fn switch_hive(&mut self, name: &str) {
+        let socket = self.socket.clone();
+        let own = protocol::session_name();
+        let name = name.to_owned();
+        self.flash = Some(format!("switching to hive {name}…"));
+        thread::spawn(move || {
+            let result = crate::client::hive_outsiders(&name).and_then(|outsiders| {
+                let lines = crate::client::switch_hive(&name, &outsiders, Some(&own))?;
+                let ends_here = outsiders.iter().any(|(h, s)| h.is_none() && *s == own);
+                Ok((lines, ends_here))
+            });
+            match result {
+                Ok((lines, ends_here)) => {
+                    let text = format!("hive {name}: {}", lines.join(" · "));
+                    let _ = crate::client::request_at(&socket, Request::Flash { text });
+                    // Its clients go on to a session of the hive.
+                    if ends_here {
+                        let _ = crate::client::kill_server_at(&socket);
+                    }
+                }
+                Err(e) => {
+                    let text = format!("not switched: {e:#}");
+                    let _ = crate::client::request_at(&socket, Request::Flash { text });
+                }
+            }
+        });
     }
 
     /// Brings hive `name` back on every machine in it, see
@@ -7538,6 +7623,11 @@ impl App {
             Action::OverwriteHive => {
                 if let Some(name) = self.confirm_target.take() {
                     self.save_hive(&name);
+                }
+            }
+            Action::SwitchHive => {
+                if let Some(name) = self.confirm_target.take() {
+                    self.switch_hive(&name);
                 }
             }
         }
@@ -9150,6 +9240,30 @@ impl App {
                     "Delete the hive {}? Running sessions keep running.",
                     target()
                 ))],
+            ),
+            Action::SwitchHive => (
+                " Switch hive ",
+                if self.confirm_list.is_empty() {
+                    vec![Line::from(format!(
+                        "Switch to the hive {}? Nothing else runs, nothing ends.",
+                        target()
+                    ))]
+                } else {
+                    let mut lines = vec![Line::from(format!(
+                        "Switch to the hive {}? These sessions end, into the hive `last`:",
+                        target()
+                    ))];
+                    for name in self.confirm_list.iter().take(8) {
+                        lines.push(Line::from(format!("  {name}")));
+                    }
+                    if self.confirm_list.len() > 8 {
+                        lines.push(Line::from(format!(
+                            "  … {} more",
+                            self.confirm_list.len() - 8
+                        )));
+                    }
+                    lines
+                },
             ),
             Action::OverwriteHive => (
                 " Update hive ",

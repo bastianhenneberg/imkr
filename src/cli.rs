@@ -1617,8 +1617,8 @@ pub fn restore(args: &[String]) -> Result<()> {
 /// `imkr hive <ls | save | restore | rm | rename>`: hives, saved groups
 /// of sessions. `save` and `restore` also work without `hive`.
 pub fn hive(args: &[String]) -> Result<()> {
-    const USAGE: &str =
-        "usage: imkr hive <ls | save [NAME] | restore [NAME] | rm NAME | rename OLD NEW>";
+    const USAGE: &str = "usage: imkr hive <ls | save [NAME] | restore [NAME] | switch NAME [--yes] \
+                         | rm NAME | rename OLD NEW>";
     match args {
         [] => bail!(USAGE),
         [cmd] if cmd == "ls" => restore(&["--list".to_owned()]),
@@ -1664,6 +1664,31 @@ pub fn hive(args: &[String]) -> Result<()> {
         [cmd, old, name] if cmd == "rename" => {
             crate::persist::rename_hive(old, name)?;
             println!("hive {old} is now {name}");
+            Ok(())
+        }
+        // Only this hive's sessions: it comes back, the others end.
+        [cmd, name, flags @ ..] if cmd == "switch" && flags.iter().all(|f| f == "--yes") => {
+            if std::env::var_os("IMKR_SOCKET").is_some() {
+                bail!("switching hives needs the sessions' names, unset IMKR_SOCKET");
+            }
+            let outsiders = client::hive_outsiders(name)?;
+            if outsiders.is_empty() {
+                println!("nothing runs outside hive {name}");
+            } else {
+                println!("Switching to hive {name} ends these sessions (they go into `last`):");
+                for (host, session) in &outsiders {
+                    match host {
+                        Some(host) => println!("  {host}: {session}"),
+                        None => println!("  {session}"),
+                    }
+                }
+                if flags.is_empty() && !ask("End them and switch?")? {
+                    bail!("not switched");
+                }
+            }
+            for line in client::switch_hive(name, &outsiders, None)? {
+                println!("{line}");
+            }
             Ok(())
         }
         _ => bail!(USAGE),

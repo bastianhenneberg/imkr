@@ -61,6 +61,9 @@ Commands:
                 start, machines that are off show as offline. --from fetches
                 it first (a new machine), --take restores that machine's
                 sessions here (one that replaces it)
+  hive switch NAME [--yes]
+                only that hive: bring it back, end every other running
+                session on its machines (into `last`), after asking
   hive rm NAME  delete a hive, running sessions keep running
   hive rename OLD NEW
                 rename a hive
