@@ -722,6 +722,11 @@ pub struct App {
     /// When each pane last got a message, so the next one waits a little.
     mail_sent: HashMap<PaneId, Instant>,
     prompt: Option<Prompt>,
+    /// The directories listed on other machines for the directory prompt,
+    /// by machine and directory; `None` while ssh is still asking.
+    dir_lists: DirLists,
+    /// The directory chosen with the arrows under the directory prompt.
+    dir_pick: Option<usize>,
     picker: Option<Picker>,
     /// The last copy mode search and its direction, for n and N.
     search: Option<(String, bool)>,
@@ -827,6 +832,8 @@ impl App {
             mailbox: Vec::new(),
             mail_sent: HashMap::new(),
             prompt: None,
+            dir_lists: Arc::default(),
+            dir_pick: None,
             picker: None,
             search: None,
             last_click: None,
@@ -5024,7 +5031,107 @@ impl App {
             purpose: PromptFor::SessionDir(place, template),
             text: suggested,
         });
+        self.dir_pick = None;
+        // Directories there may have changed since the last time.
+        self.dir_lists.lock().unwrap().clear();
         self.mode = Mode::Prompt;
+    }
+
+    /// The directories where the directory prompt's text is typed, on the
+    /// machine the session starts on; `None` while another machine is
+    /// still asked, through ssh in the background.
+    fn dir_names(&self) -> Option<Vec<String>> {
+        let Some(Prompt {
+            purpose: PromptFor::SessionDir(place, _),
+            text,
+        }) = &self.prompt
+        else {
+            return Some(Vec::new());
+        };
+        let parent = crate::template::split_dir(text).0.to_owned();
+        let Some(host) = place.host.clone() else {
+            return Some(crate::template::subdirs(&parent).unwrap_or_default());
+        };
+        let key = (host.clone(), parent.clone());
+        let mut lists = self.dir_lists.lock().unwrap();
+        if let Some(listed) = lists.get(&key) {
+            return listed.clone();
+        }
+        lists.insert(key.clone(), None);
+        let lists = Arc::clone(&self.dir_lists);
+        let events = self.events.clone();
+        thread::spawn(move || {
+            let names = crate::client::remote_output(&host, &["dirs"], &parent)
+                .ok()
+                .and_then(|out| serde_json::from_str::<Vec<String>>(&out).ok())
+                .unwrap_or_default();
+            lists.lock().unwrap().insert(key, Some(names));
+            // Draws the list.
+            let _ = events.send(AppEvent::PtyOutput);
+        });
+        None
+    }
+
+    /// The directories the directory prompt's text may complete to.
+    fn dir_choices(&self) -> Option<Vec<String>> {
+        let names = self.dir_names()?;
+        let text = self.prompt.as_ref().map_or("", |p| p.text.as_str());
+        let prefix = crate::template::split_dir(text).1;
+        Some(
+            crate::template::matching(&names, prefix)
+                .into_iter()
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// Tab and the arrows in the directory prompt: the arrows choose from
+    /// the directories under it, Tab takes the chosen one, else completes
+    /// like a shell. False for other keys.
+    fn dir_key(&mut self, key: KeyEvent) -> bool {
+        let Some(Prompt {
+            purpose: PromptFor::SessionDir(..),
+            ..
+        }) = &self.prompt
+        else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Up | KeyCode::Down => {
+                let count = self.dir_choices().map_or(0, |c| c.len().min(DIR_ROWS));
+                self.dir_pick = match (self.dir_pick, key.code) {
+                    _ if count == 0 => None,
+                    (None, KeyCode::Down) => Some(0),
+                    (None, _) => Some(count - 1),
+                    (Some(i), KeyCode::Down) => Some((i + 1) % count),
+                    (Some(i), _) => Some((i + count - 1) % count),
+                };
+                true
+            }
+            KeyCode::Tab => {
+                let picked = self
+                    .dir_pick
+                    .and_then(|i| self.dir_choices()?.into_iter().nth(i));
+                let names = self.dir_names();
+                if let Some(prompt) = &mut self.prompt {
+                    let parent = crate::template::split_dir(&prompt.text).0.to_owned();
+                    match (picked, names) {
+                        (Some(name), _) => prompt.text = format!("{parent}{name}/"),
+                        (None, Some(names)) => {
+                            prompt.text = crate::template::complete_with(&prompt.text, &names)
+                        }
+                        (None, None) => {}
+                    }
+                }
+                self.dir_pick = None;
+                true
+            }
+            _ => {
+                // Typing changes what is listed.
+                self.dir_pick = None;
+                false
+            }
+        }
     }
 
     /// Starts session `place` from `template` and goes there: here right
@@ -6814,6 +6921,9 @@ impl App {
 
     /// Typing a name: Enter saves it, an empty name clears it, Esc cancels.
     fn prompt_key(&mut self, key: KeyEvent) {
+        if self.dir_key(key) {
+            return;
+        }
         let Some(prompt) = &mut self.prompt else {
             self.mode = Mode::Normal;
             return;
@@ -6926,12 +7036,6 @@ impl App {
                             self.search_next(false);
                         }
                     }
-                }
-            }
-            // Directories on this machine complete like in a shell.
-            KeyCode::Tab => {
-                if let PromptFor::SessionDir(Place { host: None, .. }, _) = prompt.purpose {
-                    prompt.text = crate::template::complete_dir(&prompt.text);
                 }
             }
             KeyCode::Char('w') if ctrl && matches!(prompt.purpose, PromptFor::SessionDir(..)) => {
@@ -8822,7 +8926,7 @@ impl App {
         } else {
             prompt.text.clone()
         };
-        let lines = vec![
+        let mut lines = vec![
             Line::from(vec![
                 Span::styled("› ", Style::new().fg(accent).add_modifier(Modifier::BOLD)),
                 Span::raw(shown.clone()),
@@ -8834,11 +8938,8 @@ impl App {
                     PromptFor::NewWindow { .. } => "Enter save · Esc closes the window again",
                     PromptFor::Search { .. } => "Enter find · then n next, N previous · Esc cancel",
                     PromptFor::NewSession(_) => "Enter start and switch · letters, digits, - and _",
-                    PromptFor::SessionDir(Place { host: None, .. }, _) => {
-                        "Enter start · Tab completes · Ctrl+W up a directory · Esc cancel"
-                    }
                     PromptFor::SessionDir(..) => {
-                        "Enter start · ~ is the home directory there · Esc cancel"
+                        "Enter start · Tab completes · ↑↓ choose · Ctrl+W up · Esc cancel"
                     }
                     PromptFor::MoveWindow(_) => "Enter move · a new name starts it · Esc cancel",
                     PromptFor::RenameSession(_) => "Enter rename · letters, digits, - and _",
@@ -8853,6 +8954,36 @@ impl App {
                 hint,
             ),
         ];
+        if let PromptFor::SessionDir(place, _) = &prompt.purpose {
+            // The directories it may complete to, between text and hint.
+            let mut listed = Vec::new();
+            match self.dir_choices() {
+                None => listed.push(Line::styled(
+                    format!("  listing on {}…", place.host.as_deref().unwrap_or("")),
+                    hint,
+                )),
+                Some(choices) => {
+                    for (i, name) in choices.iter().take(DIR_ROWS).enumerate() {
+                        let style = if self.dir_pick == Some(i) {
+                            Style::new().fg(theme::current().on_accent).bg(accent)
+                        } else {
+                            Style::new()
+                        };
+                        listed.push(Line::styled(format!("  {name}/"), style));
+                    }
+                    if choices.len() > DIR_ROWS {
+                        listed.push(Line::styled(
+                            format!("  … {} more", choices.len() - DIR_ROWS),
+                            hint,
+                        ));
+                    }
+                }
+            }
+            if !listed.is_empty() {
+                listed.push(Line::default());
+                lines.splice(2..2, listed);
+            }
+        }
         let popup = centered(area, width, lines.len() as u16 + 2);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -9798,6 +9929,11 @@ const OLD_AFTER: u64 = 12 * 3600;
 /// and keep how long they were before, see `App::carried`.
 const CARRIED_FOR: Duration = Duration::from_secs(120);
 /// The longest directory typed in a prompt.
+/// Directories listed on other machines, by machine and directory.
+type DirLists = Arc<Mutex<HashMap<(String, String), Option<Vec<String>>>>>;
+
+/// How many directories the directory prompt lists under the text.
+const DIR_ROWS: usize = 8;
 const MAX_PATH: usize = 400;
 
 /// The button after the tabs that opens a new workspace.

@@ -51,6 +51,8 @@ Commands:
   proxy [--start]
                 connect stdin/stdout to the session, used by --host
   ls [--json]   list the running sessions
+  dirs [DIR]    the directories in DIR (or the one on stdin) as JSON, for
+                completing a session's directory from another machine
   hive ls       list the hives: saved groups of sessions
   hive save [NAME]
                 save every running session as a hive (default `last`)
@@ -238,6 +240,8 @@ fn main() -> Result<()> {
         _ if remote.is_some() => bail!("--host works with attach only, run other commands there"),
         ["kill-server"] => client::kill_server(),
         ["ls", ..] => cli::ls(&args[1..]),
+        ["dirs"] => cli::dirs(None),
+        ["dirs", parent] => cli::dirs(Some(parent)),
         ["keys"] => {
             print!("{}", bindings::reference());
             Ok(())

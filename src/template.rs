@@ -277,35 +277,54 @@ pub fn home_dir(dir: &Path) -> PathBuf {
     }
 }
 
-/// `text` completed as a directory on this machine, like a shell's Tab:
-/// the one directory it starts, with a `/`, or what all of them share.
-/// `~` stays as typed.
-pub fn complete_dir(text: &str) -> String {
-    let (parent, prefix) = match text.rfind('/') {
+/// A typed directory split where the last name starts: the directory to
+/// list, with its `/`, and the start of the name typed in it.
+pub fn split_dir(text: &str) -> (&str, &str) {
+    match text.rfind('/') {
         Some(i) => (&text[..=i], &text[i + 1..]),
-        None if text == "~" => return "~/".into(),
         None => ("", text),
-    };
+    }
+}
+
+/// The directories in `parent`, as `split_dir` gives it, on this machine,
+/// sorted; `None` when it cannot be read.
+pub fn subdirs(parent: &str) -> Option<Vec<String>> {
     let listed = if parent.is_empty() {
         PathBuf::from(".")
     } else {
         home_dir(Path::new(parent))
     };
-    let Ok(entries) = std::fs::read_dir(&listed) else {
-        return text.to_owned();
-    };
-    let mut names: Vec<String> = entries
+    let mut names: Vec<String> = std::fs::read_dir(listed)
+        .ok()?
         .flatten()
         .filter(|e| e.path().is_dir())
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with(prefix) && (prefix.starts_with('.') || !n.starts_with('.')))
         .collect();
     names.sort();
-    match names.as_slice() {
+    Some(names)
+}
+
+/// Those of `names` that `prefix` starts, hidden ones only when it does
+/// with a dot.
+pub fn matching<'a>(names: &'a [String], prefix: &str) -> Vec<&'a String> {
+    names
+        .iter()
+        .filter(|n| n.starts_with(prefix) && (prefix.starts_with('.') || !n.starts_with('.')))
+        .collect()
+}
+
+/// `text` completed from `names`, the directories where it is typed, like
+/// a shell's Tab: the one it starts, with a `/`, or what all of them share.
+pub fn complete_with(text: &str, names: &[String]) -> String {
+    if text == "~" {
+        return "~/".into();
+    }
+    let (parent, prefix) = split_dir(text);
+    match matching(names, prefix).as_slice() {
         [] => text.to_owned(),
         [one] => format!("{parent}{one}/"),
         [first, rest @ ..] => {
-            let mut shared = first.clone();
+            let mut shared = first.to_string();
             for name in rest {
                 let len = shared
                     .chars()
@@ -317,6 +336,14 @@ pub fn complete_dir(text: &str) -> String {
             format!("{parent}{shared}")
         }
     }
+}
+
+/// `text` completed as a directory on this machine, see `complete_with`.
+/// `~` stays as typed.
+#[cfg(test)]
+pub fn complete_dir(text: &str) -> String {
+    let names = subdirs(split_dir(text).0).unwrap_or_default();
+    complete_with(text, &names)
 }
 
 /// `path` with the home directory as `~`, as typed in a prompt.

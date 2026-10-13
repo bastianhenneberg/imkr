@@ -687,8 +687,9 @@ cwd = "src"       # relative to root
 ```
 
 After the template, `Ctrl+B s n` asks for the session's directory: suggested is the template's
-`root`, without one the directory of the focused pane. Tab completes directories like a shell,
-`Ctrl+W` goes up one; relative `cwd`s of the template start there. Commands are typed
+`root`, without one the directory of the focused pane. The directories that fit what is typed
+are listed under it, on the machine the session starts on (another one through ssh): `↑`/`↓`
+choose one, Tab takes it or completes like a shell, `Ctrl+W` goes up one; relative `cwd`s of the template start there. Commands are typed
 into a fresh shell, so the shell stays when they end. Templates come along to other machines
 like plugins, and `~` is that machine's home.
 

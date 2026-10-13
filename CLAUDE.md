@@ -155,7 +155,9 @@ Projekt-Slug: `imkr`
   über `Origin::templates`. Splits ↔ Layout: `Layout::splits`/`split_at`. Laufende Sessions
   speichern nie `command` (nach einem Crash startet nichts von selbst). Nach der Vorlage (auch
   „leer“ und ohne Vorlagen) fragt `ask_session_dir` den Ordner (`PromptFor::SessionDir`,
-  Vorschlag root/fokussiertes Pane/`~`, Tab = `template::complete_dir` nur lokal, `MAX_PATH`);
+  Vorschlag root/fokussiertes Pane/`~`, Liste darunter `dir_choices` (`DIR_ROWS`, ↑↓ `dir_pick`,
+  Tab `dir_key` → `template::complete_with`), andere Rechner per ssh `imkr dirs` (Pfad auf stdin)
+  in `dir_lists` gecacht, `MAX_PATH`);
   der Ordner wird `Template::root`, „leer“ = Vorlage mit einem Window.
 - Ruhende Sessions: `persist::dormant_sessions` (State-Dateien ohne laufenden Server = stopped,
   Hive `last` = closed), `client::local_sessions` hängt sie mit `SessionInfo::dormant` an (also

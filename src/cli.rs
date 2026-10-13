@@ -79,6 +79,23 @@ fn ignore_hook(hook: &serde_json::Value, state: Option<AgentState>) -> bool {
 
 /// `imkr ls`: the running sessions with their panes and agents, then
 /// those that stopped or were closed and can come back.
+/// `imkr dirs [DIR]`: the directories in `DIR` as typed (`~` is the home
+/// here), or in the one on stdin, as a JSON list, for another machine
+/// completing a session's directory. Nothing when it cannot be read.
+pub fn dirs(parent: Option<&str>) -> Result<()> {
+    let parent = match parent {
+        Some(parent) => parent.to_owned(),
+        None => {
+            let mut text = String::new();
+            std::io::stdin().read_to_string(&mut text)?;
+            text.trim_end_matches('\n').to_owned()
+        }
+    };
+    let names = crate::template::subdirs(&parent).unwrap_or_default();
+    println!("{}", serde_json::to_string(&names)?);
+    Ok(())
+}
+
 pub fn ls(args: &[String]) -> Result<()> {
     let sessions = client::local_sessions();
     if args.iter().any(|a| a == "--json") {
