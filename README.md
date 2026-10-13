@@ -141,6 +141,16 @@ imkr worktree fix-login -- claude     # window "fix-login" in ../api--fix-login,
 
 Worktrees stay when the window closes; `git worktree remove` deletes one once its work is merged.
 
+A fleet puts several agents on the same task, each in a worktree of its own, to pick the best
+result:
+
+```bash
+imkr fleet speed -n 3 "make the start-up faster"   # windows speed-1 … speed-3 running claude
+imkr fleet speed --diff                            # what each one committed and changed since
+```
+
+`--agent codex` (or any agent that takes the prompt as its argument) runs another one.
+
 With *Git checkpoint after each agent turn* on in the settings, imkr keeps the state of an
 agent's repository each time it finishes a turn: a commit of every file, new ones too, on
 `refs/imkr/checkpoints/<session>-<pane>`, only when something changed. Your branch, index and

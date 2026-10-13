@@ -38,6 +38,22 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
+/// The main working tree of the repository `from` is in, also from inside
+/// one of its worktrees: worktrees go next to it.
+pub fn main_root(from: &Path) -> Result<PathBuf> {
+    let top = git(from, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .with_context(|| format!("{} is in no git repository", from.display()))?;
+    let common = git(
+        &top,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    Ok(Path::new(&common)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or(top))
+}
+
 /// The worktree `name` of the repository `from` is in: made on branch
 /// `name` (new, from the current commit, or the one there is), or the one
 /// made before.
@@ -45,18 +61,7 @@ pub fn create(from: &Path, name: &str) -> Result<PathBuf> {
     if !valid_name(name) {
         bail!("{name:?} is no branch name: letters, digits, - _ . and /");
     }
-    let top = git(from, &["rev-parse", "--show-toplevel"])
-        .map(PathBuf::from)
-        .with_context(|| format!("{} is in no git repository", from.display()))?;
-    // A worktree's own top is not the main one: worktrees go next to that.
-    let common = git(
-        &top,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?;
-    let main = Path::new(&common)
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or(top);
+    let main = main_root(from)?;
     let dir = dir_for(&main, name).context("the repository has no name")?;
     if dir.join(".git").exists() {
         return Ok(dir);

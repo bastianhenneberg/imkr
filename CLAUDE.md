@@ -230,6 +230,8 @@ Projekt-Slug: `imkr`
 - Worktrees: `src/worktree.rs` (`create`: neben dem Haupt-Repo `<repo>--<name>`, über
   `--git-common-dir` auch aus einem Worktree heraus), `App::worktree_window` (`Request::Worktree`,
   `Ctrl+B w t` per `PromptFor::Worktree`). Entfernen bleibt bei git.
+  Fleets: `cli::fleet` (N× `Request::Worktree` `NAME-i` mit `[agent, prompt]`, Ausgangs-Commit in
+  `refs/imkr/fleets/NAME`, `--diff` vergleicht je Worktree dagegen), `worktree::main_root`.
 - MCP: `src/mcp.rs` (`imkr mcp`, JSON-RPC je Zeile auf stdin/stdout, `handle`; jedes Werkzeug ruft
   das eigene Binary mit dem CLI-Befehl auf, `command_for`, Text per stdin). Test: Zeilen per Pipe
   mit `IMKR_SOCKET` der Testsession.

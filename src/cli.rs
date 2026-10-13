@@ -872,6 +872,101 @@ pub fn explain(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `imkr fleet NAME [-n N] [--agent A] PROMPT…` starts N agents on the
+/// same prompt, each in a worktree window of its own (`NAME-1` …);
+/// `imkr fleet NAME --diff` shows what each changed since.
+pub fn fleet(args: &[String]) -> Result<()> {
+    const USAGE: &str =
+        "usage: imkr fleet NAME [-n N] [--agent claude] PROMPT… | imkr fleet NAME --diff";
+    let mut rest = args.to_vec();
+    let diff = take_flag(&mut rest, "--diff");
+    let count: usize = take_value(&mut rest, "-n")?
+        .map(|n| n.parse())
+        .transpose()
+        .context("-n wants a number")?
+        .unwrap_or(3);
+    let agent = take_value(&mut rest, "--agent")?.unwrap_or_else(|| "claude".into());
+    let Some((name, prompt)) = rest.split_first() else {
+        bail!(USAGE);
+    };
+    if !crate::worktree::valid_name(name) {
+        bail!("{name:?} is no branch name: letters, digits, - _ . and /");
+    }
+    let here = std::env::current_dir()?;
+    let main = crate::worktree::main_root(&here)?;
+    let base = format!("refs/imkr/fleets/{name}");
+    let git = |dir: &std::path::Path, args: &[&str]| -> Result<String> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()?;
+        if !output.status.success() {
+            bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_owned())
+    };
+    if diff {
+        let start = git(&main, &["rev-parse", "--verify", &base])
+            .with_context(|| format!("no fleet {name} in this repository"))?;
+        for i in 1.. {
+            let member = format!("{name}-{i}");
+            let Some(dir) = crate::worktree::dir_for(&main, &member).filter(|d| d.exists()) else {
+                break;
+            };
+            println!("== {member}  ({})", dir.display());
+            let commits = git(&dir, &["log", "--oneline", &format!("{start}..HEAD")])?;
+            if !commits.is_empty() {
+                println!("{commits}");
+            }
+            let stat = git(&dir, &["diff", "--stat", &start])?;
+            let new = git(&dir, &["ls-files", "--others", "--exclude-standard"])?;
+            match (stat.is_empty(), new.is_empty()) {
+                (true, true) if commits.is_empty() => println!("  no changes"),
+                _ => {
+                    if !stat.is_empty() {
+                        println!("{stat}");
+                    }
+                    for file in new.lines() {
+                        println!(" {file} (new)");
+                    }
+                }
+            }
+            println!();
+        }
+        println!(
+            "git -C <dir> diff {} shows one in full",
+            &start[..start.len().min(12)]
+        );
+        return Ok(());
+    }
+    if prompt.is_empty() {
+        bail!(USAGE);
+    }
+    if !(1..=8).contains(&count) {
+        bail!("a fleet has 1 to 8 agents");
+    }
+    git(&main, &["update-ref", &base, "HEAD"])?;
+    let prompt = prompt.join(" ");
+    for i in 1..=count {
+        let member = format!("{name}-{i}");
+        let reply = client::request(Request::Worktree {
+            name: member.clone(),
+            command: vec![agent.clone(), prompt.clone()],
+            cwd: Some(here.clone()),
+        })?;
+        println!(
+            "{member}: window {} in {}",
+            reply["window"],
+            reply["dir"].as_str().unwrap_or_default()
+        );
+    }
+    println!("compare them with: imkr fleet {name} --diff");
+    Ok(())
+}
+
 /// `imkr worktree NAME [-- command args...]`
 pub fn worktree(args: &[String]) -> Result<()> {
     let (options, command) = match args.iter().position(|a| a == "--") {
