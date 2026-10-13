@@ -1032,6 +1032,40 @@ pub const HIVE_LIST_KEYS: &[KeyHint] = &[
     ("Esc", "cancel"),
 ];
 
+/// The keys of copy mode (`Ctrl+B y`), in groups: title, keys. Its key
+/// board, the help and `imkr keys` all show this table.
+pub const COPY_KEYS: &[(&str, &[KeyHint])] = &[
+    (
+        "Move",
+        &[
+            ("hjkl", "by one"),
+            ("w b e", "words"),
+            ("0 $", "line ends"),
+            ("g G", "top, bottom"),
+            ("^U ^D", "half page"),
+            ("^B ^F", "page"),
+        ],
+    ),
+    (
+        "Jump & search",
+        &[
+            ("s", "jump (again: end there)"),
+            ("/ ?", "search down, up"),
+            ("n N", "next, previous"),
+        ],
+    ),
+    (
+        "Select",
+        &[
+            ("v", "start"),
+            ("V", "whole lines"),
+            ("y", "copy"),
+            ("i", "hide keys"),
+            ("q", "leave"),
+        ],
+    ),
+];
+
 /// The lists with keys of their own, for the help: title, how to open it,
 /// its keys.
 pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
@@ -1176,6 +1210,14 @@ pub fn reference() -> String {
         for (label, description) in *keys {
             let pad = width.saturating_sub(label.chars().count());
             out.push_str(&format!("  {label}{}  {description}\n", " ".repeat(pad)));
+        }
+    }
+    out.push_str(&format!("\nCopy mode ({PREFIX_LABEL}, y)\n"));
+    for (title, keys) in COPY_KEYS {
+        out.push_str(&format!("  {title}\n"));
+        for (label, description) in *keys {
+            let pad = width.saturating_sub(label.chars().count() + 2);
+            out.push_str(&format!("    {label}{}  {description}\n", " ".repeat(pad)));
         }
     }
     out.push_str(

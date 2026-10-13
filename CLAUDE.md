@@ -39,7 +39,9 @@ Projekt-Slug: `imkr`
   zuerst), Labels aus `JUMP_LABELS` ohne Zeichen, die auf einen Treffer folgen; `jump_key`
   setzt Fokus und `CopyCursor` (eine Markierung im selben Pane bleibt, der Sprung setzt ihr
   Ende), `draw_jump` malt Treffer/Labels. Copy-Mode: `w`/`b`/`e` (`word_motion`, Wörter =
-  alles zwischen Leerraum, `WORD_ROWS` um den Cursor), `V` zeilenweise. `Ctrl+B j` oder `s` im
+  alles zwischen Leerraum, `WORD_ROWS` um den Cursor), `V` zeilenweise. Tasten des Copy-Modes nur in `bindings::COPY_KEYS` (Tafel
+  `menu::draw_copy_keys` im Copy-Mode, `i` bzw. `which_key.copy_mode` blendet sie aus, Hilfe,
+  `imkr keys`). `Ctrl+B j` oder `s` im
   Copy-Mode; Copy-Mode auch auf `Ctrl+B y` (`[` braucht auf QWERTZ AltGr).
 - Maus, Selektion, Copy-Mode: `App::mouse`, `App::copy_key`. Positionen in Selektion/Copy-Cursor sind
   *absolute* Zeilen (0 = älteste Zeile im Verlauf), damit Scrollen sie nicht verschiebt. Text holt

@@ -27,6 +27,8 @@ pub struct WhichKey {
     pub enabled: bool,
     /// Which bottom corner the menu opens in.
     pub position: Side,
+    /// Show the copy-mode keys while in copy mode (`i` there toggles it).
+    pub copy_mode: bool,
 }
 
 impl Default for WhichKey {
@@ -34,6 +36,7 @@ impl Default for WhichKey {
         Self {
             enabled: true,
             position: Side::Left,
+            copy_mode: true,
         }
     }
 }
@@ -652,6 +655,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Which-key menu",
         value: |c| if c.which_key.enabled { "on" } else { "off" }.to_owned(),
         step: |c, _| c.which_key.enabled = !c.which_key.enabled,
+    },
+    Setting {
+        name: "Copy-mode keys",
+        value: |c| if c.which_key.copy_mode { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.which_key.copy_mode = !c.which_key.copy_mode,
     },
     Setting {
         name: "Which-key position",

@@ -73,6 +73,51 @@ pub fn draw_which_key(
     draw_box(frame, popup, title, 1, lines);
 }
 
+/// The copy-mode keys in the bottom corner of `area` on `side`, as a
+/// which-key board: the groups side by side when they fit, else stacked.
+pub fn draw_copy_keys(frame: &mut Frame, area: Rect, side: Side) {
+    let area = inset(area);
+    let max_width = usize::from(area.width).saturating_sub(4);
+    let lines = copy_lines(max_width);
+    let width = (lines.iter().map(Line::width).max().unwrap_or(0) as u16 + 4).min(area.width);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let x = match side {
+        Side::Left => area.x,
+        Side::Right => area.right() - width,
+    };
+    let popup = Rect::new(x, area.bottom() - height, width, height);
+    draw_box(frame, popup, " ⬢ copy mode ".into(), 1, lines);
+}
+
+/// The groups of `COPY_KEYS`, as many side by side as fit `max_width`.
+fn copy_lines(max_width: usize) -> Vec<Line<'static>> {
+    let columns: Vec<Vec<Line>> = crate::bindings::COPY_KEYS
+        .iter()
+        .map(|(title, keys)| {
+            let key_width = keys
+                .iter()
+                .map(|(k, _)| k.chars().count())
+                .max()
+                .unwrap_or(0);
+            let mut lines = vec![Line::styled(
+                (*title).to_owned(),
+                Style::new()
+                    .fg(theme::current().magenta)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )];
+            lines.extend(keys.iter().map(|(key, what)| {
+                Line::from(vec![
+                    Span::styled(*key, key_style()),
+                    Span::raw(" ".repeat(key_width - key.chars().count() + GAP)),
+                    Span::raw(*what),
+                ])
+            }));
+            lines
+        })
+        .collect();
+    grid(columns, max_width)
+}
+
 /// The full key reference in the middle of `area`, scrolled down by
 /// `scroll` lines when it is taller than the screen.
 pub fn draw_help(frame: &mut Frame, area: Rect, scroll: u16) {
@@ -112,6 +157,17 @@ pub fn draw_help(frame: &mut Frame, area: Rect, scroll: u16) {
         ]));
         lines.extend(key_lines(keys, max_width));
     }
+    lines.push(Line::default());
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Copy mode",
+            Style::new()
+                .fg(theme::current().magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("  {PREFIX_LABEL} y, then"), dim),
+    ]));
+    lines.extend(copy_lines(max_width));
     lines.extend([
         Line::default(),
         Line::styled("Focus and resize repeat: for a moment afterwards,", dim),
@@ -200,6 +256,12 @@ fn groups(groups: &[Group], max_width: usize, selected: Option<usize>) -> Vec<Li
             group_lines(g, here)
         })
         .collect();
+    grid(columns, max_width)
+}
+
+/// `columns` in a grid: as many side by side as fit into `max_width`,
+/// the rest in further rows.
+fn grid(columns: Vec<Vec<Line<'static>>>, max_width: usize) -> Vec<Line<'static>> {
     let widths: Vec<usize> = columns
         .iter()
         .map(|lines| lines.iter().map(Line::width).max().unwrap_or(0))

@@ -4663,6 +4663,12 @@ impl App {
             KeyCode::Char('n') => self.search_next(false),
             KeyCode::Char('N') => self.search_next(true),
             KeyCode::Char('s') => self.start_jump(),
+            KeyCode::Char('i') => {
+                self.config.which_key.copy_mode = !self.config.which_key.copy_mode;
+                if let Err(e) = self.config.save() {
+                    self.config_note = Some(format!("not saved: {e:#}"));
+                }
+            }
             KeyCode::Char('w') => self.copy_word(Word::Next),
             KeyCode::Char('b') if !ctrl => self.copy_word(Word::Back),
             KeyCode::Char('e') => self.copy_word(Word::End),
@@ -9038,6 +9044,9 @@ impl App {
                 let side = self.config.which_key.position;
                 menu::draw_which_key(frame, body, side, menu, &commands, None);
             }
+            Mode::Copy if self.config.which_key.copy_mode => {
+                menu::draw_copy_keys(frame, body, self.config.which_key.position);
+            }
             Mode::Pick(menu, at) => {
                 let commands = self.which_key_commands(menu);
                 let side = self.config.which_key.position;
@@ -10138,7 +10147,7 @@ impl App {
             Mode::Jump => (
                 "JUMP",
                 t.accent,
-                "type what to jump to · its label jumps · Enter the first · Esc back",
+                "type what to jump to · its label jumps · Enter the first · Esc back · then v select, s again ends it, y copy",
             ),
             Mode::Accounts(_) => (
                 "ACCOUNTS",
@@ -10156,7 +10165,11 @@ impl App {
             Mode::Copy => (
                 "COPY",
                 t.magenta,
-                "hjkl move · ^U ^D ^B ^F page · g G ends · / ? search · n N next · v select · y copy · q quit",
+                if self.config.which_key.copy_mode {
+                    "v select · s jump · y copy · i hide keys · q quit"
+                } else {
+                    "hjkl w b e move · s jump · / search · v V select · y copy · i show all keys · q quit"
+                },
             ),
             Mode::Help(_) => ("HELP", t.blue, "j k scroll · any other key closes"),
             Mode::Confirm(_) => ("CONFIRM", t.danger, "y yes · any other key cancels"),
