@@ -400,6 +400,8 @@ struct Places {
     last_seen: HashMap<String, Vec<String>>,
     /// Machines of the Tailscale network that are online, as suggestions.
     tailnet: Vec<String>,
+    /// The devices that have `imkr web` of this machine open.
+    web: Vec<crate::web::Seen>,
 }
 
 /// A session to switch to: on this machine (`host` is `None`) or another.
@@ -3100,7 +3102,17 @@ impl App {
         });
 
         let branch = self.focused_cwd().and_then(|cwd| sidebar::git_branch(&cwd));
+        // Taken apart from the rest: `machine_label` below takes the lock.
+        let phones = self
+            .places
+            .lock()
+            .unwrap()
+            .web
+            .iter()
+            .map(|seen| (seen.device.clone(), seen.viewing.clone()))
+            .collect();
         sidebar::Data {
+            phones,
             workspaces,
             sessions: self.session_rows(),
             other_agents: self
@@ -9578,7 +9590,11 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                 web_at = Some(Instant::now());
                 crate::web::keep_running();
             }
-            places.lock().unwrap().local = local;
+            let web = crate::web::connected();
+            let mut known = places.lock().unwrap();
+            known.local = local;
+            known.web = web;
+            drop(known);
 
             if hives_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {
                 let online = crate::client::tailnet_peers()

@@ -533,6 +533,9 @@ imkr web devices         # the paired devices
 imkr web forget phone    # unpair one (or `all`)
 ```
 
+While a device has the page open, the sidebar of the sessions here lists it under *Phones*, with
+the pane it shows as a terminal.
+
 Pairing gives the device a token in a cookie; only paired devices see anything or type into a
 pane. *Web view for phones* in the settings (`web = true`) keeps it running: every imkr server
 starts it when nothing answers on its address, after a reboot too, and it moves to a new binary

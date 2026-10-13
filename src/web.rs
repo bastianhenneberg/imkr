@@ -377,6 +377,78 @@ fn devices_path() -> Result<PathBuf> {
     Ok(crate::persist::state_dir()?.join("web-devices.json"))
 }
 
+// --- Who is connected ---
+
+/// A paired device that has the page open, for the sidebar of the
+/// sessions here (`Places::web`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seen {
+    pub device: String,
+    pub address: String,
+    /// When it last asked for something.
+    pub at: u64,
+    /// The pane it shows as a terminal, as `session › pane`, with the
+    /// machine in front when it is another one.
+    #[serde(default)]
+    pub viewing: Option<String>,
+}
+
+/// How long a device counts as there after it last asked: the page asks
+/// every 3 s while shown, a terminal says it is there every `STILL_THERE`.
+const SEEN_FOR: u64 = 15;
+const STILL_THERE: Duration = Duration::from_secs(5);
+
+static SEEN: std::sync::Mutex<Vec<Seen>> = std::sync::Mutex::new(Vec::new());
+
+fn seen_path() -> Result<PathBuf> {
+    Ok(crate::persist::state_dir()?.join("web-seen.json"))
+}
+
+/// Notes that `device` asked from `address`, showing `viewing` (or not,
+/// `Some(None)`; `None` keeps what it showed), for `connected`.
+fn note_seen(device: &str, address: &str, viewing: Option<Option<String>>) {
+    let mut seen = SEEN.lock().unwrap();
+    let now = now();
+    seen.retain(|s| s.at + SEEN_FOR > now || s.viewing.is_some());
+    let at = seen.iter().position(|s| s.device == device);
+    let old = at.map(|i| seen[i].clone());
+    let entry = match at {
+        Some(i) => &mut seen[i],
+        None => {
+            seen.push(Seen {
+                device: device.to_owned(),
+                ..Seen::default()
+            });
+            seen.last_mut().expect("pushed")
+        }
+    };
+    entry.address = address.to_owned();
+    entry.at = now;
+    if let Some(viewing) = viewing {
+        entry.viewing = viewing;
+    }
+    // Written when something shows differently, else every few seconds.
+    let changed = old.is_none_or(|old| {
+        old.viewing != entry.viewing || old.address != entry.address || old.at + 4 <= now
+    });
+    if changed && let (Ok(path), Ok(bytes)) = (seen_path(), serde_json::to_vec(&*seen)) {
+        let _ = write_private(&path, &bytes);
+    }
+}
+
+/// The devices that have the page of `imkr web` here open now.
+pub fn connected() -> Vec<Seen> {
+    let Some(seen) = seen_path()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<Vec<Seen>>(&bytes).ok())
+    else {
+        return Vec::new();
+    };
+    let now = now();
+    seen.into_iter().filter(|s| s.at + SEEN_FOR > now).collect()
+}
+
 fn pairing_path() -> Result<PathBuf> {
     Ok(crate::persist::state_dir()?.join("web-pairing.json"))
 }
@@ -506,6 +578,8 @@ fn pair(code: &str, name: &str) -> Result<(String, String), &'static str> {
 // --- HTTP ---
 
 struct HttpRequest {
+    /// Who asked, by address.
+    peer: String,
     method: String,
     path: String,
     query: HashMap<String, String>,
@@ -586,6 +660,7 @@ fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<HttpRequest>
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
     Ok(Some(HttpRequest {
+        peer: String::new(),
         method,
         path: path.to_owned(),
         query: parse_query(query),
@@ -732,9 +807,10 @@ fn handle(stream: TcpStream) {
         stream.set_read_timeout(Some(Duration::from_secs(30)))?;
         let mut reader = BufReader::new(stream.try_clone()?);
         // Closed without a word: `keep_running` looking whether it runs.
-        let Some(request) = read_request(&mut reader)? else {
+        let Some(mut request) = read_request(&mut reader)? else {
             return Ok(());
         };
+        request.peer = peer.clone();
         let mut stream = stream;
         let response = if request.method == "GET" && request.path == "/ws" {
             match request.device() {
@@ -806,13 +882,18 @@ fn route(request: &HttpRequest) -> Response {
         (_, path) if path.starts_with("/api/") && device.is_none() => {
             Response::error("401 Unauthorized", "not paired")
         }
-        ("GET", "/api/state") => Response::json(&serde_json::json!({
+        ("GET", "/api/state") => {
+            if let Some(device) = &device {
+                note_seen(&device.name, &request.peer, None);
+            }
+            Response::json(&serde_json::json!({
             "machine": protocol::machine_name(),
             "version": env!("CARGO_PKG_VERSION"),
             "device": device.map(|d| d.name),
             "sessions": crate::client::local_sessions(),
             "hosts": other_machines(),
-        })),
+            }))
+        }
         ("POST", "/api/send") if request.same_origin() => send(&request.body),
         _ => Response::error("404 Not Found", "nothing here"),
     }
@@ -1072,6 +1153,13 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
     {
         return Ok(());
     }
+    let device = request.device().map(|d| d.name).unwrap_or_default();
+    let shown = match host {
+        Some(host) => format!("{host}:{session} #{}", pane.unwrap_or_default()),
+        None => format!("{session} #{}", pane.unwrap_or_default()),
+    };
+    note_seen(&device, &request.peer, Some(Some(shown)));
+    let mut told = std::time::Instant::now();
     // Output comes in on its own thread; this one waits for input, briefly,
     // and passes on what came meanwhile.
     let (tx, rx) = mpsc::channel::<Option<Vec<u8>>>();
@@ -1135,7 +1223,12 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
         if !pending.is_empty() && ws.send(Message::binary(pending)).is_err() {
             break false;
         }
+        if told.elapsed() >= STILL_THERE {
+            told = std::time::Instant::now();
+            note_seen(&device, &request.peer, None);
+        }
     };
+    note_seen(&device, &request.peer, Some(None));
     if ended {
         let _ = ws.send(text(serde_json::json!({ "exited": true })));
     }
@@ -1208,6 +1301,7 @@ mod tests {
     #[test]
     fn only_own_pages_count() {
         let request = |origin: Option<&str>| HttpRequest {
+            peer: String::new(),
             method: "POST".into(),
             path: "/api/send".into(),
             query: HashMap::new(),

@@ -114,6 +114,9 @@ Projekt-Slug: `imkr`
   Andere Rechner: `other_machines` (per `Request::Places` von den lokalen Servern, ohne laufenden
   Server eigenes Polling `polled_machines`), `/api/send` mit `host` → `imkr send` per ssh,
   `/ws?host=` → `client::Conn::remote` (`imkr proxy`); nur Hosts aus dieser Liste (`known_machine`).
+  Verbundene Geräte: `note_seen` (bei `/api/state`, WS-Start/-Ende, alle `STILL_THERE` im WS)
+  → `<state>/web-seen.json`, `web::connected()` (jünger als `SEEN_FOR`) → `Places::web` in
+  `watch_places` → Sidebar „Phones“ (`Data::phones`, vor `machine_label` aus dem Lock holen).
   Log: `Response::note` (Ablehnung/Kopplung) → `log` mit `stamp` und Peer; leere Verbindungen
   (`read_request` → `None`, die Probe von `keep_running`) still. `firewall_hint`/`ufw_hint` liest
   `/etc/ufw/ufw.conf` + `user.rules` (lesbar ohne root), Interface aus `interfaces()`.

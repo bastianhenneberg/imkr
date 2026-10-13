@@ -114,6 +114,9 @@ pub struct Data {
     pub changes: Vec<Change>,
     /// The file tree: the root's name and what is shown of it.
     pub files: Option<(String, Vec<Entry>)>,
+    /// Devices with `imkr web` of this machine open, and the pane each
+    /// shows as a terminal. Shown only when there are any.
+    pub phones: Vec<(String, Option<String>)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -457,6 +460,19 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
         }
     }
 
+    if !data.phones.is_empty() {
+        out.push((Line::default(), None));
+        out.push((Line::styled("Phones", heading(t.success)), None));
+        for (device, viewing) in &data.phones {
+            let mut spans = vec![Span::raw(fit(&format!("  {device}"), width))];
+            if let Some(viewing) = viewing {
+                let room = width.saturating_sub(device.chars().count() + 2);
+                spans.push(Span::styled(fit(&format!(" · {viewing}"), room), dim));
+            }
+            out.push((Line::from(spans), None));
+        }
+    }
+
     if let Some(branch) = &data.branch {
         out.push((Line::default(), None));
         out.push((
@@ -708,6 +724,7 @@ mod tests {
 
     fn data() -> Data {
         Data {
+            phones: Vec::new(),
             sessions: Vec::new(),
             popups: Vec::new(),
             other_agents: Vec::new(),
