@@ -27,6 +27,9 @@ pub struct Saved {
     /// The template it was made from, when it is a new session's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    /// The accounts new shells start with, by agent, see `account`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub accounts: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -47,6 +50,9 @@ pub struct SavedPane {
     /// save one: what ran before a crash is not started again on its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The accounts its agents use, by agent, see `Pane::accounts`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub accounts: BTreeMap<String, String>,
 }
 
 impl Saved {
@@ -61,6 +67,7 @@ impl Saved {
             workspaces,
             panes,
             template: None,
+            accounts: BTreeMap::new(),
         }
     }
 }
@@ -598,6 +605,7 @@ mod tests {
                     name: Some("backend".into()),
                     command: None,
                     idle_since: Some(1_790_000_000),
+                    accounts: BTreeMap::from([("claude".into(), "privat".into())]),
                 },
             ),
             (2, SavedPane::default()),

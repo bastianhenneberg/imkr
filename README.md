@@ -289,6 +289,39 @@ imkr notify --title build "done in 42 s"  # with a title of its own
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.
 
+### Several accounts, and the next one when one is used up
+
+One machine, several Claude Code and Codex subscriptions, and providers Claude Code reaches by
+address and key (OpenRouter, a local Ollama). Each account is an environment the agent starts
+with: a subscription gets a directory of its own (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) holding only
+its login, and everything else links to `~/.claude` or `~/.codex`, settings, hooks, skills, MCP
+servers and the conversations. So a conversation goes on in another account where it stopped.
+`~/.claude` itself is the account `standard`.
+
+```bash
+imkr account add claude privat          # logs it in: Claude Code starts in it, /login, /exit
+imkr account add codex work             # `codex login` in it
+echo "$KEY" | imkr account add claude router --url https://openrouter.ai/api \
+                                             --model qwen/qwen3-coder --token-stdin
+imkr account add claude local --url http://localhost:11434 --token ollama --model qwen3-coder
+imkr account                            # every account, in the order to fall back in
+imkr account use privat                 # new shells of this session start in it
+imkr account switch privat --pane 3     # the agent in pane 3 goes on in it, now
+imkr account run privat -- claude       # one command in it
+imkr account sync                       # share what is new in ~/.claude, MCP servers again
+```
+
+`Ctrl+B s c` lists them: Enter puts the focused agent into the chosen account, `u` new shells of
+this session. Switching ends the agent and starts it again in the same conversation, typed into
+its shell as `imkr account run claude:privat -- claude --resume <id>`, so no key shows on the
+screen; the session id comes from the hooks.
+
+When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", Codex: "You've
+hit your usage limit"), imkr notes that account as used up until then and, as *Account used up*
+in the settings says, tells you which account is next (`ask`, the default), goes on in it by
+itself (`auto`), or does nothing (`off`). The next one is the next in the list that is logged in
+and not used up, round. Accounts and keys live in `~/.local/state/imkr/accounts/` (0600).
+
 ### Agents talking to each other
 
 Agents in imkr can find, read and message each other, on this machine and on the others:

@@ -1,3 +1,4 @@
+mod account;
 mod agent;
 mod app;
 mod bindings;
@@ -74,6 +75,11 @@ Commands:
                 a directory, or by name from a catalog; shown before they are added
   plugin search [WORD] | market
                 what the plugin catalogs offer (`plugin_catalogs`)
+  account [ls] | add claude|codex NAME [--url URL --model M --token-stdin]
+          | login NAME | rm NAME | sync | env NAME | run NAME -- CMD
+          | use NAME (new shells here) | switch NAME [--pane N] (agent now)
+                several Claude Code and Codex accounts on this machine,
+                subscriptions or providers (OpenRouter, Ollama)
   revive NAME   bring back a session that stopped (reboot, crash) or was
                 closed, without attaching; `ls` lists them with ◌
   forget NAME   forget such a session: its saved layout is deleted
@@ -283,6 +289,7 @@ fn main() -> Result<()> {
         ["hosts", ..] => cli::hosts(&args[1..]),
         ["plugins"] | ["plugin"] | ["plugin", "ls"] => cli::plugins(),
         ["plugin", ..] => cli::plugin(&args[1..]),
+        ["account" | "accounts", ..] => cli::account(&args[1..]),
         ["template", ..] => cli::template(&args[1..]),
         ["revive", name] => cli::revive(name),
         ["forget", name] => cli::forget(name),

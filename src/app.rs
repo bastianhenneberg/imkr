@@ -121,6 +121,8 @@ enum Mode {
     Sessions(usize),
     /// The hives menu is open with the given hive selected.
     Hives(usize),
+    /// The agents' accounts, see `account_items`.
+    Accounts(usize),
     /// Choosing the session to move this window to, that entry selected.
     MoveTo(u8, usize),
     /// The list of every agent, here and elsewhere, that one selected.
@@ -732,6 +734,14 @@ pub struct App {
     /// When each pane last got a message, so the next one waits a little.
     mail_sent: HashMap<PaneId, Instant>,
     prompt: Option<Prompt>,
+    /// The accounts new shells start with, by agent, see `account`.
+    accounts: BTreeMap<String, String>,
+    /// Agents ending to start again in another account: the command to
+    /// type once the shell is back in front, and since when it waits.
+    switching: HashMap<PaneId, (String, Instant)>,
+    /// When an agent's used up account was last noticed, so that the
+    /// message still on its screen does not count again.
+    used_up_seen: HashMap<PaneId, Instant>,
     /// The directories listed on other machines for the directory prompt,
     /// by machine and directory; `None` while ssh is still asking.
     dir_lists: DirLists,
@@ -844,6 +854,9 @@ impl App {
             mail_sent: HashMap::new(),
             prompt: None,
             dir_lists: Arc::default(),
+            accounts: BTreeMap::new(),
+            switching: HashMap::new(),
+            used_up_seen: HashMap::new(),
             dir_pick: None,
             picker: None,
             search: None,
@@ -905,6 +918,7 @@ impl App {
                 cwd: None,
                 command: &[],
                 socket: &self.socket,
+                accounts: &self.accounts,
             },
             self.events.clone(),
         )?;
@@ -933,6 +947,7 @@ impl App {
             }
         };
         self.carry_idle(&saved);
+        self.accounts = saved.accounts.clone();
 
         let template = saved.template.clone();
         let resume_commands = self.config.resume_commands();
@@ -954,6 +969,7 @@ impl App {
                         cwd: cwd.as_deref(),
                         command: &[],
                         socket: &self.socket,
+                        accounts: &spec.accounts,
                     },
                     &before,
                     self.events.clone(),
@@ -1051,6 +1067,7 @@ impl App {
         self.unseen.extend(handover.unseen.iter().copied());
         let saved = handover.saved;
         self.carry_idle(&saved);
+        self.accounts = saved.accounts.clone();
         let mut handed = handover.panes;
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
@@ -1063,6 +1080,7 @@ impl App {
                     Some(Ok(mut pane)) => {
                         pane.session = spec.session;
                         pane.name = spec.name;
+                        pane.accounts = spec.accounts;
                         self.panes.insert(id, pane);
                     }
                     Some(Err(e)) => {
@@ -1207,11 +1225,14 @@ impl App {
                         .get(&id)
                         .filter(|(state, _)| *state == AgentState::Idle)
                         .map(|(_, since)| unix_now().saturating_sub(since.elapsed().as_secs())),
+                    accounts: pane.accounts.clone(),
                 };
                 (id, saved)
             })
             .collect();
-        Saved::new(self.workspace, workspaces, panes)
+        let mut saved = Saved::new(self.workspace, workspaces, panes);
+        saved.accounts = self.accounts.clone();
+        saved
     }
 
     /// Saves the layout when it changed, at most once a second.
@@ -2069,6 +2090,24 @@ impl App {
                 self.flash = Some(text);
                 Ok(serde_json::json!({}))
             }
+            Request::UseAccount { tool, name, pane } => {
+                let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
+                let account = store
+                    .find(&tool, &name)
+                    .ok_or(format!("no {tool} account {name}, see `imkr account`"))?;
+                if !store.logged_in(&account) {
+                    return Err(format!(
+                        "{tool} account {name} is not logged in: `imkr account login {tool}:{name}`"
+                    ));
+                }
+                match pane {
+                    None => {
+                        set_account(&mut self.accounts, &tool, &name);
+                        Ok(serde_json::json!({ "tool": tool, "account": name }))
+                    }
+                    Some(id) => self.switch_account(id, &account),
+                }
+            }
             Request::ReloadPlugins => {
                 self.load_plugins();
                 Ok(serde_json::json!({ "plugins": self.own_plugins.len() }))
@@ -2172,6 +2211,7 @@ impl App {
                     "name": pane.name,
                     "workspace_name": ws.name,
                     "meta": pane.meta().map(agent::Meta::label),
+                    "account": pane.account(),
                     "tail": matches!(
                         self.shown_state(id),
                         Some(AgentState::Blocked | AgentState::Done)
@@ -2829,6 +2869,7 @@ impl App {
                 cwd: cwd.as_deref(),
                 command,
                 socket: &self.socket,
+                accounts: &self.accounts,
             },
             self.events.clone(),
         );
@@ -2855,6 +2896,8 @@ impl App {
     /// Looks at what every agent is doing. When one starts waiting for the
     /// user where the user is not looking, it rings the bell and says so.
     fn update_agents(&mut self) {
+        self.finish_switches();
+        self.check_used_up();
         for pane in self.panes.values_mut() {
             pane.refresh_meta();
         }
@@ -3097,7 +3140,7 @@ impl App {
                     state: self.shown_state(id)?,
                     since: now - since,
                     focused: id == self.ws.focus,
-                    meta: pane.meta().map(agent::Meta::label).unwrap_or_default(),
+                    meta: pane.meta_label(),
                 })
             })
             .collect();
@@ -3548,6 +3591,10 @@ impl App {
                 self.hives_key(key, selected);
                 Ok(())
             }
+            Mode::Accounts(selected) => {
+                self.accounts_key(key, selected);
+                Ok(())
+            }
             Mode::MoveTo(window, selected) => {
                 self.move_to_key(key, window, selected);
                 Ok(())
@@ -3708,6 +3755,133 @@ impl App {
         Ok(())
     }
 
+    /// Starts the agent in pane `id` again in `account`, in the same
+    /// conversation: it is ended, and once its shell is back in front
+    /// (`finish_switches`), `imkr account run` starts it with that
+    /// account's environment, so no key shows on the screen.
+    fn switch_account(&mut self, id: PaneId, account: &crate::account::Account) -> Reply {
+        let pane = self.panes.get(&id).ok_or(format!("no pane {id}"))?;
+        if pane.program().as_deref() != Some(account.tool.as_str()) {
+            return Err(format!(
+                "no {tool} runs in pane {id}: start it there with `imkr account run {tool}:{name} -- {tool}`",
+                tool = account.tool,
+                name = account.name
+            ));
+        }
+        let mut command = vec![
+            imkr_path(),
+            "account".to_owned(),
+            "run".to_owned(),
+            format!("{}:{}", account.tool, account.name),
+            "--".to_owned(),
+        ];
+        command.extend(crate::account::resume_command(
+            &account.tool,
+            pane.session.as_deref(),
+        ));
+        let line = command
+            .iter()
+            .map(|w| crate::client::sh_quote(w))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !pane.stop_foreground() {
+            return Err(format!("could not end the agent in pane {id}"));
+        }
+        let pane = self.panes.get_mut(&id).expect("looked up above");
+        set_account(&mut pane.accounts, &account.tool, &account.name);
+        self.switching.insert(id, (line, Instant::now()));
+        Ok(serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name }))
+    }
+
+    /// Types the commands of `switching` into shells that are back in front,
+    /// see `switch_account`; gives up on an agent that does not end.
+    fn finish_switches(&mut self) {
+        let ids: Vec<PaneId> = self.switching.keys().copied().collect();
+        for id in ids {
+            let Some(pane) = self.panes.get(&id) else {
+                self.switching.remove(&id);
+                continue;
+            };
+            let in_front = agent::is_shell(&pane.foreground_argv());
+            let (line, since) = self.switching[&id].clone();
+            if in_front {
+                self.switching.remove(&id);
+                let _ = self.type_into(id, &line, true);
+            } else if since.elapsed() > SWITCH_WAIT {
+                self.switching.remove(&id);
+                self.flash = Some(format!("pane {id}: the agent did not end, not switched"));
+            }
+        }
+    }
+
+    /// Notices agents whose account is used up (`account::used_up_in` on
+    /// the end of their screen), notes it, and goes on in the next free
+    /// account or says which, as the settings say.
+    fn check_used_up(&mut self) {
+        if self.config.account_fallback == crate::config::AccountFallback::Off {
+            return;
+        }
+        let now = crate::persist::now();
+        let mut hits = Vec::new();
+        for (&id, pane) in &self.panes {
+            let Some(tool) = pane
+                .program()
+                .filter(|p| crate::account::TOOLS.contains(&p.as_str()))
+            else {
+                continue;
+            };
+            // A used up account stops the agent: one at work is not.
+            if self.shown_state(id) == Some(AgentState::Working)
+                || self
+                    .used_up_seen
+                    .get(&id)
+                    .is_some_and(|at| at.elapsed() < USED_UP_QUIET)
+            {
+                continue;
+            }
+            let tail = agent::tail(&pane.screen(), USED_UP_LINES);
+            if let Some(until) = crate::account::used_up_in(&tail, now) {
+                let current = pane
+                    .accounts
+                    .get(&tool)
+                    .cloned()
+                    .unwrap_or_else(|| crate::account::STANDARD.to_owned());
+                hits.push((id, tool, current, until));
+            }
+        }
+        if hits.is_empty() {
+            return;
+        }
+        let Ok(store) = crate::account::Store::here() else {
+            return;
+        };
+        for (id, tool, current, until) in hits {
+            self.used_up_seen.insert(id, Instant::now());
+            if let Some(account) = store.find(&tool, &current) {
+                let _ = store.mark_used_up(&account, until);
+            }
+            let when = crate::protocol::chrono_like(until).unwrap_or_default();
+            let next = store.next_free(&tool, &current);
+            let auto = self.config.account_fallback == crate::config::AccountFallback::Auto;
+            let text = match next {
+                Some(next) if auto => match self.switch_account(id, &next) {
+                    Ok(_) => format!(
+                        "account {current} used up until {when}: goes on in {}",
+                        next.name
+                    ),
+                    Err(e) => format!("account {current} used up until {when}, not switched: {e}"),
+                },
+                Some(next) => format!(
+                    "account {current} used up until {when}: Ctrl+B s c to go on in {}",
+                    next.name
+                ),
+                None => format!("account {current} used up until {when}, no other free one"),
+            };
+            self.notify(id, &text);
+            self.flash = Some(format!("pane {id}: {text}"));
+        }
+    }
+
     /// Runs the command bound to `key` after the prefix. Unbound keys just
     /// end the prefix.
     fn command(&mut self, menu: Menu, key: KeyEvent) -> Result<()> {
@@ -3790,6 +3964,7 @@ impl App {
             }
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
+            Command::Accounts => self.mode = Mode::Accounts(0),
             Command::PluginMarket => {
                 let exe = std::env::current_exe()
                     .map_or("imkr".into(), |e| e.to_string_lossy().into_owned());
@@ -7786,6 +7961,7 @@ impl App {
                 cwd: cwd.as_deref(),
                 command,
                 socket: &self.socket,
+                accounts: &self.accounts,
             },
             self.events.clone(),
         );
@@ -7949,6 +8125,7 @@ impl App {
                 cwd: cwd.as_deref(),
                 command: &[],
                 socket: &self.socket,
+                accounts: &self.accounts,
             },
             self.events.clone(),
         );
@@ -8050,6 +8227,7 @@ impl App {
                 cwd: cwd.or(here.as_deref()),
                 command,
                 socket: &self.socket,
+                accounts: &self.accounts,
             },
             self.events.clone(),
         )?;
@@ -8796,8 +8974,123 @@ impl App {
                     bindings::HIVE_LIST_KEYS,
                 );
             }
+            Mode::Accounts(selected) => {
+                let (_, items) = self.account_items();
+                self.draw_list(
+                    frame,
+                    body,
+                    " ⬢ Accounts ",
+                    &items,
+                    selected.min(items.len().saturating_sub(1)),
+                    bindings::ACCOUNT_LIST_KEYS,
+                );
+            }
             Mode::Prefix(_) | Mode::Normal | Mode::Repeat(..) | Mode::Copy | Mode::Sidebar(_) => {}
         }
+    }
+
+    /// Every account of every agent, grouped by agent, with what uses it:
+    /// ● new shells of this session, ▸ the focused agent.
+    fn account_items(&self) -> (Vec<crate::account::Account>, Vec<menu::MenuItem>) {
+        let Ok(store) = crate::account::Store::here() else {
+            return (Vec::new(), Vec::new());
+        };
+        let focused = self.panes.get(&self.ws.focus);
+        let mut accounts = Vec::new();
+        let mut items = Vec::new();
+        for tool in crate::account::TOOLS {
+            for account in store.of_tool(tool) {
+                let session = self
+                    .accounts
+                    .get(*tool)
+                    .map_or(account.is_standard(), |name| *name == account.name);
+                let agent = focused.is_some_and(|pane| {
+                    pane.program().as_deref() == Some(*tool)
+                        && pane
+                            .accounts
+                            .get(*tool)
+                            .map_or(account.is_standard(), |name| *name == account.name)
+                });
+                let mut hint = account.kind();
+                if !store.logged_in(&account) {
+                    hint.push_str(" · not logged in");
+                }
+                if let Some(until) = store.used_up_until(&account) {
+                    hint.push_str(&format!(" · used up until {until}"));
+                }
+                let marks = format!(
+                    "{}{}",
+                    if agent { "▸" } else { " " },
+                    if session { "●" } else { " " }
+                );
+                items.push(menu::MenuItem {
+                    key: char::from_digit((items.len() as u32 + 1) % 10, 10).unwrap_or(' '),
+                    title: format!("{marks} {}", account.name),
+                    hint,
+                    danger: false,
+                    apart: false,
+                    color: None,
+                    group: Some((*tool).to_owned()),
+                });
+                accounts.push(account);
+            }
+        }
+        (accounts, items)
+    }
+
+    /// The account list: Enter puts the focused agent into the chosen
+    /// account if it is that agent, else (and with `u`) new shells.
+    fn accounts_key(&mut self, key: KeyEvent, selected: usize) {
+        let (accounts, _) = self.account_items();
+        let count = accounts.len().max(1);
+        let selected = selected.min(count - 1);
+        let chosen = |i: usize| accounts.get(i).cloned();
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::Accounts((selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::Accounts((selected + 1) % count);
+                return;
+            }
+            KeyCode::Enter => chosen(selected).map(|a| (a, true)),
+            KeyCode::Char('u') => chosen(selected).map(|a| (a, false)),
+            KeyCode::Char(c) => c
+                .to_digit(10)
+                .and_then(|d| chosen((d as usize + 9) % 10))
+                .map(|a| (a, true)),
+            _ => None,
+        };
+        let Some((account, now)) = pick else {
+            return;
+        };
+        self.mode = Mode::Normal;
+        let focus = self.ws.focus;
+        let runs_it = self
+            .panes
+            .get(&focus)
+            .is_some_and(|p| p.program().as_deref() == Some(account.tool.as_str()));
+        let pane = (now && runs_it).then_some(focus);
+        let request = Request::UseAccount {
+            tool: account.tool.clone(),
+            name: account.name.clone(),
+            pane,
+        };
+        self.flash = Some(match self.request(request) {
+            Ok(_) if pane.is_some() => {
+                format!("{} goes on in account {}", account.tool, account.name)
+            }
+            Ok(_) => format!(
+                "new shells of this session use {} account {}",
+                account.tool, account.name
+            ),
+            Err(e) => e,
+        });
     }
 
     /// The list shown now, if one is: its items and the one selected.
@@ -9574,6 +9867,11 @@ impl App {
                 t.accent,
                 "↑↓ choose · Enter bring back · s save new · u update · r rename · x delete · Esc cancel",
             ),
+            Mode::Accounts(_) => (
+                "ACCOUNTS",
+                t.accent,
+                "↑↓ choose · Enter focused agent goes on in it · u new shells here · Esc cancel",
+            ),
             Mode::Picker => ("GO TO", t.cyan, "type to filter · Enter go · Esc cancel"),
             Mode::Sidebar(_) => (
                 "SIDEBAR",
@@ -10161,6 +10459,38 @@ fn to_bring_back(own: &str, local: &[protocol::SessionInfo], before: &[String]) 
 
 /// Directories listed on other machines, by machine and directory.
 type DirLists = Arc<Mutex<HashMap<(String, String), Option<Vec<String>>>>>;
+
+/// How many of the last lines of an agent's screen say whether its
+/// account is used up.
+const USED_UP_LINES: usize = 8;
+
+/// After noticing a used up account, how long its message on the screen
+/// does not count again.
+const USED_UP_QUIET: Duration = Duration::from_secs(600);
+
+/// How long `switch_account` waits for an agent to end.
+const SWITCH_WAIT: Duration = Duration::from_secs(15);
+
+/// Notes account `name` of `tool` in `accounts`: `standard` is no entry.
+fn set_account(accounts: &mut BTreeMap<String, String>, tool: &str, name: &str) {
+    if name == crate::account::STANDARD {
+        accounts.remove(tool);
+    } else {
+        accounts.insert(tool.to_owned(), name.to_owned());
+    }
+}
+
+/// This imkr, for commands typed into panes; `imkr` when it cannot say.
+fn imkr_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|exe| {
+            let exe = exe.to_string_lossy().into_owned();
+            // Replaced by an update while running: the new one is there.
+            exe.trim_end_matches(" (deleted)").to_owned()
+        })
+        .unwrap_or_else(|| "imkr".to_owned())
+}
 
 /// How many directories the directory prompt lists under the text.
 const DIR_ROWS: usize = 8;

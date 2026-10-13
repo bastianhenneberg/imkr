@@ -1718,6 +1718,191 @@ pub fn hive(args: &[String]) -> Result<()> {
     }
 }
 
+/// `imkr account …`: several accounts of Claude Code and Codex here, see
+/// `account`. A name may say its agent, `claude:privat`, where both have it.
+pub fn account(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr account [ls] | add claude|codex NAME [--url URL] [--model M] \
+                         [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
+                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N]";
+    use crate::account::{Account, Store, TOOLS};
+    let store = Store::here()?;
+    // `NAME` or `tool:NAME`, the only one of that name if no tool is said.
+    let pick = |given: &str| -> Result<Account> {
+        let (tool, name) = match given.split_once(':') {
+            Some((tool, name)) => (Some(tool), name),
+            None => (None, given),
+        };
+        let found: Vec<Account> = TOOLS
+            .iter()
+            .filter(|t| tool.is_none_or(|tool| tool == **t))
+            .filter_map(|t| store.find(t, name))
+            .collect();
+        match found.as_slice() {
+            [one] => Ok(one.clone()),
+            [] => bail!("no account {given}, see `imkr account`"),
+            _ => bail!("both agents have an account {name}: say claude:{name} or codex:{name}"),
+        }
+    };
+    let mut rest: Vec<String> = args.to_vec();
+    let pane = take_pane(&mut rest)?;
+    let token_stdin = take_flag(&mut rest, "--token-stdin");
+    let url = take_value(&mut rest, "--url")?;
+    let model = take_value(&mut rest, "--model")?;
+    let token = take_value(&mut rest, "--token")?;
+    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
+    match rest.as_slice() {
+        [] | ["ls"] => {
+            for tool in TOOLS {
+                println!("{tool}");
+                for account in store.of_tool(tool) {
+                    let mut note = String::new();
+                    if !store.logged_in(&account) {
+                        note.push_str("  (not logged in: `imkr account login …`)");
+                    }
+                    if let Some(until) = store.used_up_until(&account) {
+                        note.push_str(&format!("  used up until {until}"));
+                    }
+                    println!("  {:<14} {}{note}", account.name, account.kind());
+                }
+            }
+            println!("in this order a used up account falls back to the next");
+            Ok(())
+        }
+        ["add", tool, name] => {
+            let token = match (token, token_stdin) {
+                (Some(token), _) => Some(token),
+                (None, true) => {
+                    let mut text = String::new();
+                    std::io::stdin().read_to_string(&mut text)?;
+                    Some(text.trim().to_owned()).filter(|t| !t.is_empty())
+                }
+                (None, false) => None,
+            };
+            let provider = url.is_some();
+            let account = store.add(Account {
+                name: (*name).to_owned(),
+                tool: (*tool).to_owned(),
+                url,
+                token,
+                model,
+            })?;
+            println!("{} account {} added", account.tool, account.name);
+            if !provider {
+                login(&store, &account)?;
+            }
+            Ok(())
+        }
+        ["login", given] => login(&store, &pick(given)?),
+        // In the session this runs in: for new shells, or the agent of a
+        // pane right away.
+        ["use", given] | ["switch", given] => {
+            let account = pick(given)?;
+            let now = rest[0] == "switch";
+            if now && pane.is_none() {
+                bail!("which pane? `--pane N`, or run it in the pane");
+            }
+            let reply = client::request(Request::UseAccount {
+                tool: account.tool.clone(),
+                name: account.name.clone(),
+                pane: if now { pane } else { None },
+            })?;
+            if now {
+                println!(
+                    "pane {}: {} goes on in account {}",
+                    reply["pane"], account.tool, account.name
+                );
+            } else {
+                println!(
+                    "new shells of this session use {} account {}; running agents keep theirs \
+                     (`imkr account switch {}:{} --pane N`)",
+                    account.tool, account.name, account.tool, account.name
+                );
+            }
+            Ok(())
+        }
+        ["rm" | "remove", given] => {
+            let account = pick(given)?;
+            if account.is_standard() {
+                bail!("`standard` is the agent's own directory, it stays");
+            }
+            store.remove(&account.tool, &account.name)?;
+            println!("{} account {} removed", account.tool, account.name);
+            Ok(())
+        }
+        ["sync"] => {
+            for account in store.load() {
+                let linked = store.link_shared(&account)?;
+                if !linked.is_empty() {
+                    println!(
+                        "{}:{}: linked {}",
+                        account.tool,
+                        account.name,
+                        linked.join(", ")
+                    );
+                }
+            }
+            println!("accounts share what is new, and Claude's MCP servers again");
+            Ok(())
+        }
+        ["env", given] => {
+            for (name, value) in store.env(&pick(given)?) {
+                println!("export {name}={}", client::sh_quote(&value));
+            }
+            Ok(())
+        }
+        ["run", given, "--", command @ ..] | ["run", given, command @ ..]
+            if !command.is_empty() =>
+        {
+            use std::os::unix::process::CommandExt;
+            let account = pick(given)?;
+            store.link_shared(&account)?;
+            let mut run = Command::new(command[0]);
+            run.args(&command[1..]);
+            // Nothing of the account the shell started with stays.
+            for name in crate::account::variables(&account.tool) {
+                run.env_remove(name);
+            }
+            let error = run.envs(store.env(&account)).exec();
+            Err(error).with_context(|| format!("could not run {}", command[0]))
+        }
+        _ => bail!(USAGE),
+    }
+}
+
+/// Logs a subscription in: its agent in this terminal, with its directory.
+fn login(store: &crate::account::Store, account: &crate::account::Account) -> Result<()> {
+    if account.url.is_some() || account.is_standard() {
+        println!("{} needs no login", account.name);
+        return Ok(());
+    }
+    use std::io::IsTerminal;
+    let command = crate::account::login_command(account);
+    if !std::io::stdin().is_terminal() {
+        println!(
+            "log it in from a terminal: `imkr account login {}:{}`",
+            account.tool, account.name
+        );
+        return Ok(());
+    }
+    if account.tool == "claude" {
+        println!("Claude Code starts in this account: log in, then leave it with /exit.");
+    }
+    let status = Command::new(&command[0])
+        .args(&command[1..])
+        .envs(store.env(account))
+        .status()
+        .with_context(|| format!("could not run {}", command[0]))?;
+    if store.logged_in(account) {
+        println!("{} account {} is logged in", account.tool, account.name);
+    } else if !status.success() {
+        println!(
+            "not logged in; again with `imkr account login {}:{}`",
+            account.tool, account.name
+        );
+    }
+    Ok(())
+}
+
 /// `imkr plugins`: the plugins and what is wrong with broken files.
 pub fn plugins() -> Result<()> {
     let (plugins, broken) = crate::plugin::load();

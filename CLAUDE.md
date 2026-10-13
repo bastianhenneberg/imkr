@@ -55,6 +55,17 @@ Projekt-Slug: `imkr`
   geänderter mtime) → `agent::transcript_meta` (letzte `usage` in den letzten 512 KB) →
   `Meta::label` („opus 5.5 · 300k“), in `list()` als `meta`, `AgentInfo::meta`. Keine Kosten:
   bräuchte eine Preistabelle.
+- Konten: `src/account.rs` (`Store` mit `root` = `<state>/accounts`, `home`; je Konto Ordner
+  mit Links auf `~/.claude`/`~/.codex` außer Login (`own_file`), `.claude.json` als Kopie ohne
+  Identität (`account_bound`), MCP-Server bei `sync` neu; Anbieter per `url`/`token`/`model` →
+  `env`; `used-up.json`, `next_free`, `used_up_in` erkennt die Limit-Sätze samt Reset-Zeit).
+  `Pane::accounts`/`App::accounts` (je Tool, `standard` = kein Eintrag), über `Spawn::accounts`
+  in die Shell-Umgebung, gespeichert in `Saved`/`SavedPane`, im Handover über `saved`.
+  `Request::UseAccount` (ohne `pane`: neue Shells; mit: `switch_account` = SIGTERM per
+  `Pane::stop_foreground`, dann `finish_switches` tippt `imkr account run T:N -- <resume>`).
+  `check_used_up` je Tick (nur nicht-working, `USED_UP_LINES`, `USED_UP_QUIET`), Einstellung
+  `account_fallback` ask/auto/off. UI `Ctrl+B s c` (`Mode::Accounts`). Test: Fake-`claude` im
+  Scratchpad-bin, das die Limit-Meldung druckt, wenn `CLAUDE_CONFIG_DIR` fehlt.
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
   (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). pi: Erweiterung
   `integrations/pi/imkr-agent-state.ts` (`PI_EXTENSION`, `install_pi_extension` nach

@@ -170,6 +170,9 @@ pub struct Config {
     /// How to tell the user that an agent waits or finished while they
     /// looked elsewhere.
     pub notifications: Notifications,
+    /// When an agent's account is used up: ask, go on in the next one
+    /// (`auto`), or `off`.
+    pub account_fallback: AccountFallback,
     /// The user's own commands, in the `Ctrl+B c` menu.
     pub commands: Vec<UserCommand>,
     /// Whether agents are resumed after a restart: typed in and started,
@@ -336,6 +339,18 @@ fn yes() -> bool {
     true
 }
 
+/// What happens when an agent's account is used up, see `account`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountFallback {
+    /// Say so, with the next free account, and switch on a key.
+    #[default]
+    Ask,
+    /// Go on in the next free account right away.
+    Auto,
+    Off,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Notifications {
@@ -376,6 +391,7 @@ impl Default for Config {
             spacing: Spacing::default(),
             sidebar: Sidebar::default(),
             notifications: Notifications::default(),
+            account_fallback: AccountFallback::default(),
             commands: vec![UserCommand {
                 key: 'g',
                 name: "lazygit".into(),
@@ -518,6 +534,28 @@ pub const SETTINGS: &[Setting] = &[
                 Side::Left => Side::Right,
                 Side::Right => Side::Left,
             }
+        },
+    },
+    Setting {
+        name: "Account used up: switch to the next",
+        value: |c| {
+            match c.account_fallback {
+                AccountFallback::Ask => "ask",
+                AccountFallback::Auto => "auto",
+                AccountFallback::Off => "off",
+            }
+            .to_owned()
+        },
+        step: |c, forward| {
+            c.account_fallback = step_in(
+                &[
+                    AccountFallback::Ask,
+                    AccountFallback::Auto,
+                    AccountFallback::Off,
+                ],
+                &c.account_fallback,
+                forward,
+            )
         },
     },
     Setting {

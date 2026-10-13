@@ -60,6 +60,9 @@ pub struct Pane {
     /// For a pane showing one of another machine: the agent running there
     /// and its state, as imkr there tells (`links::Piece::Remote`).
     remote: Arc<Mutex<Option<(String, AgentState)>>>,
+    /// The accounts its agents use, by agent (`claude`, `codex`), when not
+    /// `standard`: what its shell started with, or switched to since.
+    pub accounts: std::collections::BTreeMap<String, String>,
 }
 
 /// How much of its history a tapped pane sends first.
@@ -137,6 +140,9 @@ pub struct Spawn<'a> {
     pub command: &'a [String],
     /// The server socket, handed to the program so `imkr` finds it.
     pub socket: &'a Path,
+    /// The accounts its agents use, see `account`: their environment is
+    /// the shell's.
+    pub accounts: &'a std::collections::BTreeMap<String, String>,
 }
 
 /// Where `tmux` for the panes lives while the tmux shim is on, see `tmux`.
@@ -187,6 +193,15 @@ impl Pane {
         cmd.env("IMKR", "1");
         cmd.env("IMKR_PANE", id.to_string());
         cmd.env("IMKR_SOCKET", spawn.socket);
+        if let Ok(store) = crate::account::Store::here() {
+            for (tool, name) in spawn.accounts {
+                if let Some(account) = store.find(tool, name) {
+                    for (key, value) in store.env(&account) {
+                        cmd.env(key, value);
+                    }
+                }
+            }
+        }
         if let Some(dir) = TMUX_SHIM.lock().unwrap().clone() {
             // What tmux sets: its socket, server pid and session.
             let tmux = format!("{},{},0", spawn.socket.display(), std::process::id());
@@ -203,7 +218,9 @@ impl Pane {
         // Drop our copy of the slave side, so the reader sees EOF once the
         // child exits.
         drop(pair.slave);
-        Self::start(id, (rows, cols), pair.master, child, before, events)
+        let mut pane = Self::start(id, (rows, cols), pair.master, child, before, events)?;
+        pane.accounts = spawn.accounts.clone();
+        Ok(pane)
     }
 
     /// Takes over the pane the server before `imkr update` ran, see
@@ -325,6 +342,7 @@ impl Pane {
             released: false,
             taps: Arc::default(),
             remote: Arc::default(),
+            accounts: Default::default(),
         };
         pane.read_on()?;
         Ok(pane)
@@ -565,6 +583,20 @@ impl Pane {
             .or_else(|| self.child.process_id())
     }
 
+    /// Ends what runs in front of the shell (SIGTERM to its process
+    /// group), e.g. an agent to start again in another account. False when
+    /// the shell itself is in front.
+    pub fn stop_foreground(&self) -> bool {
+        let (Some(group), Some(shell)) = (self.foreground_pid(), self.child.process_id()) else {
+            return false;
+        };
+        if group == shell {
+            return false;
+        }
+        // SAFETY: kill only sends a signal.
+        unsafe { libc::kill(-(group as libc::pid_t), libc::SIGTERM) == 0 }
+    }
+
     /// The command line of the foreground process.
     pub fn foreground_argv(&self) -> Vec<String> {
         let Some(pid) = self.foreground_pid() else {
@@ -693,6 +725,23 @@ impl Pane {
 
     /// The name to show for this pane: the agent, else the foreground program.
     /// The agent running on another machine that this pane shows, see
+    /// The account its agent runs in, when not `standard`.
+    pub fn account(&self) -> Option<String> {
+        self.accounts.get(&self.program()?).cloned()
+    }
+
+    /// What the sidebar tells about its agent: model and context, and the
+    /// account when not `standard`.
+    pub fn meta_label(&self) -> String {
+        let parts: Vec<String> = self
+            .meta()
+            .map(crate::agent::Meta::label)
+            .into_iter()
+            .chain(self.account())
+            .collect();
+        parts.join(" · ")
+    }
+
     /// `remote`.
     pub fn remote_agent(&self) -> Option<(String, AgentState)> {
         self.remote.lock().unwrap().clone()

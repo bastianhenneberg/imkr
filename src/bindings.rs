@@ -113,6 +113,8 @@ pub enum Command {
     Cancel,
     /// The plugins of the catalogs, to add.
     PluginMarket,
+    /// The agents' accounts: for this session, or the focused agent now.
+    Accounts,
 }
 
 impl Command {
@@ -889,6 +891,12 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Char('d')), C::Detach)],
     },
     Binding {
+        label: "c",
+        description: "accounts of the agents…",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('c')), C::Accounts)],
+    },
+    Binding {
         label: "h H",
         description: "hives…",
         group: Group::Sessions,
@@ -936,6 +944,17 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("s", "save all as hive"),
     ("h", "hives"),
     ("o", "hide/show old"),
+    ("Esc", "cancel"),
+];
+
+/// The keys of the accounts (`Ctrl+B s c`).
+pub const ACCOUNT_LIST_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    (
+        "Enter",
+        "use: the focused agent goes on in it, else new shells",
+    ),
+    ("u", "new shells of this session"),
     ("Esc", "cancel"),
 ];
 
@@ -1005,6 +1024,7 @@ pub const HIVE_LIST_KEYS: &[KeyHint] = &[
 pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
     ("Session list", "S", SESSION_LIST_KEYS),
     ("Hives", "H", HIVE_LIST_KEYS),
+    ("Accounts", "s c", ACCOUNT_LIST_KEYS),
     ("Move window", "w m", MOVE_LIST_KEYS),
     ("Agents", "A", AGENT_LIST_KEYS),
     ("Inbox (answer waiting agents)", "i", INBOX_KEYS),
