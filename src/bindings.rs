@@ -927,6 +927,7 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("r", "rename"),
     ("s", "save all as hive"),
     ("h", "hives"),
+    ("o", "hide/show old"),
     ("Esc", "cancel"),
 ];
 

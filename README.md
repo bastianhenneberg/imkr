@@ -643,7 +643,7 @@ leaves). Only when none runs does imkr end, and plain `imkr` then starts afresh 
 bringing back an empty copy of the ended one.
 
 Sessions that do not run are listed with `◌`, in `Ctrl+B S` as a group of their own after the
-running ones, in the sidebar and in `imkr ls`:
+running ones (`o` hides them and quiet ones) and in `imkr ls`; the sidebar shows running ones only:
 *stopped* ones (the machine restarted, or the server crashed) and *closed* ones (ended on
 purpose). Enter brings one back with its layout and agents, `x` forgets it. After the machine
 restarted, the first `imkr` brings back every session that ran when it went down, not just the

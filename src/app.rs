@@ -3150,7 +3150,8 @@ impl App {
     }
 
     /// The sessions for the sidebar: those here, this one with its own
-    /// agents, then every other machine's.
+    /// agents, then every other machine's. Only running ones: those that
+    /// stopped or were closed are in `Ctrl+B S`.
     fn session_rows(&self) -> Vec<sidebar::SessionRow> {
         let current = protocol::session_name();
         let places = self.places.lock().unwrap().clone();
@@ -3219,6 +3220,7 @@ impl App {
                 }
             }
         }
+        rows.retain(|row| !row.dormant);
         rows
     }
 
@@ -9657,13 +9659,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                 .collect();
             // What runs, for bringing it all back after a restart. Only the
             // sessions of the user's own runtime directory, not tests'.
-            let mut running: Vec<String> = local
-                .iter()
-                .filter(|s| s.dormant.is_none())
-                .map(|s| s.name.clone())
-                .chain([own.clone()])
-                .collect();
-            running.sort();
+            let running = to_bring_back(&own, &local, &persist::were_running());
             if running != noted && std::env::var_os("IMKR_SOCKET").is_none() {
                 let _ = persist::note_running(&running);
                 noted = running;
@@ -10027,6 +10023,28 @@ const OLD_AFTER: u64 = 12 * 3600;
 /// and keep how long they were before, see `App::carried`.
 const CARRIED_FOR: Duration = Duration::from_secs(120);
 /// The longest directory typed in a prompt.
+/// The sessions to bring back after a restart, sorted: those running here
+/// (`own` and the running ones of `local`), and those of `before` that
+/// stopped without being ended. When the machine shuts down, the servers
+/// go one by one, and one still running would otherwise drop the others
+/// that went first. One ended on purpose has no state left (or is closed,
+/// in the hive `last`) and drops out.
+fn to_bring_back(own: &str, local: &[protocol::SessionInfo], before: &[String]) -> Vec<String> {
+    let mut names: Vec<String> = local
+        .iter()
+        .filter(|s| match s.dormant.as_deref() {
+            None => true,
+            Some("stopped") => before.contains(&s.name),
+            Some(_) => false,
+        })
+        .map(|s| s.name.clone())
+        .chain([own.to_owned()])
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Directories listed on other machines, by machine and directory.
 type DirLists = Arc<Mutex<HashMap<(String, String), Option<Vec<String>>>>>;
 
@@ -10201,6 +10219,31 @@ fn hosted_command(argv: &[String]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn sessions_stopped_by_a_shutdown_come_back() {
+        let session = |name: &str, dormant: Option<&str>| protocol::SessionInfo {
+            name: name.into(),
+            dormant: dormant.map(str::to_owned),
+            ..Default::default()
+        };
+        let local = [
+            session("api", None),
+            // Went down first when the machine shut down.
+            session("deckbox", Some("stopped")),
+            // Ended on purpose: closed, in the hive `last`.
+            session("old", Some("closed")),
+            // Stopped long ago, not running before either.
+            session("verwaltung", Some("stopped")),
+        ];
+        let before = ["deckbox".to_owned(), "imkr".to_owned(), "old".to_owned()];
+        assert_eq!(
+            to_bring_back("imkr", &local, &before),
+            ["api", "deckbox", "imkr"]
+        );
+        // Once it was ended on purpose, its state is gone.
+        assert_eq!(to_bring_back("imkr", &local[..1], &before), ["api", "imkr"]);
+    }
 
     #[test]
     fn pane_buttons_sit_right_in_the_top_border() {
