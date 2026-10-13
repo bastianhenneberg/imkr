@@ -205,6 +205,9 @@ pub struct Config {
     /// Code's agent teams, open imkr panes. Off by default: with `$TMUX`
     /// set, programs act as inside tmux.
     pub tmux_shim: bool,
+    /// Panes side by side share the border between them, instead of each
+    /// drawing its own. Only without gaps between panes.
+    pub shared_borders: bool,
     /// After each agent turn, its repository's state as a commit on
     /// `refs/imkr/checkpoints/…`, to go back to; branch, index and files
     /// stay as they are.
@@ -372,6 +375,7 @@ impl Default for Config {
             renumber_windows: false,
             marks_on_alt: true,
             tmux_shim: false,
+            shared_borders: false,
             checkpoints: false,
             sessions_on_start: false,
             name: None,
@@ -534,6 +538,11 @@ pub const SETTINGS: &[Setting] = &[
                 forward,
             )
         },
+    },
+    Setting {
+        name: "Shared pane borders",
+        value: |c| if c.shared_borders { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.shared_borders = !c.shared_borders,
     },
     Setting {
         name: "Git checkpoint after each agent turn",

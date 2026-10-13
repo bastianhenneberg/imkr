@@ -714,6 +714,9 @@ command = "cargo test"
 float = false
 ```
 
+*Shared pane borders* in the settings draws one border between panes side by side instead of
+two, with junctions where borders meet (`┬ ├ ┤ ┴ ┼`), when there is no gap between panes.
+
 Elements on the same side share one line. New panes start in the directory of the focused
 pane.
 

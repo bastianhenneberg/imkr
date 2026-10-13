@@ -186,6 +186,9 @@ Projekt-Slug: `imkr`
   Ausgabe, 0600) nach `persist::scrollback_dir` (`<state>.scrollback/<pane>.txt`), `restore` lädt
   ihn per `Pane::spawn_after` vor (`restored_history`) und räumt erst dann auf
   (`prune_scrollback`) – nie im Betrieb, beim Herunterfahren sterben die Shells vor dem Server.
+- Geteilte Ränder: `workspace::set_shared_borders` (Kacheln überlappen um 1 Zelle, nur ohne Gaps),
+  `draw` zeichnet die fokussierte Kachel zuletzt, `render::join_borders` macht aus übermalten Ecken
+  Kreuzungen und lässt Innenflächen (Programm-Kästen) und Floats aus.
 - Farben nie fest verdrahten: `theme::current()` (accent, on_accent, subtle, danger, success,
   warning). Themes aus Omarchys `colors.toml` (`~/.config/omarchy/themes`, `~/.local/share/omarchy/themes`,
   aktuell: `~/.local/state/omarchy/current/`), `src/theme.rs`. Test des Live-Folgens mit falschem

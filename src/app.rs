@@ -3641,6 +3641,7 @@ impl App {
         }
         let spacing = &self.config.spacing;
         crate::workspace::set_gaps(spacing.gap_x, spacing.gap_y);
+        crate::workspace::set_shared_borders(self.config.shared_borders);
         let layout = screen_layout(screen, &self.config.bars, spacing);
         let (body, sidebar) = split_sidebar(
             layout.body,
@@ -7715,7 +7716,31 @@ impl App {
     fn draw(&self, frame: &mut Frame) {
         let (screen, body, sidebar_area) = self.areas(frame.area());
 
-        for (id, rect) in self.rects_of(&self.ws) {
+        let mut rects = self.rects_of(&self.ws);
+        let shared = self.config.shared_borders && self.ws.zoomed.is_none();
+        if shared {
+            // The focused tiled pane last, so its border colour wins where
+            // it is shared; floating panes stay on top.
+            rects.sort_by_key(|(id, _)| {
+                (
+                    self.ws.is_floating(*id),
+                    *id == self.ws.focus && !self.ws.is_floating(*id),
+                )
+            });
+        }
+        // What the border joining leaves alone: floating panes, and what
+        // programs draw inside panes, which may be boxes too.
+        let keep_out: Vec<Rect> = rects
+            .iter()
+            .map(|(id, r)| {
+                if self.ws.is_floating(*id) {
+                    *r
+                } else {
+                    pane_inner(*r)
+                }
+            })
+            .collect();
+        for (id, rect) in rects {
             let Some(pane) = self.panes.get(&id) else {
                 continue;
             };
@@ -7827,6 +7852,9 @@ impl App {
             {
                 frame.set_cursor_position(position);
             }
+        }
+        if shared {
+            crate::render::join_borders(frame.buffer_mut(), body, &keep_out);
         }
 
         if let Some(area) = sidebar_area {

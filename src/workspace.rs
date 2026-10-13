@@ -23,6 +23,16 @@ pub fn set_gaps(columns: u16, rows: u16) {
     );
 }
 
+/// Whether panes side by side share the border between them, see
+/// `set_shared_borders`.
+static SHARED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// With `on` and no gaps, tiled panes overlap by one cell so the border
+/// between two of them is drawn once.
+pub fn set_shared_borders(on: bool) {
+    SHARED.store(on, Ordering::Relaxed);
+}
+
 fn gaps() -> (u16, u16) {
     let gaps = GAPS.load(Ordering::Relaxed);
     ((gaps >> 16) as u16, gaps as u16)
@@ -39,11 +49,20 @@ fn with_gaps(
     tiles
         .into_iter()
         .map(|(id, mut r)| {
-            if r.right() < body.right() && r.width > columns + 2 {
-                r.width -= columns;
+            let shared = SHARED.load(Ordering::Relaxed);
+            if r.right() < body.right() {
+                if shared && columns == 0 {
+                    r.width += 1;
+                } else if r.width > columns + 2 {
+                    r.width -= columns;
+                }
             }
-            if r.bottom() < body.bottom() && r.height > rows + 2 {
-                r.height -= rows;
+            if r.bottom() < body.bottom() {
+                if shared && rows == 0 {
+                    r.height += 1;
+                } else if r.height > rows + 2 {
+                    r.height -= rows;
+                }
             }
             (id, r)
         })

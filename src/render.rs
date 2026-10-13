@@ -163,3 +163,100 @@ mod tests {
         );
     }
 }
+
+/// Which ways a box-drawing character goes: up, down, left, right.
+fn arms(symbol: &str) -> Option<[bool; 4]> {
+    Some(match symbol {
+        "─" => [false, false, true, true],
+        "│" => [true, true, false, false],
+        "╭" | "┌" => [false, true, false, true],
+        "╮" | "┐" => [false, true, true, false],
+        "╰" | "└" => [true, false, false, true],
+        "╯" | "┘" => [true, false, true, false],
+        "┬" => [false, true, true, true],
+        "┴" => [true, false, true, true],
+        "├" => [true, true, false, true],
+        "┤" => [true, true, true, false],
+        "┼" => [true, true, true, true],
+        _ => return None,
+    })
+}
+
+fn glyph(arms: [bool; 4]) -> &'static str {
+    match arms {
+        [false, false, _, _] => "─",
+        [_, _, false, false] => "│",
+        [false, true, false, true] => "╭",
+        [false, true, true, false] => "╮",
+        [true, false, false, true] => "╰",
+        [true, false, true, false] => "╯",
+        [false, true, true, true] => "┬",
+        [true, false, true, true] => "┴",
+        [true, true, false, true] => "├",
+        [true, true, true, false] => "┤",
+        [true, true, true, true] => "┼",
+    }
+}
+
+/// Where pane borders meet in `area` (outside `skip`, the floating
+/// panes), the corners that drew over each other become the junctions
+/// they are: `┬ ┴ ├ ┤ ┼`.
+pub fn join_borders(
+    buf: &mut ratatui::buffer::Buffer,
+    area: ratatui::layout::Rect,
+    skip: &[ratatui::layout::Rect],
+) {
+    use ratatui::layout::Position;
+    let at = |buf: &ratatui::buffer::Buffer, x: u16, y: u16| {
+        let pos = Position::new(x, y);
+        if !area.contains(pos) || skip.iter().any(|r| r.contains(pos)) {
+            return None;
+        }
+        buf.cell(pos).and_then(|c| arms(c.symbol()))
+    };
+    let mut changes = Vec::new();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let Some(own) = at(buf, x, y) else {
+                continue;
+            };
+            let up = own[0] || y > 0 && at(buf, x, y - 1).is_some_and(|a| a[1]);
+            let down = own[1] || at(buf, x, y + 1).is_some_and(|a| a[0]);
+            let left = own[2] || x > 0 && at(buf, x - 1, y).is_some_and(|a| a[3]);
+            let right = own[3] || at(buf, x + 1, y).is_some_and(|a| a[2]);
+            let joined = [up, down, left, right];
+            if joined != own {
+                changes.push((x, y, glyph(joined)));
+            }
+        }
+    }
+    for (x, y, symbol) in changes {
+        if let Some(cell) = buf.cell_mut(Position::new(x, y)) {
+            cell.set_symbol(symbol);
+        }
+    }
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn corners_where_borders_meet_become_junctions() {
+        // Two panes side by side sharing the middle column, the right one
+        // drawn last.
+        let mut buf = Buffer::with_lines(["╭──╭──╮", "│  │  │", "╰──╰──╯"]);
+        join_borders(&mut buf, Rect::new(0, 0, 7, 3), &[]);
+        assert_eq!(buf, Buffer::with_lines(["╭──┬──╮", "│  │  │", "╰──┴──╯"]));
+    }
+
+    #[test]
+    fn boxes_inside_panes_stay_as_they_are() {
+        // A program draws a line up to the left border; inside is kept out.
+        let mut buf = Buffer::with_lines(["╭────╮", "│────│", "╰────╯"]);
+        join_borders(&mut buf, Rect::new(0, 0, 6, 3), &[Rect::new(1, 1, 4, 1)]);
+        assert_eq!(buf, Buffer::with_lines(["╭────╮", "│────│", "╰────╯"]));
+    }
+}
