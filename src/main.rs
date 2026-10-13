@@ -66,9 +66,11 @@ Commands:
                 rename a hive
   save, restore short for `hive save` and `hive restore`
   plugins       list the plugins (~/.config/imkr/plugins/*.toml) and broken files
-  plugin add SOURCE [--yes] | update [NAME] | rm NAME
-                plugins from a git repository (URL or GitHub owner/repo)
-                or a directory, shown before they are added
+  plugin add SOURCE|NAME [--yes] | update [NAME] | rm NAME
+                plugins from a git repository (URL or GitHub owner/repo[/dir]),
+                a directory, or by name from a catalog; shown before they are added
+  plugin search [WORD] | market
+                what the plugin catalogs offer (`plugin_catalogs`)
   revive NAME   bring back a session that stopped (reboot, crash) or was
                 closed, without attaching; `ls` lists them with ◌
   forget NAME   forget such a session: its saved layout is deleted

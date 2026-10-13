@@ -443,7 +443,42 @@ and anything they need besides: `{dir}` in a command is the directory the plugin
 what each plugin will run, including hooks that run by themselves, and asks (`--yes` answers for
 scripts). The clone stays in `plugins/.sources/`, its files are linked into `plugins/`; a plugin
 of your own with the same name is left alone. Running sessions pick the changes up at once. A
-directory is used where it is, so its changes count right away.
+directory is used where it is, so its changes count right away. `owner/repo/dir` (or `URL#dir`)
+takes the plugins of one directory of a repository.
+
+### Marketplace
+
+Catalogs list plugins to add by name. A catalog is a git repository (private ones work through
+ssh, `git@github.com:you/imkr-plugins.git`) or a directory, with the plugins in directories of
+their own, at its top or in `plugins/`, so catalog and plugins can share one repository:
+
+```text
+imkr-plugins/
+  plugins/brain/brain.toml       # listed as "brain", described by its title
+  plugins/tui/tui.toml
+  catalog.toml                   # optional: names, descriptions, plugins from elsewhere
+```
+
+```toml
+# catalog.toml
+[[plugin]]
+name = "tui"
+description = "The Peppermint TUI in a popup"
+source = "plugins/tui"           # a directory here, or anything `imkr plugin add` takes
+```
+
+```toml
+# config.toml
+plugin_catalogs = ["git@github.com:you/imkr-plugins.git"]
+```
+
+```bash
+imkr plugin search [WORD]    # what the catalogs offer, ✓ marks what is added
+imkr plugin add brain        # by name, from a catalog, with the same preview and question
+```
+
+`Ctrl+B p +` opens the marketplace in a popup: the list, a number or name adds that plugin.
+Catalogs are cloned into `plugins/.catalogs/` and brought up to date whenever they are listed.
 
 ## Other machines
 

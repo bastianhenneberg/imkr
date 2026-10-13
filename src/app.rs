@@ -3699,6 +3699,15 @@ impl App {
             }
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
+            Command::PluginMarket => {
+                let exe = std::env::current_exe()
+                    .map_or("imkr".into(), |e| e.to_string_lossy().into_owned());
+                let command = vec![exe, "plugin".into(), "market".into()];
+                let title = Some("Plugin marketplace".to_owned());
+                if let Err(e) = self.toggle_popup("marketplace", title, &command, None) {
+                    self.flash = Some(format!("marketplace: {e:#}"));
+                }
+            }
             Command::NewSession => self.new_session(),
             Command::NewWindowElsewhere => self.mode = Mode::NewWindowWhere(0),
             Command::RenameSession => {

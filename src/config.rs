@@ -234,6 +234,10 @@ pub struct Config {
     /// and the sidebar show. Hosts used with `imkr --host` are added by
     /// themselves.
     pub hosts: Vec<String>,
+    /// Plugin catalogs for `imkr plugin search` and the marketplace in
+    /// `Ctrl+B p`: git repositories (`owner/repo`, a URL, private ones by
+    /// ssh) or directories, each a `catalog.toml` or directories of plugins.
+    pub plugin_catalogs: Vec<String>,
 }
 
 /// A shell command run in the background when `on` happens: an agent
@@ -395,6 +399,7 @@ impl Default for Config {
             web_listen: None,
             name: None,
             hosts: Vec::new(),
+            plugin_catalogs: Vec::new(),
         }
     }
 }

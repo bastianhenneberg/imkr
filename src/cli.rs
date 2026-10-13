@@ -1715,8 +1715,8 @@ fn plugin_sources(dir: &Path) -> HashMap<String, String> {
 /// `imkr plugin add SOURCE [--yes]`, `update [NAME]`, `rm NAME`: plugins
 /// from a git repository or a directory, see `plugin::Source`.
 pub fn plugin(args: &[String]) -> Result<()> {
-    const USAGE: &str =
-        "usage: imkr plugin [ls] | add SOURCE [--yes] | update [NAME] [--yes] | rm NAME";
+    const USAGE: &str = "usage: imkr plugin [ls] | search [WORD] | market | add SOURCE|NAME [--yes] \
+                         | update [NAME] [--yes] | rm NAME";
     let dir = crate::plugin::dir().context("no config directory")?;
     let yes = args.iter().any(|a| a == "--yes" || a == "-y");
     let args: Vec<&str> = args
@@ -1726,17 +1726,38 @@ pub fn plugin(args: &[String]) -> Result<()> {
         .collect();
     let mut sources = crate::plugin::load_sources(&dir);
     match args.as_slice() {
+        ["search"] | ["search", _] => {
+            let word = args.get(1).map(|w| w.to_lowercase());
+            let offers = catalog_offers(&dir)?;
+            let shown: Vec<_> = offers
+                .iter()
+                .filter(|o| {
+                    word.as_ref().is_none_or(|w| {
+                        o.entry.name.to_lowercase().contains(w)
+                            || o.entry.description.to_lowercase().contains(w)
+                    })
+                })
+                .collect();
+            if shown.is_empty() {
+                println!("nothing found");
+            }
+            print_offers(&shown, &sources);
+            Ok(())
+        }
+        ["market"] => market(&dir),
         ["add", given] => {
-            let (name, from, git) = crate::plugin::parse_source(given).map_err(|e| anyhow!(e))?;
+            let source = resolve_plugin(&dir, given)?;
+            let name = source.name.clone();
             if sources.iter().any(|s| s.name == name) {
                 bail!("{name} is added already: `imkr plugin update {name}`");
             }
-            let source = crate::plugin::Source { name, from, git };
+            let git = source.git;
             let root = source.root(&dir);
+            let clone_dir = source.clone_dir(&dir);
             if git {
                 let clone = Command::new("git")
                     .args(["clone", "--quiet", "--depth", "1", "--", &source.from])
-                    .arg(&root)
+                    .arg(&clone_dir)
                     .status()
                     .context("git is needed to add plugins from a repository")?;
                 if !clone.success() {
@@ -1749,7 +1770,7 @@ pub fn plugin(args: &[String]) -> Result<()> {
             }
             if found.is_empty() {
                 if git {
-                    let _ = std::fs::remove_dir_all(&root);
+                    let _ = std::fs::remove_dir_all(&clone_dir);
                 }
                 bail!("{given} has no plugin files (*.toml in plugins/ or at its top)");
             }
@@ -1761,7 +1782,7 @@ pub fn plugin(args: &[String]) -> Result<()> {
             }
             if !yes && !ask("Add these plugins?")? {
                 if git {
-                    let _ = std::fs::remove_dir_all(&root);
+                    let _ = std::fs::remove_dir_all(&clone_dir);
                 }
                 bail!("not added");
             }
@@ -1802,7 +1823,7 @@ pub fn plugin(args: &[String]) -> Result<()> {
             let root = source.root(&dir);
             let removed = crate::plugin::unlink_source(&dir, &root)?;
             if source.git {
-                std::fs::remove_dir_all(&root).ok();
+                std::fs::remove_dir_all(source.clone_dir(&dir)).ok();
             }
             crate::plugin::save_sources(&dir, &sources)?;
             println!("removed {}: {}", source.name, removed.join(", "));
@@ -1811,6 +1832,125 @@ pub fn plugin(args: &[String]) -> Result<()> {
         }
         _ => bail!(USAGE),
     }
+}
+
+/// A plugin a catalog offers, with what `imkr plugin add` is given for it.
+struct Offer {
+    entry: crate::plugin::CatalogEntry,
+    catalog: String,
+    source: String,
+}
+
+/// What the catalogs of the settings offer, each brought up to date.
+fn catalog_offers(dir: &Path) -> Result<Vec<Offer>> {
+    let catalogs = crate::config::Config::load().0.plugin_catalogs;
+    if catalogs.is_empty() {
+        bail!(
+            "no plugin catalogs: add them to the settings, e.g.\n  \
+             plugin_catalogs = [\"owner/imkr-plugins\"]"
+        );
+    }
+    let mut offers = Vec::new();
+    for given in &catalogs {
+        let fetched = crate::plugin::fetch_catalog(dir, given, true).and_then(|(catalog, root)| {
+            Ok((crate::plugin::catalog_entries(&root)?, catalog, root))
+        });
+        match fetched {
+            Ok((entries, catalog, root)) => {
+                for entry in entries {
+                    let source = crate::plugin::entry_source(&entry, &catalog, &root);
+                    offers.push(Offer {
+                        entry,
+                        catalog: catalog.name.clone(),
+                        source,
+                    });
+                }
+            }
+            Err(e) => eprintln!("{given}: {e}"),
+        }
+    }
+    Ok(offers)
+}
+
+fn print_offers(offers: &[&Offer], sources: &[crate::plugin::Source]) {
+    let width = offers.iter().map(|o| o.entry.name.len()).max().unwrap_or(0);
+    for (i, offer) in offers.iter().enumerate() {
+        let added = if sources.iter().any(|s| s.name == offer.entry.name) {
+            " ✓ added"
+        } else {
+            ""
+        };
+        println!(
+            "{:>3}  {:<width$}  {}{added}  ({})",
+            i + 1,
+            offer.entry.name,
+            offer.entry.description,
+            offer.catalog
+        );
+    }
+}
+
+/// What `imkr plugin add` was given: a source, or the name of a plugin in
+/// a catalog, which then keeps that name.
+fn resolve_plugin(dir: &Path, given: &str) -> Result<crate::plugin::Source> {
+    let plain = !given.contains('/') && !given.contains(':') && !Path::new(given).exists();
+    if !plain {
+        return crate::plugin::parse_source(given).map_err(|e| anyhow!(e));
+    }
+    let offers = catalog_offers(dir)?;
+    let offer = offers
+        .into_iter()
+        .find(|o| o.entry.name == given)
+        .with_context(|| format!("no plugin {given} in the catalogs, see `imkr plugin search`"))?;
+    let mut source = crate::plugin::parse_source(&offer.source).map_err(|e| anyhow!(e))?;
+    source.name = offer.entry.name;
+    Ok(source)
+}
+
+/// `imkr plugin market`: the catalogs' plugins to pick from and add, one
+/// after the other, for `Ctrl+B p +`.
+fn market(dir: &Path) -> Result<()> {
+    loop {
+        let offers = match catalog_offers(dir) {
+            Ok(offers) => offers,
+            Err(e) => {
+                println!("{e:#}");
+                wait_for_enter();
+                return Ok(());
+            }
+        };
+        let sources = crate::plugin::load_sources(dir);
+        println!("Plugin marketplace\n");
+        if offers.is_empty() {
+            println!("The catalogs offer no plugins.");
+        }
+        print_offers(&offers.iter().collect::<Vec<_>>(), &sources);
+        print!("\nAdd which (number or name, Enter to close)? ");
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            return Ok(());
+        }
+        let name = match line.parse::<usize>() {
+            Ok(n) if (1..=offers.len()).contains(&n) => offers[n - 1].entry.name.clone(),
+            _ => line.to_owned(),
+        };
+        println!();
+        if let Err(e) = plugin(&["add".to_owned(), name]) {
+            println!("{e:#}");
+        }
+        println!();
+    }
+}
+
+fn wait_for_enter() {
+    print!("Enter to close ");
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stdin().read_line(&mut String::new());
 }
 
 /// Fetches a source's repository and, if it changed, shows what its
@@ -1852,7 +1992,8 @@ fn update_clone(source: &crate::plugin::Source, root: &Path, yes: bool) -> Resul
                 !f.contains('/')
             }
     }) {
-        let text = git(&["show", &format!("FETCH_HEAD:{file}")])?.stdout;
+        // `./`: relative to the plugins' directory, not the repository's top.
+        let text = git(&["show", &format!("FETCH_HEAD:./{file}")])?.stdout;
         let Ok(plugin) = toml::from_str::<crate::plugin::Plugin>(&String::from_utf8_lossy(&text))
         else {
             continue;

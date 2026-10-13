@@ -190,11 +190,23 @@ pub struct Source {
     /// The repository's URL, or the directory.
     pub from: String,
     pub git: bool,
+    /// The directory in the repository its plugins are in, when it has
+    /// more than one, like a catalog with its plugins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub: Option<String>,
 }
 
 impl Source {
     /// Where its files are.
     pub fn root(&self, plugins: &Path) -> PathBuf {
+        match &self.sub {
+            Some(sub) => self.clone_dir(plugins).join(sub),
+            None => self.clone_dir(plugins),
+        }
+    }
+
+    /// The whole repository, or the directory.
+    pub fn clone_dir(&self, plugins: &Path) -> PathBuf {
         if self.git {
             sources_dir(plugins).join(&self.name)
         } else {
@@ -222,9 +234,9 @@ pub fn save_sources(plugins: &Path, sources: &[Source]) -> std::io::Result<()> {
 }
 
 /// What `imkr plugin add` was given: a directory or plugin file here, a
-/// git URL, or `owner/repo` on GitHub. Returns the source's name, where
-/// it is and whether it is a git repository.
-pub fn parse_source(given: &str) -> Result<(String, String, bool), String> {
+/// git URL, or `owner/repo` on GitHub; a directory in the repository after
+/// it, as `owner/repo/dir` or `URL#dir`.
+pub fn parse_source(given: &str) -> Result<Source, String> {
     let path = Path::new(given);
     if path.exists() {
         let real = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
@@ -232,26 +244,199 @@ pub fn parse_source(given: &str) -> Result<(String, String, bool), String> {
             .file_stem()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        return Ok((name, real.to_string_lossy().into_owned(), false));
+        return Ok(Source {
+            name,
+            from: real.to_string_lossy().into_owned(),
+            git: false,
+            sub: None,
+        });
     }
-    let url = if given.contains("://") || given.starts_with("git@") {
-        given.to_owned()
-    } else if given.split('/').count() == 2 && !given.starts_with('.') && !given.contains(' ') {
-        format!("https://github.com/{given}")
+    let (url, sub) = if given.contains("://") || given.starts_with("git@") {
+        match given.split_once('#') {
+            Some((url, sub)) => (url.to_owned(), Some(sub.to_owned())),
+            None => (given.to_owned(), None),
+        }
     } else {
-        return Err(format!("{given} is no directory, git URL or owner/repo"));
+        let parts: Vec<&str> = given.trim_end_matches('/').split('/').collect();
+        if parts.len() < 2
+            || given.starts_with('.')
+            || given.contains(' ')
+            || parts.iter().any(|p| p.is_empty())
+        {
+            return Err(format!("{given} is no directory, git URL or owner/repo"));
+        }
+        let sub = (parts.len() > 2).then(|| parts[2..].join("/"));
+        (format!("https://github.com/{}/{}", parts[0], parts[1]), sub)
     };
-    let name = url
-        .trim_end_matches('/')
-        .rsplit(['/', ':'])
-        .next()
-        .unwrap_or_default()
-        .trim_end_matches(".git")
-        .to_owned();
+    let sub = sub
+        .map(|s| s.trim_matches('/').to_owned())
+        .filter(|s| !s.is_empty());
+    if sub
+        .as_deref()
+        .is_some_and(|s| s.split('/').any(|p| p == ".." || p == "."))
+    {
+        return Err(format!(
+            "{given}: the directory must be inside the repository"
+        ));
+    }
+    let name = match &sub {
+        Some(sub) => sub.rsplit('/').next().unwrap_or_default().to_owned(),
+        None => url
+            .trim_end_matches('/')
+            .rsplit(['/', ':'])
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches(".git")
+            .to_owned(),
+    };
     if name.is_empty() || name.starts_with('.') {
         return Err(format!("cannot name a plugin source after {given}"));
     }
-    Ok((name, url, true))
+    Ok(Source {
+        name,
+        from: url,
+        git: true,
+        sub,
+    })
+}
+
+// --- Catalogs ---
+
+/// A plugin a catalog offers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Where it is: a directory of the catalog (the default, its name), or
+    /// anything `imkr plugin add` takes.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogFile {
+    #[serde(default, rename = "plugin")]
+    plugins: Vec<CatalogEntry>,
+}
+
+fn catalogs_dir(plugins: &Path) -> PathBuf {
+    plugins.join(".catalogs")
+}
+
+/// Brings catalog `given` here: a repository is cloned once into
+/// `plugins/.catalogs/NAME` and, with `refresh`, brought up to date (it
+/// only lists, installing still shows what runs); a directory is read
+/// where it is. Returns where the catalog came from and its directory.
+pub fn fetch_catalog(
+    plugins: &Path,
+    given: &str,
+    refresh: bool,
+) -> Result<(Source, PathBuf), String> {
+    let source = parse_source(given)?;
+    if !source.git {
+        let root = source.root(plugins);
+        return Ok((source, root));
+    }
+    let dir = catalogs_dir(plugins).join(&source.name);
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    if !dir.join(".git").exists() {
+        let _ = std::fs::create_dir_all(catalogs_dir(plugins));
+        let cloned = Command::new("git")
+            .args(["clone", "--quiet", "--depth", "1", "--", &source.from])
+            .arg(&dir)
+            .stdin(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !cloned {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(format!("could not clone the catalog {given}"));
+        }
+    } else if refresh
+        && !(git(&["fetch", "--quiet", "--depth", "1", "origin"])
+            && git(&["reset", "--quiet", "--hard", "FETCH_HEAD"]))
+    {
+        // Offline: what was fetched last still lists.
+    }
+    let root = match &source.sub {
+        Some(sub) => dir.join(sub),
+        None => dir,
+    };
+    Ok((source, root))
+}
+
+/// The plugins catalog `root` offers: its `catalog.toml`, else every
+/// directory (in `plugins/` if it has one) with plugin files, described by
+/// their titles.
+pub fn catalog_entries(root: &Path) -> Result<Vec<CatalogEntry>, String> {
+    if let Ok(text) = std::fs::read_to_string(root.join("catalog.toml")) {
+        let file: CatalogFile =
+            toml::from_str(&text).map_err(|e| format!("catalog.toml: {}", e.message()))?;
+        return Ok(file.plugins);
+    }
+    let base = if root.join("plugins").is_dir() {
+        root.join("plugins")
+    } else {
+        root.to_owned()
+    };
+    let mut entries = Vec::new();
+    for dir in std::fs::read_dir(&base).into_iter().flatten().flatten() {
+        let path = dir.path();
+        let name = dir.file_name().to_string_lossy().into_owned();
+        if !path.is_dir() || name.starts_with('.') {
+            continue;
+        }
+        let (found, _) = read_source(&path);
+        if found.is_empty() {
+            continue;
+        }
+        let description = found
+            .iter()
+            .map(|(p, _)| p.title().to_owned())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = (base != *root).then(|| format!("plugins/{name}"));
+        entries.push(CatalogEntry {
+            name,
+            description,
+            source,
+        });
+    }
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(entries)
+}
+
+/// What `imkr plugin add` is given for `entry` of `catalog`, whose files
+/// are in `root`: a directory of the catalog in its repository (or in
+/// the directory it is), or the entry's own source.
+pub fn entry_source(entry: &CatalogEntry, catalog: &Source, root: &Path) -> String {
+    let inside = entry.source.clone().unwrap_or_else(|| entry.name.clone());
+    let inside = inside.trim_start_matches("./").to_owned();
+    if !root.join(&inside).is_dir() {
+        return inside;
+    }
+    let sub = match &catalog.sub {
+        Some(sub) => format!("{sub}/{inside}"),
+        None => inside,
+    };
+    if catalog.git {
+        format!("{}#{sub}", catalog.from)
+    } else {
+        Path::new(&catalog.from)
+            .join(sub)
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 /// The plugin files a source brings: those in its `plugins/` directory if
@@ -464,20 +649,85 @@ mod tests {
 
     #[test]
     fn sources_are_told_apart() {
-        let (name, from, git) = parse_source("someone/imkr-plugins").unwrap();
-        assert_eq!(name, "imkr-plugins");
-        assert_eq!(from, "https://github.com/someone/imkr-plugins");
-        assert!(git);
-        let (name, _, git) = parse_source("git@github.com:someone/tools.git").unwrap();
-        assert_eq!((name.as_str(), git), ("tools", true));
-        let (name, _, _) = parse_source("https://example.com/x/more-plugins/").unwrap();
-        assert_eq!(name, "more-plugins");
+        let source = parse_source("someone/imkr-plugins").unwrap();
+        assert_eq!(source.name, "imkr-plugins");
+        assert_eq!(source.from, "https://github.com/someone/imkr-plugins");
+        assert!(source.git);
+        assert_eq!(source.sub, None);
+        let source = parse_source("git@github.com:someone/tools.git").unwrap();
+        assert_eq!((source.name.as_str(), source.git), ("tools", true));
+        let source = parse_source("https://example.com/x/more-plugins/").unwrap();
+        assert_eq!(source.name, "more-plugins");
+        // A plugin in a directory of a repository, like a catalog's.
+        let source = parse_source("someone/catalog/plugins/brain").unwrap();
+        assert_eq!(source.from, "https://github.com/someone/catalog");
+        assert_eq!(source.sub.as_deref(), Some("plugins/brain"));
+        assert_eq!(source.name, "brain");
+        let source = parse_source("git@github.com:someone/catalog.git#tui").unwrap();
+        assert_eq!(source.from, "git@github.com:someone/catalog.git");
+        assert_eq!(
+            (source.name.as_str(), source.sub.as_deref()),
+            ("tui", Some("tui"))
+        );
+        assert!(parse_source("someone/catalog/../x").is_err());
         assert!(parse_source("no such thing here").is_err());
         assert!(parse_source("./missing/dir").is_err());
         let dir = std::env::temp_dir();
-        let (_, from, git) = parse_source(&dir.to_string_lossy()).unwrap();
-        assert!(!git);
-        assert!(Path::new(&from).is_absolute());
+        let source = parse_source(&dir.to_string_lossy()).unwrap();
+        assert!(!source.git);
+        assert!(Path::new(&source.from).is_absolute());
+    }
+
+    #[test]
+    fn catalogs_list_their_plugins() {
+        let base = std::env::temp_dir().join(format!("imkr-catalog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        // Directories of plugins, no catalog.toml.
+        std::fs::create_dir_all(base.join("brain")).unwrap();
+        std::fs::create_dir_all(base.join("empty")).unwrap();
+        std::fs::write(
+            base.join("brain/brain.toml"),
+            "title = \"AI Brain\"\ncommand = \"brain\"\n",
+        )
+        .unwrap();
+        let entries = catalog_entries(&base).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            (entries[0].name.as_str(), entries[0].description.as_str()),
+            ("brain", "AI Brain")
+        );
+        let git = Source {
+            name: "catalog".into(),
+            from: "git@github.com:someone/catalog.git".into(),
+            git: true,
+            sub: None,
+        };
+        assert_eq!(
+            entry_source(&entries[0], &git, &base),
+            "git@github.com:someone/catalog.git#brain"
+        );
+        let here = Source {
+            name: "catalog".into(),
+            from: base.to_string_lossy().into_owned(),
+            git: false,
+            sub: None,
+        };
+        assert_eq!(
+            entry_source(&entries[0], &here, &base),
+            base.join("brain").to_string_lossy()
+        );
+        // A catalog.toml wins, and may point elsewhere.
+        std::fs::write(
+            base.join("catalog.toml"),
+            "[[plugin]]\nname = \"tui\"\ndescription = \"The TUI\"\nsource = \"someone/tui\"\n",
+        )
+        .unwrap();
+        let entries = catalog_entries(&base).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entry_source(&entries[0], &git, &base), "someone/tui");
+        std::fs::write(base.join("catalog.toml"), "[[plugin]]\nnam = 1\n").unwrap();
+        assert!(catalog_entries(&base).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

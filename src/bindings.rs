@@ -111,6 +111,8 @@ pub enum Command {
     /// Goes back from a submenu to the main menu.
     Back,
     Cancel,
+    /// The plugins of the catalogs, to add.
+    PluginMarket,
 }
 
 impl Command {
@@ -710,6 +712,12 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Esc), C::Cancel)],
     },
     // The plugins' own keys come from their files, like the commands'.
+    Binding {
+        label: "+",
+        description: "marketplace…",
+        group: Group::Plugins,
+        keys: &[(Key::plain(Char('+')), C::PluginMarket)],
+    },
     Binding {
         label: "⌫",
         description: "back",

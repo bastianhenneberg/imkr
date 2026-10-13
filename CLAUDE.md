@@ -143,6 +143,12 @@ Projekt-Slug: `imkr`
   eigene gleichnamige bleiben), `{dir}` = Ordner der echten Datei (`plugin::parse`). Vorschau per
   `describe` und Frage (ohne Terminal nur mit `--yes`); Update: `fetch` + Vorschau aus
   `FETCH_HEAD` + `reset --hard` im Klon. Danach `Request::ReloadPlugins` an alle Sessions.
+  Unterordner als Quelle: `Source::sub` (`owner/repo/dir`, `URL#dir`), `root` = Klon + sub,
+  `clone_dir` = ganzer Klon; Update läuft im Unterordner (`ls-tree` relativ, `show FETCH_HEAD:./`).
+  Marktplatz: Config `plugin_catalogs`, `plugin::fetch_catalog` (Klon in `plugins/.catalogs/`,
+  bei jedem Auflisten fetch+reset), `catalog_entries` (`catalog.toml` oder Ordner mit Plugins),
+  `entry_source`; CLI `search`, `add NAME` (`resolve_plugin`), `market` (zeilenweise, im Popup
+  per `Ctrl+B p +` = `Command::PluginMarket`).
   Plugins folgen dem Operator: `Origin::plugins`, `merge_plugins` (eigene gewinnen, fremde mit
   `from`), `Plugin::installed` vor dem Start. Fake-Welt des Servers: Config in `rconf/`, sonst
   teilen sich beide Welten den Plugin-Ordner.
