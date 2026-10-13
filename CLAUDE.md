@@ -307,6 +307,10 @@ Projekt-Slug: `imkr`
   `deliver_mail` (je Tick) tippt nur bei idle/done/ohne Agent, nie bei blocked, 3 s Abstand je Pane.
   `imkr agents [--all]`, Skill-Text in `skills/imkr/SKILL.md` (`imkr skill [--install]`).
   Test-Falle: `imkr status` liest stdin (Hook-JSON) – in Heredoc-Tests `</dev/null` anhängen.
+  Ausgang: scheitert `msg` per ssh an einem Rechner, `client::queue_outbox` (`<state>/outbox`,
+  24 h); der Zielrechner holt im Host-Polling (`watch_places`) per `fetch_outbox` → ssh
+  `imkr outbox take NAME` (`take_outbox`, Datei erst umbenannt, dann gelesen) ab und stellt per
+  `Request::Message` zu. Server brauchen so kein ssh zurück. `read` nimmt Adressen wie `msg`.
 - Inbox `Ctrl+B i` (`inbox_items`, `inbox_key`, `draw_inbox`): blocked/done Agents aus
   `agent_entries` mit `agent::tail` (Server liefert es in `list()` als `tail`, über
   `AgentInfo::tail` auch für andere Sessions/Rechner). Antwort per `App::answer`: lokal

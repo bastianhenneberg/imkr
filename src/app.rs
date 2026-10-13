@@ -10129,6 +10129,13 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                     }
                 }
                 states = now;
+                // Messages there for agents here, from machines that cannot
+                // reach this one (see `client::fetch_outbox`).
+                for (host, sessions) in &found {
+                    if sessions.is_ok() {
+                        let _ = crate::client::fetch_outbox(host);
+                    }
+                }
                 // Hives saved elsewhere come here too, from those that answer.
                 if hives_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {
                     hives_at = Some(Instant::now());

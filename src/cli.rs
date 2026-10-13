@@ -356,7 +356,29 @@ pub fn msg(args: &[String]) -> Result<()> {
             args.push("--wait");
         }
         args.push(&who);
-        print!("{}", client::remote_output(&machine, &args, &text)?);
+        match client::remote_output(&machine, &args, &text) {
+            Ok(out) => print!("{out}"),
+            // Out of reach from here, e.g. a laptop seen from a server: it
+            // picks the message up when it next asks this machine.
+            Err(e) => {
+                client::queue_outbox(&client::OutboxMessage {
+                    machine: machine.clone(),
+                    session: Some(session.clone()),
+                    who: who.clone(),
+                    text,
+                    from,
+                    at: crate::persist::now(),
+                })?;
+                println!(
+                    "{machine} is out of reach from here ({}); the message waits in the outbox \
+                     until {machine} picks it up, within a minute while its imkr runs",
+                    e.to_string().lines().last().unwrap_or("").trim()
+                );
+                if wait {
+                    println!("not waiting for an answer: it comes as a message of its own");
+                }
+            }
+        }
         return Ok(());
     }
     let socket = match &session {
@@ -1944,6 +1966,43 @@ fn login(store: &crate::account::Store, account: &crate::account::Account) -> Re
         );
     }
     Ok(())
+}
+
+/// `imkr outbox`: the messages waiting here for machines out of reach;
+/// `imkr outbox take MACHINE` hands that machine its own, as JSON.
+pub fn outbox(args: &[String]) -> Result<()> {
+    match args {
+        [cmd, machine] if cmd == "take" => {
+            println!("{}", serde_json::to_string(&client::take_outbox(machine))?);
+            Ok(())
+        }
+        [] => {
+            let dir = crate::persist::state_dir()?.join("outbox");
+            let mut count = 0;
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let Some(message) = std::fs::read_to_string(entry.path())
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<client::OutboxMessage>(&t).ok())
+                else {
+                    continue;
+                };
+                count += 1;
+                println!(
+                    "for {}:{}/{} from {}: {}",
+                    message.machine,
+                    message.session.as_deref().unwrap_or("default"),
+                    message.who,
+                    message.from,
+                    message.text.lines().next().unwrap_or("")
+                );
+            }
+            if count == 0 {
+                println!("the outbox is empty");
+            }
+            Ok(())
+        }
+        _ => bail!("usage: imkr outbox [take MACHINE]"),
+    }
 }
 
 /// `imkr plugins`: the plugins and what is wrong with broken files.

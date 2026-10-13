@@ -1292,6 +1292,123 @@ fn revive_stopped() {
     }
 }
 
+// --- The outbox: messages for machines this one cannot reach ---
+
+/// A message for an agent on a machine this one cannot reach by ssh (a
+/// server reaching back to a laptop, say). It waits in this machine's
+/// outbox until that machine, asking this one anyway, picks it up.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OutboxMessage {
+    /// The machine's name as addresses say it (`machine_name` there).
+    pub machine: String,
+    pub session: Option<String>,
+    /// The pane: number, name or program.
+    pub who: String,
+    pub text: String,
+    pub from: String,
+    /// Seconds since 1970.
+    pub at: u64,
+}
+
+/// How long a message waits to be picked up.
+const OUTBOX_KEEPS: u64 = 24 * 3600;
+
+fn outbox_dir() -> Result<std::path::PathBuf> {
+    Ok(crate::persist::state_dir()?.join("outbox"))
+}
+
+/// Puts `message` into this machine's outbox.
+pub fn queue_outbox(message: &OutboxMessage) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = outbox_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let path = dir.join(format!("{nanos}-{}.json", std::process::id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    file.write_all(serde_json::to_string(message)?.as_bytes())?;
+    Ok(())
+}
+
+/// Takes the messages for `machine` out of this machine's outbox, oldest
+/// first; old ones that nobody picked up go. Each is taken by renaming it
+/// first, so that two takers never both get one.
+pub fn take_outbox(machine: &str) -> Vec<OutboxMessage> {
+    let Ok(dir) = outbox_dir() else {
+        return Vec::new();
+    };
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .collect();
+    files.sort();
+    let now = crate::persist::now();
+    let mut taken = Vec::new();
+    for path in files {
+        let Some(message) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<OutboxMessage>(&text).ok())
+        else {
+            continue;
+        };
+        if message.at + OUTBOX_KEEPS < now {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        if message.machine != machine {
+            continue;
+        }
+        let claimed = path.with_extension(format!("taken-{}", std::process::id()));
+        if std::fs::rename(&path, &claimed).is_ok() {
+            let _ = std::fs::remove_file(&claimed);
+            taken.push(message);
+        }
+    }
+    taken
+}
+
+/// Picks up what `host` holds for this machine (`imkr outbox take` there)
+/// and delivers it here, as `imkr msg` would have. Says what came.
+pub fn fetch_outbox(host: &str) -> Vec<String> {
+    let here = crate::protocol::machine_name();
+    let Ok(text) = remote_output(host, &["outbox", "take", &here], "") else {
+        // An imkr there from before the outbox.
+        return Vec::new();
+    };
+    let messages: Vec<OutboxMessage> = serde_json::from_str(&text).unwrap_or_default();
+    let mut done = Vec::new();
+    for message in messages {
+        let socket = match &message.session {
+            Some(name) => crate::protocol::session_socket(name),
+            None => socket_path(),
+        };
+        let delivered = socket.and_then(|socket| {
+            request_at(
+                &socket,
+                Request::Message {
+                    to: message.who.clone(),
+                    text: message.text.clone(),
+                    from: message.from.clone(),
+                },
+            )
+        });
+        match delivered {
+            Ok(_) => done.push(format!("message from {} to {}", message.from, message.who)),
+            Err(e) => eprintln!("outbox from {host}: not delivered: {e:#}"),
+        }
+    }
+    done
+}
+
 /// Starts each of `sessions` that does not run here, from its layout.
 /// Returns those started.
 pub fn restore_sessions(

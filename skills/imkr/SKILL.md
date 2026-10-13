@@ -43,6 +43,10 @@ imkr types the message into the other agent once it is idle, never while it work
 never into a question it is asking. Every message starts with
 `[imkr message from <address>, answer with: imkr msg <address> <text>]`.
 
+If the other machine cannot be reached from yours (a server answering a laptop), `imkr msg`
+says the message waits in the outbox: that is fine, it is delivered when that machine next
+asks yours, within a minute. Do not try other addresses for it.
+
 ## Messages you receive
 
 A line starting with `[imkr message from …]` comes from another agent, not from the

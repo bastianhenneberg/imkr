@@ -349,7 +349,13 @@ An address is `machine:session/pane`; in the own session a pane number, name or 
 enough. imkr types the message in once the agent is idle, one at a time, never while it works
 and never into a question it asks, which stays yours. Each message says who sent it and how to
 answer. `imkr skill` prints the guide for agents, `imkr skill --install` puts it into Claude
-Code's skills, so the agents use it on their own.
+Code's skills, so the agents use it on their own. `imkr read server:api/3` shows another
+agent's screen, on any machine.
+
+Answers find their way back without every machine reaching every other: a server needs no ssh
+to your laptop. A message for a machine out of reach waits in the sender's outbox (`imkr
+outbox`), and the machine it is for picks it up when it next asks that one, every 15 seconds
+while its imkr runs, so a laptop that was offline gets it later.
 
 ### MCP
 

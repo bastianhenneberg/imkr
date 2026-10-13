@@ -167,6 +167,8 @@ For scripts and agents:
   popup [--name N] [--title T] [-- command args...]
                                         show or hide a popup running the command,
                                         started the first time; Ctrl+B Space too
+  outbox        messages waiting here for machines out of reach (they
+                pick them up when they next ask this machine)
   read [ADDRESS|--pane N] [--lines N]   print a pane's screen (here, another session or machine)
   wait [--pane N] --until <state> [--timeout S]
                                         wait for an agent: working, blocked, idle,
@@ -290,6 +292,7 @@ fn main() -> Result<()> {
         ["plugins"] | ["plugin"] | ["plugin", "ls"] => cli::plugins(),
         ["plugin", ..] => cli::plugin(&args[1..]),
         ["account" | "accounts", ..] => cli::account(&args[1..]),
+        ["outbox", ..] => cli::outbox(&args[1..]),
         ["template", ..] => cli::template(&args[1..]),
         ["revive", name] => cli::revive(name),
         ["forget", name] => cli::forget(name),
