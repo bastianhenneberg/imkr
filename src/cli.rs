@@ -1468,7 +1468,23 @@ pub fn hosts(args: &[String]) -> Result<()> {
             Ok(())
         }
         [cmd] if cmd == "sync" => hosts_sync(),
-        _ => bail!("usage: imkr hosts [add NAME | rm NAME | sync]"),
+        [cmd] if cmd == "tailnet" => {
+            let peers = client::tailnet_peers();
+            if peers.is_empty() {
+                bail!("no machines found: is Tailscale installed and up (`tailscale status`)?");
+            }
+            let known = client::known_hosts();
+            for peer in peers {
+                let what = match (known.contains(&peer.name), peer.online) {
+                    (true, _) => "used with imkr",
+                    (false, true) => "online · `imkr hosts add` or `imkr --host` uses it",
+                    (false, false) => "offline",
+                };
+                println!("{:<24} {:<8} {what}", peer.name, peer.os);
+            }
+            Ok(())
+        }
+        _ => bail!("usage: imkr hosts [add NAME | rm NAME | sync | tailnet]"),
     }
 }
 

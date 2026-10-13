@@ -379,6 +379,8 @@ struct Places {
     /// The sessions each host had when it last answered, to show them
     /// while it is off.
     last_seen: HashMap<String, Vec<String>>,
+    /// Machines of the Tailscale network that are online, as suggestions.
+    tailnet: Vec<String>,
 }
 
 /// A session to switch to: on this machine (`host` is `None`) or another.
@@ -4339,6 +4341,21 @@ impl App {
                 machines.push(Some(host));
             }
         }
+        // Machines of the tailnet not known yet, as suggestions after them.
+        let known: Vec<String> = self.known_hosts().into_iter().map(|(h, _)| h).collect();
+        let here = protocol::machine_name().to_lowercase();
+        let suggested: Vec<String> = self
+            .places
+            .lock()
+            .unwrap()
+            .tailnet
+            .iter()
+            .filter(|peer| **peer != here && !known.contains(peer))
+            .filter(|peer| !machines.contains(&Some((*peer).clone())))
+            .cloned()
+            .collect();
+        let first_suggested = machines.len();
+        machines.extend(suggested.into_iter().map(Some));
         let items = machines
             .iter()
             .enumerate()
@@ -4351,13 +4368,15 @@ impl App {
                     title: label,
                     hint: if host.is_none() {
                         "this machine".into()
+                    } else if i >= first_suggested {
+                        "in your tailnet, not used with imkr yet".into()
                     } else {
                         String::new()
                     },
                     danger: false,
                     apart: false,
                     color: None,
-                    group: None,
+                    group: (i >= first_suggested).then(|| "Tailscale".to_owned()),
                 }
             })
             .collect();
@@ -8766,6 +8785,14 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                 .collect();
             places.lock().unwrap().local = local;
 
+            if hives_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {
+                let online = crate::client::tailnet_peers()
+                    .into_iter()
+                    .filter(|p| p.online)
+                    .map(|p| p.name)
+                    .collect();
+                places.lock().unwrap().tailnet = online;
+            }
             if hosts_at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY) {
                 hosts_at = Some(Instant::now());
                 let here = protocol::machine_name();

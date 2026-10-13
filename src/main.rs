@@ -74,6 +74,7 @@ Commands:
                 the other machines shown, from the settings and remembered
   hosts sync    the latest release on every one of them: installed where
                 imkr is missing, upgraded with its sessions elsewhere
+  hosts tailnet the machines of your Tailscale network, and which imkr uses
   rename-session NAME
                 rename the session (`-s OLD rename-session NEW` for another)
   kill-server   shut down the session's server and every pane in it

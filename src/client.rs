@@ -119,6 +119,57 @@ impl Drop for Conn {
     }
 }
 
+/// A machine in the user's Tailscale network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TailnetPeer {
+    /// Its MagicDNS name, which ssh reaches it by.
+    pub name: String,
+    pub online: bool,
+    pub os: String,
+}
+
+/// The other machines of the Tailscale network this one is in, from
+/// `tailscale status --json`; empty without Tailscale.
+pub fn tailnet_peers() -> Vec<TailnetPeer> {
+    let Ok(output) = Command::new("tailscale")
+        .args(["status", "--json"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return Vec::new();
+    };
+    let Ok(status) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return Vec::new();
+    };
+    parse_tailnet(&status)
+}
+
+fn parse_tailnet(status: &serde_json::Value) -> Vec<TailnetPeer> {
+    let mut peers: Vec<TailnetPeer> = status["Peer"]
+        .as_object()
+        .into_iter()
+        .flat_map(|peers| peers.values())
+        .filter_map(|peer| {
+            let name = peer["DNSName"]
+                .as_str()
+                .and_then(|dns| dns.split('.').next())
+                .filter(|n| !n.is_empty())
+                .or(peer["HostName"].as_str())?
+                .to_lowercase();
+            Some(TailnetPeer {
+                name,
+                online: peer["Online"].as_bool().unwrap_or(false),
+                os: peer["OS"].as_str().unwrap_or_default().to_owned(),
+            })
+        })
+        // Phones and the like run no imkr.
+        .filter(|peer| matches!(peer.os.as_str(), "linux" | "macOS" | "freebsd" | ""))
+        .collect();
+    peers.sort_by(|a, b| a.name.cmp(&b.name));
+    peers
+}
+
 /// imkr is not installed on this host.
 #[derive(Debug)]
 pub struct NotInstalled(pub String);
@@ -1320,6 +1371,22 @@ fn pass_on(from: &mut impl Read, to: &mut impl Write) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tailnet_peers_by_their_magicdns_name() {
+        let status = serde_json::json!({
+            "Self": { "HostName": "laptop", "DNSName": "laptop.tail1234.ts.net.", "OS": "linux" },
+            "Peer": {
+                "a": { "HostName": "CodingMachine", "DNSName": "codingmachine.tail1234.ts.net.", "OS": "linux", "Online": true },
+                "b": { "HostName": "pixel", "DNSName": "pixel.tail1234.ts.net.", "OS": "android", "Online": true },
+                "c": { "HostName": "Desk", "DNSName": "", "OS": "macOS", "Online": false }
+            }
+        });
+        let peers = parse_tailnet(&status);
+        let names: Vec<&str> = peers.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["codingmachine", "desk"]);
+        assert!(peers[0].online && !peers[1].online);
+    }
 
     #[test]
     fn the_agents_own_session_stays_out_of_new_servers() {
