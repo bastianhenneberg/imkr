@@ -656,13 +656,56 @@ pub fn notify(args: &[String]) -> Result<()> {
 /// last N lines with the history.
 pub fn read(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
-    let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
     let lines = take_value(&mut rest, "--lines")?
         .map(|n| n.parse::<usize>().context("--lines takes a number"))
         .transpose()?;
+    // An address as for `msg`: another session here, or another machine.
+    if let [address] = rest.as_slice()
+        && !address.starts_with('-')
+    {
+        let (machine, session, who) = parse_address(address)?;
+        if let Some(machine) = machine {
+            let session = session.unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned());
+            let lines = lines.map(|n| n.to_string());
+            let mut args = vec!["-s", session.as_str(), "read", who.as_str()];
+            if let Some(lines) = &lines {
+                args.extend(["--lines", lines]);
+            }
+            print!("{}", client::remote_output(&machine, &args, "")?);
+            return Ok(());
+        }
+        let socket = match &session {
+            Some(name) if protocol::sessions().contains(name) => protocol::session_socket(name)?,
+            Some(name) => bail!("no session {name} here"),
+            None => protocol::socket_path()?,
+        };
+        let panes = client::request_at(&socket, Request::List)?;
+        let pane = find_pane(&panes, &who).with_context(|| format!("no pane {address}"))?;
+        let value = client::request_at(&socket, Request::Read { pane, lines })?;
+        println!("{}", value["text"].as_str().unwrap_or_default());
+        return Ok(());
+    }
+    let pane =
+        take_pane(&mut rest)?.context("which pane? `--pane N` or an address like api/claude")?;
     let value = client::request(Request::Read { pane, lines })?;
     println!("{}", value["text"].as_str().unwrap_or_default());
     Ok(())
+}
+
+/// The pane `who` means in a session's pane list (`Request::List`): its
+/// number, name or program.
+fn find_pane(panes: &serde_json::Value, who: &str) -> Option<PaneId> {
+    let wanted = who.to_lowercase();
+    panes
+        .as_array()?
+        .iter()
+        .find(|p| {
+            p["pane"].as_u64().map(|n| n.to_string()).as_deref() == Some(who)
+                || p["name"].as_str().map(str::to_lowercase).as_deref() == Some(wanted.as_str())
+                || p["program"].as_str().map(str::to_lowercase).as_deref() == Some(wanted.as_str())
+        })
+        .and_then(|p| p["pane"].as_u64())
+        .map(|n| n as PaneId)
 }
 
 /// `imkr wait [--pane N] --until <working|blocked|idle|done|ready> [--timeout S]`

@@ -28,6 +28,8 @@ another session on this machine.
 
 ```bash
 imkr read --pane 3 --lines 60      # in your own session
+imkr read api/claude --lines 60    # another session on this machine
+imkr read server:api/3             # another machine
 ```
 
 ## Send a message

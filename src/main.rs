@@ -167,7 +167,7 @@ For scripts and agents:
   popup [--name N] [--title T] [-- command args...]
                                         show or hide a popup running the command,
                                         started the first time; Ctrl+B Space too
-  read [--pane N] [--lines N]           print a pane's screen, or its last N lines
+  read [ADDRESS|--pane N] [--lines N]   print a pane's screen (here, another session or machine)
   wait [--pane N] --until <state> [--timeout S]
                                         wait for an agent: working, blocked, idle,
                                         done, or ready (idle or done)
