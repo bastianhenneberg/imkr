@@ -287,6 +287,19 @@ and never into a question it asks, which stays yours. Each message says who sent
 answer. `imkr skill` prints the guide for agents, `imkr skill --install` puts it into Claude
 Code's skills, so the agents use it on their own.
 
+### MCP
+
+`imkr mcp` serves the same as tools over MCP on stdin/stdout: `imkr_agents`, `imkr_panes`,
+`imkr_read`, `imkr_send`, `imkr_message`, `imkr_run`, `imkr_wait` and `imkr_new_pane`. Each runs
+imkr's own command, so addresses on other machines work as on the command line, and text never
+goes through a shell. For Claude Code:
+
+```bash
+claude mcp add imkr -- imkr mcp
+```
+
+Started in an imkr pane, the server knows its session and pane by itself.
+
 ### tmux for agent teams
 
 Programs that drive tmux, like Claude Code's agent teams, can open imkr panes instead. Turn on

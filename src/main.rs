@@ -12,6 +12,7 @@ mod graphics;
 mod keys;
 mod layout;
 mod links;
+mod mcp;
 mod menu;
 mod mouse;
 mod pane;
@@ -98,6 +99,8 @@ For scripts and agents:
                 pane's shell, print its output and exit with its code
   shell-integration zsh|bash
                 what to eval in ~/.zshrc or ~/.bashrc for run and wait
+  mcp           serve imkr's commands as MCP tools on stdin/stdout, for
+                agents: claude mcp add imkr -- imkr mcp
   layout ls | save NAME | NAME
                 the layouts (presets as in tmux, and saved ones), or save
                 the active window's, or give it one; its programs run on
@@ -222,6 +225,7 @@ fn main() -> Result<()> {
         ["worktree", ..] => cli::worktree(&args[1..]),
         ["explain", ..] => cli::explain(&args[1..]),
         ["layout", ..] => cli::layout(&args[1..]),
+        ["mcp"] => mcp::serve(),
         ["run", ..] => cli::run(&args[1..]),
         ["shell-integration", ..] => cli::shell_integration(&args[1..]),
         ["checkpoints"] => {

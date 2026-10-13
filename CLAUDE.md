@@ -230,6 +230,9 @@ Projekt-Slug: `imkr`
 - Worktrees: `src/worktree.rs` (`create`: neben dem Haupt-Repo `<repo>--<name>`, über
   `--git-common-dir` auch aus einem Worktree heraus), `App::worktree_window` (`Request::Worktree`,
   `Ctrl+B w t` per `PromptFor::Worktree`). Entfernen bleibt bei git.
+- MCP: `src/mcp.rs` (`imkr mcp`, JSON-RPC je Zeile auf stdin/stdout, `handle`; jedes Werkzeug ruft
+  das eigene Binary mit dem CLI-Befehl auf, `command_for`, Text per stdin). Test: Zeilen per Pipe
+  mit `IMKR_SOCKET` der Testsession.
 - Ereignisse: `imkr subscribe` (`cli::snapshot`/`changes`, Polling per `List`, läuft mit jedem
   Server) und `[[hooks]]` in der Config (`config::Hook`, `HOOK_EVENTS`, `hook_problems`):
   `App::check_hooks` vergleicht je Tick (`HookPanes`, erster Blick feuert nichts),
