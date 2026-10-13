@@ -114,6 +114,9 @@ Projekt-Slug: `imkr`
   Andere Rechner: `other_machines` (per `Request::Places` von den lokalen Servern, ohne laufenden
   Server eigenes Polling `polled_machines`), `/api/send` mit `host` → `imkr send` per ssh,
   `/ws?host=` → `client::Conn::remote` (`imkr proxy`); nur Hosts aus dieser Liste (`known_machine`).
+  Log: `Response::note` (Ablehnung/Kopplung) → `log` mit `stamp` und Peer; leere Verbindungen
+  (`read_request` → `None`, die Probe von `keep_running`) still. `firewall_hint`/`ufw_hint` liest
+  `/etc/ufw/ufw.conf` + `user.rules` (lesbar ohne root), Interface aus `interfaces()`.
   Test: headless `chromium --remote-debugging-port` + Node-Skript per CDP (Node hat WebSocket).
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,

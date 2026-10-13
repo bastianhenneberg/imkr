@@ -62,6 +62,9 @@ pub fn main(args: &[String]) -> Result<()> {
             print_qr(&url);
             println!("Pairing code: {code} (good for {} minutes)", PAIR_FOR / 60);
             println!("Open on the device: {url}");
+            if let Some(hint) = firewall_hint(addr) {
+                println!("{hint}");
+            }
             Ok(())
         }
         ["devices"] => {
@@ -114,13 +117,27 @@ pub fn listen_addr(asked: Option<&str>) -> Result<SocketAddr> {
 /// This machine's address in a Tailscale or NetBird network: both hand out
 /// addresses from 100.64.0.0/10, which nothing else on a LAN uses.
 pub fn vpn_address() -> Option<IpAddr> {
-    let mut found = None;
+    interfaces()
+        .into_iter()
+        .map(|(_, ip)| ip)
+        .find(|ip| match ip {
+            IpAddr::V4(v4) => {
+                let [a, b, ..] = v4.octets();
+                a == 100 && (64..128).contains(&b)
+            }
+            IpAddr::V6(_) => false,
+        })
+}
+
+/// This machine's IPv4 addresses with the names of their interfaces.
+fn interfaces() -> Vec<(String, IpAddr)> {
+    let mut found = Vec::new();
     // SAFETY: getifaddrs fills a list that freeifaddrs frees; it is only
     // read in between.
     unsafe {
         let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
         if libc::getifaddrs(&mut list) != 0 {
-            return None;
+            return found;
         }
         let mut at = list;
         while !at.is_null() {
@@ -128,17 +145,47 @@ pub fn vpn_address() -> Option<IpAddr> {
             if !addr.is_null() && i32::from((*addr).sa_family) == libc::AF_INET {
                 let v4 = &*(addr as *const libc::sockaddr_in);
                 let ip = std::net::Ipv4Addr::from(u32::from_be(v4.sin_addr.s_addr));
-                let [a, b, ..] = ip.octets();
-                if a == 100 && (64..128).contains(&b) {
-                    found = Some(IpAddr::V4(ip));
-                    break;
-                }
+                let name = std::ffi::CStr::from_ptr((*at).ifa_name)
+                    .to_string_lossy()
+                    .into_owned();
+                found.push((name, IpAddr::V4(ip)));
             }
             at = (*at).ifa_next;
         }
         libc::freeifaddrs(list);
     }
     found
+}
+
+/// What to run when ufw is on and keeps phones from `addr`: nothing would
+/// reach `imkr web`, and the browser only says the page is not there.
+fn firewall_hint(addr: SocketAddr) -> Option<String> {
+    let conf = std::fs::read_to_string("/etc/ufw/ufw.conf").ok()?;
+    let rules = std::fs::read_to_string("/etc/ufw/user.rules").ok()?;
+    let interface = interfaces()
+        .into_iter()
+        .find(|(_, ip)| *ip == addr.ip())
+        .map(|(name, _)| name);
+    ufw_hint(&conf, &rules, addr, interface.as_deref())
+}
+
+fn ufw_hint(conf: &str, rules: &str, addr: SocketAddr, interface: Option<&str>) -> Option<String> {
+    if addr.ip().is_loopback() || !conf.lines().any(|l| l.trim() == "ENABLED=yes") {
+        return None;
+    }
+    let port = addr.port();
+    let dport = format!("--dport {port} ");
+    if rules
+        .lines()
+        .any(|l| l.contains(&dport) && l.contains("-j ACCEPT"))
+    {
+        return None;
+    }
+    let on = interface.map_or(String::new(), |name| format!("in on {name} "));
+    Some(format!(
+        "The firewall (ufw) keeps other devices out. To let them in:\n  \
+         sudo ufw allow {on}to any port {port} proto tcp"
+    ))
 }
 
 /// Shows `text` as a QR code for a phone's camera, if this is a terminal:
@@ -197,6 +244,12 @@ fn serve(asked: Option<&str>, background: bool) -> Result<()> {
         Err(e) => return Err(e).with_context(|| format!("cannot listen on {addr}")),
     };
     restart_when_replaced();
+    if background {
+        log("-", &format!("serving on {}", url(addr)));
+        if let Some(hint) = firewall_hint(addr) {
+            log("-", &hint.replace('\n', ""));
+        }
+    }
     if !background {
         println!("imkr web on {}", url(addr));
         if addr.ip().is_loopback() {
@@ -206,6 +259,9 @@ fn serve(asked: Option<&str>, background: bool) -> Result<()> {
             );
         } else if addr.ip().is_unspecified() {
             println!("Warning: every network this machine is on reaches it.");
+        }
+        if let Some(hint) = firewall_hint(addr) {
+            println!("{hint}");
         }
         if load_devices().is_empty() {
             let code = new_code()?;
@@ -220,11 +276,7 @@ fn serve(asked: Option<&str>, background: bool) -> Result<()> {
         let Ok(stream) = stream else { continue };
         let _ = std::thread::Builder::new()
             .name("web".into())
-            .spawn(move || {
-                if let Err(e) = handle(stream) {
-                    eprintln!("imkr web: {e:#}");
-                }
-            });
+            .spawn(move || handle(stream));
     }
     Ok(())
 }
@@ -401,7 +453,8 @@ fn same_code(a: &str, b: &str) -> bool {
 }
 
 /// Pairs a device if `code` is the current pairing code; returns its token.
-fn pair(code: &str, name: &str) -> Result<String, &'static str> {
+/// Pairs a device with `code`: its token and the name it got.
+fn pair(code: &str, name: &str) -> Result<(String, String), &'static str> {
     let path = pairing_path().map_err(|_| "no pairing code")?;
     let pairing: Option<Pairing> = std::fs::read_to_string(&path)
         .ok()
@@ -442,12 +495,12 @@ fn pair(code: &str, name: &str) -> Result<String, &'static str> {
         n += 1;
     }
     devices.push(Device {
-        name,
+        name: name.clone(),
         token: token.clone(),
         paired: now(),
     });
     save_devices(&devices).map_err(|_| "could not save the device")?;
-    Ok(token)
+    Ok((token, name))
 }
 
 // --- HTTP ---
@@ -491,13 +544,17 @@ impl HttpRequest {
     }
 }
 
-fn read_request(reader: &mut BufReader<TcpStream>) -> Result<HttpRequest> {
+/// The request coming in, `None` when the connection closes before it.
+fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<HttpRequest>> {
     let mut head = Vec::new();
     loop {
         let before = head.len();
         let n = reader.by_ref().take(4096).read_until(b'\n', &mut head)?;
         if n == 0 {
-            bail!("closed");
+            if head.is_empty() {
+                return Ok(None);
+            }
+            bail!("closed in the middle of a request");
         }
         if head.len() > MAX_HEAD {
             bail!("headers too long");
@@ -528,13 +585,13 @@ fn read_request(reader: &mut BufReader<TcpStream>) -> Result<HttpRequest> {
     }
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
-    Ok(HttpRequest {
+    Ok(Some(HttpRequest {
         method,
         path: path.to_owned(),
         query: parse_query(query),
         headers,
         body,
-    })
+    }))
 }
 
 fn parse_query(query: &str) -> HashMap<String, String> {
@@ -576,6 +633,9 @@ struct Response {
     kind: &'static str,
     headers: Vec<(&'static str, String)>,
     body: Vec<u8>,
+    /// What goes into the log: why a request was turned away, or that a
+    /// device was paired.
+    note: Option<String>,
 }
 
 impl Response {
@@ -585,7 +645,13 @@ impl Response {
             kind,
             headers: Vec::new(),
             body: body.into(),
+            note: None,
         }
+    }
+
+    fn noted(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
     }
 
     fn json(value: &serde_json::Value) -> Self {
@@ -598,6 +664,7 @@ impl Response {
             "application/json",
             serde_json::json!({ "error": message }).to_string(),
         )
+        .noted(message)
     }
 
     fn with(mut self, name: &'static str, value: String) -> Self {
@@ -631,20 +698,68 @@ impl Response {
     }
 }
 
-fn handle(stream: TcpStream) -> Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let request = read_request(&mut reader)?;
-    let mut stream = stream;
-    if request.method == "GET" && request.path == "/ws" {
-        return match request.device() {
-            Some(_) if request.same_origin() => terminal(stream, &request),
-            _ => Response::error("403 Forbidden", "not paired").write_to(&mut stream),
-        }
-        .map_err(Into::into);
+/// A line for the log (stderr, `<state>/web.log` when in the background),
+/// with the time and who asked.
+fn log(peer: &str, text: &str) {
+    eprintln!("{} {peer} {text}", stamp());
+}
+
+/// Now as local date and time, for the log.
+fn stamp() -> String {
+    let t = now() as libc::time_t;
+    // SAFETY: localtime_r only writes the `tm` it is given.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return t.to_string();
     }
-    route(&request).write_to(&mut stream)?;
-    Ok(())
+    format!(
+        "{}-{:02}-{:02} {:02}:{:02}:{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    )
+}
+
+/// Answers one connection; what goes wrong goes into the log.
+fn handle(stream: TcpStream) {
+    let peer = stream
+        .peer_addr()
+        .map_or("?".into(), |addr| addr.ip().to_string());
+    let result = (|| -> Result<()> {
+        stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+        let mut reader = BufReader::new(stream.try_clone()?);
+        // Closed without a word: `keep_running` looking whether it runs.
+        let Some(request) = read_request(&mut reader)? else {
+            return Ok(());
+        };
+        let mut stream = stream;
+        let response = if request.method == "GET" && request.path == "/ws" {
+            match request.device() {
+                Some(_) if request.same_origin() => return Ok(terminal(stream, &request)?),
+                Some(_) => Response::error("403 Forbidden", "wrong origin"),
+                None => Response::error("403 Forbidden", "not paired"),
+            }
+        } else {
+            route(&request)
+        };
+        if let Some(note) = &response.note {
+            log(
+                &peer,
+                &format!(
+                    "{} {} → {}: {note}",
+                    request.method, request.path, response.status
+                ),
+            );
+        }
+        response.write_to(&mut stream)?;
+        Ok(())
+    })();
+    if let Err(e) = &result {
+        log(&peer, &format!("{e:#}"));
+    }
 }
 
 fn route(request: &HttpRequest) -> Response {
@@ -668,7 +783,8 @@ fn route(request: &HttpRequest) -> Response {
             let code = form.get("code").map_or("", String::as_str);
             let name = form.get("name").map_or("", String::as_str);
             match pair(code, name) {
-                Ok(token) => Response::new("303 See Other", "text/plain", "paired")
+                Ok((token, name)) => Response::new("303 See Other", "text/plain", "paired")
+                    .noted(format!("paired device {name}"))
                     .with("Location", "/".into())
                     .with(
                         "Set-Cookie",
@@ -710,7 +826,7 @@ fn html_escape(text: &str) -> String {
 }
 
 fn pair_page(code: &str, message: &str) -> Response {
-    Response::new(
+    let page = Response::new(
         if message.is_empty() {
             "200 OK"
         } else {
@@ -721,7 +837,12 @@ fn pair_page(code: &str, message: &str) -> Response {
             .replace("{{CODE}}", &html_escape(code))
             .replace("{{MESSAGE}}", &html_escape(message))
             .replace("{{MACHINE}}", &html_escape(&protocol::machine_name())),
-    )
+    );
+    if message.is_empty() {
+        page
+    } else {
+        page.noted(message)
+    }
 }
 
 #[derive(Deserialize)]
@@ -1031,6 +1152,20 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_closed_firewall_is_pointed_out() {
+        let addr: SocketAddr = "100.97.1.2:4657".parse().unwrap();
+        let on = "ENABLED=yes\n";
+        let other = "-A ufw-user-input -p tcp --dport 22 -j ACCEPT\n";
+        let open = "-A ufw-user-input -i wt0 -p tcp --dport 4657 -j ACCEPT\n";
+        let hint = ufw_hint(on, other, addr, Some("wt0")).unwrap();
+        assert!(hint.contains("sudo ufw allow in on wt0 to any port 4657 proto tcp"));
+        assert_eq!(ufw_hint(on, open, addr, Some("wt0")), None);
+        assert_eq!(ufw_hint("ENABLED=no\n", other, addr, None), None);
+        let local: SocketAddr = "127.0.0.1:4657".parse().unwrap();
+        assert_eq!(ufw_hint(on, other, local, None), None);
+    }
 
     #[test]
     fn queries_are_decoded() {

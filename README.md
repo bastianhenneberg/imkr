@@ -514,7 +514,11 @@ the session list reaches them. So one machine with `imkr web` is enough; pair th
 one that is always on.
 
 A firewall on the machine must let the port in, on the VPN only. With ufw and NetBird:
-`sudo ufw allow in on wt0 to any port 4657 proto tcp` (Tailscale: `tailscale0`).
+`sudo ufw allow in on wt0 to any port 4657 proto tcp` (Tailscale: `tailscale0`). `imkr web` and
+`imkr web pair` say so when ufw is on and the port is not let in. What it turns away (wrong
+code, unknown device, another site's page) goes into `~/.local/state/imkr/web.log` with the time
+and the device's address, as do pairings: if the page never shows and the log has nothing, the
+request did not reach the machine.
 
 It listens on this machine's VPN address if there is one (Tailscale and NetBird both hand out
 addresses from 100.64.0.0/10), else only on 127.0.0.1, port 4657; `--listen` or `web_listen`
