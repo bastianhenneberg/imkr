@@ -208,6 +208,9 @@ pub struct Config {
     /// Panes side by side share the border between them, instead of each
     /// drawing its own. Only without gaps between panes.
     pub shared_borders: bool,
+    /// Each attached terminal shows its own window, like herdr; off, all
+    /// show the same one, like tmux.
+    pub own_window_per_client: bool,
     /// After each agent turn, its repository's state as a commit on
     /// `refs/imkr/checkpoints/…`, to go back to; branch, index and files
     /// stay as they are.
@@ -376,6 +379,7 @@ impl Default for Config {
             marks_on_alt: true,
             tmux_shim: false,
             shared_borders: false,
+            own_window_per_client: true,
             checkpoints: false,
             sessions_on_start: false,
             name: None,
@@ -543,6 +547,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Shared pane borders",
         value: |c| if c.shared_borders { "on" } else { "off" }.to_owned(),
         step: |c, _| c.shared_borders = !c.shared_borders,
+    },
+    Setting {
+        name: "Own window per attached terminal",
+        value: |c| if c.own_window_per_client { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.own_window_per_client = !c.own_window_per_client,
     },
     Setting {
         name: "Git checkpoint after each agent turn",

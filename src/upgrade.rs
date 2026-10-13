@@ -79,6 +79,9 @@ pub struct HandoverClient {
     /// The size of its terminal.
     pub size: (u16, u16),
     pub caps: Caps,
+    /// The window it showed; 0 for servers from before.
+    #[serde(default)]
+    pub workspace: u8,
 }
 
 #[derive(Serialize, Deserialize)]

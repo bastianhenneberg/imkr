@@ -504,6 +504,8 @@ struct Client {
     shown_images: Placements,
     /// Send every image again: the client has none of them.
     resend_images: bool,
+    /// The window this client shows, with `own_window_per_client`.
+    workspace: u8,
 }
 
 impl Client {
@@ -1028,6 +1030,7 @@ impl App {
                 fd,
                 size: handover.screen,
                 caps: handover.caps,
+                workspace: 0,
             });
         }
         for handed in clients {
@@ -1042,6 +1045,9 @@ impl App {
             if let Some(client) = self.clients.iter_mut().find(|c| c.id == id) {
                 client.caps = handed.caps;
                 client.size = Rect::new(0, 0, handed.size.0, handed.size.1);
+                if handed.workspace != 0 {
+                    client.workspace = handed.workspace;
+                }
             }
         }
         // Drawn afresh: the new terminal state knows nothing of what the
@@ -1072,6 +1078,7 @@ impl App {
                 fd: c.stream.as_raw_fd(),
                 size: (c.size.width, c.size.height),
                 caps: c.caps.clone(),
+                workspace: c.workspace,
             })
             .collect();
         let handover = Handover {
@@ -1282,37 +1289,67 @@ impl App {
         self.merge_plugins();
         let mut clients = std::mem::take(&mut self.clients);
         let resend = clients.iter().any(|c| c.caps.graphics && c.resend_images);
-        let (data, wanted) = self.image_state(graphics, resend);
-        // The terminal window's title names the workspace and the pane.
-        let title = self.window_title_text();
+        let (data, _) = self.image_state(graphics, resend);
         let before = clients.len();
+        // The active client last, so its window is the one shown after.
+        let back = self.workspace;
+        clients.sort_by_key(|c| Some(c.id) == self.active);
         clients.retain_mut(|client| {
+            client.workspace = self.view(client.workspace);
             if client.terminal.draw(|frame| self.draw(frame)).is_err() {
                 return false;
             }
             if graphics && client.caps.graphics {
+                let wanted = self.image_places(graphics);
                 let mut images = data.clone();
                 placements(&mut images, &client.shown_images, &wanted);
-                client.shown_images = wanted.clone();
+                client.shown_images = wanted;
                 client.resend_images = false;
                 if !images.is_empty() && client.send(&ServerMsg::Output(images)).is_err() {
                     return false;
                 }
             }
+            // The terminal window's title names the workspace and the pane.
+            let title = self.window_title_text();
             if title != client.window_title {
                 let clean: String = title.chars().filter(|c| !c.is_control()).collect();
                 let osc = format!("\x1b]2;{clean}\x07").into_bytes();
                 if client.send(&ServerMsg::Output(osc)).is_err() {
                     return false;
                 }
-                client.window_title.clone_from(&title);
+                client.window_title = title;
             }
             true
         });
+        self.view(back);
         let lost = clients.len() < before;
         self.clients = clients;
         if lost {
             self.fit_screen(false);
+        }
+    }
+
+    /// Shows window `n` for drawing or handling a client's input, when
+    /// each client has its own; the window shown then. A window gone
+    /// since leaves the current one.
+    fn view(&mut self, n: u8) -> u8 {
+        if self.config.own_window_per_client && n != self.workspace && self.hidden.contains_key(&n)
+        {
+            self.show(n);
+        }
+        self.workspace
+    }
+
+    /// After handling anything: the client typing now sees what it made
+    /// the current window, others keep theirs.
+    fn follow_active(&mut self) {
+        let n = self.workspace;
+        let all = !self.config.own_window_per_client;
+        let active = self.active;
+        for client in &mut self.clients {
+            if all || Some(client.id) == active {
+                client.workspace = n;
+            }
         }
     }
 
@@ -1351,6 +1388,9 @@ impl App {
             }
             AppEvent::ClientMsg(id, ClientMsg::Event(event)) if self.client_mut(id).is_some() => {
                 self.active = Some(id);
+                if let Some(n) = self.client_mut(id).map(|c| c.workspace) {
+                    self.view(n);
+                }
                 self.handle_event(event)
             }
             AppEvent::ClientMsg(..) => Ok(()),
@@ -1372,6 +1412,7 @@ impl App {
         if let Err(e) = result {
             eprintln!("{e:#}");
         }
+        self.follow_active();
     }
 
     /// Starts reading from a new connection. It only shows the session once
@@ -1434,6 +1475,7 @@ impl App {
             window_title: String::new(),
             shown_images: HashMap::new(),
             resend_images: true,
+            workspace: self.workspace,
         });
         self.run_hooks("attach", Vec::new());
         // Back after a while: what the agents did meanwhile.
@@ -6641,6 +6683,11 @@ impl App {
             }
         }
 
+        (out, self.image_places(enabled))
+    }
+
+    /// Where the images of the shown window go, see `image_state`.
+    fn image_places(&self, enabled: bool) -> Placements {
         let mut wanted: Placements = HashMap::new();
         // Nothing may be drawn over them, a popup included.
         let quiet = matches!(self.mode, Mode::Normal | Mode::Repeat(..) | Mode::Copy)
@@ -6670,8 +6717,7 @@ impl App {
                 }
             }
         }
-
-        (out, wanted)
+        wanted
     }
 
     /// `imkr · 2 api · claude`: the workspace, then the focused pane.
@@ -7672,6 +7718,9 @@ impl App {
             .map(|(n, ws)| (new(n), ws))
             .collect();
         self.workspace = new(self.workspace);
+        for client in &mut self.clients {
+            client.workspace = new(client.workspace);
+        }
         if let Mode::MoveTo(window, _) = &mut self.mode {
             *window = new(*window);
         }

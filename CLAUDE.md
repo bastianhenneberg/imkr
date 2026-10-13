@@ -67,6 +67,12 @@ Projekt-Slug: `imkr`
   `render` nimmt die Clients beim Zeichnen heraus, in `draw` daher `App::attached` statt
   `clients.len()`. `attach -d` = `Attach { alone: true }`, als Payload-Byte, das alte Server ignorieren.
   Headless-Test: zwei tmux-Sessions verschiedener Größe am selben `IMKR_SOCKET`.
+  Eigenes Window je Client (`own_window_per_client`, Standard an): `Client::workspace`; vor
+  Eingaben eines Clients und beim Zeichnen je Client holt `App::view` dessen Window nach vorn
+  (`show`), `render` zeichnet den aktiven Client zuletzt und stellt sein Window wieder her, sodass
+  zwischen den Frames immer das Window des aktiven Clients `ws` ist. `follow_active` am Ende von
+  `handle` übernimmt Wechsel (auch per CLI) für den aktiven Client. Modus/Menüs bleiben geteilt.
+  Im Handover als `HandoverClient::workspace`.
 - Andere Rechner: `imkr --host H` (`client::Conn::remote`) startet `ssh -C -T H` mit Login-Shell
   und `imkr [-s NAME] proxy [--start]`; der Proxy schreibt erst `PROXY_READY` (vor dem Raw-Mode,
   damit ssh-Fehler/Passwortabfragen lesbar bleiben) und reicht dann stdin/stdout ↔ Socket durch.

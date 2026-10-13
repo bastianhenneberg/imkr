@@ -111,7 +111,9 @@ running after you detach or close the terminal. The socket lives in
 `$XDG_RUNTIME_DIR/imkr/`, set `IMKR_SOCKET` to use another one. Several terminals can attach
 to the same session, as in tmux: they all show it and type into it, at the size of the smallest
 one (the rest of a larger terminal is filled with dots), and the control bar says how many are
-attached. `Ctrl+B d` detaches only the terminal it was pressed in, `imkr attach -d` detaches all
+attached. Each terminal shows its own window: switching windows in one leaves the others where
+they are (setting *Own window per attached terminal*, off for tmux's behaviour, where all show
+the same). `Ctrl+B d` detaches only the terminal it was pressed in, `imkr attach -d` detaches all
 others.
 
 Sessions are separate servers with their own panes, socket and saved layout. `imkr -s NAME`
