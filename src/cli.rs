@@ -1,9 +1,12 @@
 //! Commands for scripts and agents: `imkr status`, `list`, `send`, `new`,
 //! `notify` and `hooks`. They talk to the running server over its socket.
 
-use std::io::Read;
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::agent::AgentState;
 use crate::client;
@@ -1653,20 +1656,253 @@ pub fn hive(args: &[String]) -> Result<()> {
 /// `imkr plugins`: the plugins and what is wrong with broken files.
 pub fn plugins() -> Result<()> {
     let (plugins, broken) = crate::plugin::load();
-    if let Some(dir) = crate::plugin::dir() {
+    let dir = crate::plugin::dir();
+    if let Some(dir) = &dir {
         println!("plugins in {}", dir.display());
     }
     if plugins.is_empty() && broken.is_empty() {
         println!("none yet");
     }
+    let sources = dir.as_deref().map(plugin_sources).unwrap_or_default();
     for plugin in &plugins {
         let key = plugin.key.map(|k| format!("^B p {k}")).unwrap_or_default();
-        println!("  {:<16} {:<10} {}", plugin.name, key, plugin.command);
+        let from = sources
+            .get(&plugin.name)
+            .map(|s| format!("  (from {s})"))
+            .unwrap_or_default();
+        println!("  {:<16} {:<10} {}{from}", plugin.name, key, plugin.command);
     }
     for file in &broken {
         println!("  {:<16} broken: {}", file.name, file.problem);
     }
     Ok(())
+}
+
+/// Which source (`imkr plugin add`) each linked plugin file comes from.
+fn plugin_sources(dir: &Path) -> HashMap<String, String> {
+    let mut from = HashMap::new();
+    for source in crate::plugin::load_sources(dir) {
+        let root = source.root(dir);
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if std::fs::read_link(&path).is_ok_and(|t| t.starts_with(&root))
+                && let Some(name) = path.file_stem()
+            {
+                from.insert(name.to_string_lossy().into_owned(), source.name.clone());
+            }
+        }
+    }
+    from
+}
+
+/// `imkr plugin add SOURCE [--yes]`, `update [NAME]`, `rm NAME`: plugins
+/// from a git repository or a directory, see `plugin::Source`.
+pub fn plugin(args: &[String]) -> Result<()> {
+    const USAGE: &str =
+        "usage: imkr plugin [ls] | add SOURCE [--yes] | update [NAME] [--yes] | rm NAME";
+    let dir = crate::plugin::dir().context("no config directory")?;
+    let yes = args.iter().any(|a| a == "--yes" || a == "-y");
+    let args: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| *a != "--yes" && *a != "-y")
+        .collect();
+    let mut sources = crate::plugin::load_sources(&dir);
+    match args.as_slice() {
+        ["add", given] => {
+            let (name, from, git) = crate::plugin::parse_source(given).map_err(|e| anyhow!(e))?;
+            if sources.iter().any(|s| s.name == name) {
+                bail!("{name} is added already: `imkr plugin update {name}`");
+            }
+            let source = crate::plugin::Source { name, from, git };
+            let root = source.root(&dir);
+            if git {
+                let clone = Command::new("git")
+                    .args(["clone", "--quiet", "--depth", "1", "--", &source.from])
+                    .arg(&root)
+                    .status()
+                    .context("git is needed to add plugins from a repository")?;
+                if !clone.success() {
+                    bail!("could not clone {}", source.from);
+                }
+            }
+            let (found, skipped) = crate::plugin::read_source(&root);
+            for (name, problem) in &skipped {
+                println!("not a plugin: {name}: {problem}");
+            }
+            if found.is_empty() {
+                if git {
+                    let _ = std::fs::remove_dir_all(&root);
+                }
+                bail!("{given} has no plugin files (*.toml in plugins/ or at its top)");
+            }
+            println!("{} brings, to run on this machine:", source.name);
+            for (plugin, _) in &found {
+                for line in crate::plugin::describe(plugin) {
+                    println!("  {line}");
+                }
+            }
+            if !yes && !ask("Add these plugins?")? {
+                if git {
+                    let _ = std::fs::remove_dir_all(&root);
+                }
+                bail!("not added");
+            }
+            let linked = crate::plugin::link_source(&dir, &root)?;
+            report_linked(&linked);
+            sources.push(source);
+            crate::plugin::save_sources(&dir, &sources)?;
+            reload_plugins();
+            Ok(())
+        }
+        ["update"] | ["update", _] => {
+            let only = args.get(1).copied();
+            if let Some(only) = only
+                && !sources.iter().any(|s| s.name == only)
+            {
+                bail!("no plugin source {only}, see `imkr plugin`");
+            }
+            if sources.is_empty() {
+                println!("no plugins added with `imkr plugin add`");
+            }
+            for source in sources.iter().filter(|s| only.is_none_or(|o| o == s.name)) {
+                let root = source.root(&dir);
+                if source.git && !update_clone(source, &root, yes)? {
+                    continue;
+                }
+                let linked = crate::plugin::link_source(&dir, &root)?;
+                println!("{}:", source.name);
+                report_linked(&linked);
+            }
+            reload_plugins();
+            Ok(())
+        }
+        ["rm", name] => {
+            let Some(at) = sources.iter().position(|s| s.name == *name) else {
+                bail!("no plugin source {name}, see `imkr plugin`");
+            };
+            let source = sources.remove(at);
+            let root = source.root(&dir);
+            let removed = crate::plugin::unlink_source(&dir, &root)?;
+            if source.git {
+                std::fs::remove_dir_all(&root).ok();
+            }
+            crate::plugin::save_sources(&dir, &sources)?;
+            println!("removed {}: {}", source.name, removed.join(", "));
+            reload_plugins();
+            Ok(())
+        }
+        _ => bail!(USAGE),
+    }
+}
+
+/// Fetches a source's repository and, if it changed, shows what its
+/// plugins run now and takes it on asking. Whether there is something new.
+fn update_clone(source: &crate::plugin::Source, root: &Path, yes: bool) -> Result<bool> {
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .context("git is needed to update plugins")
+    };
+    if !git(&["fetch", "--quiet", "--depth", "1", "origin"])?
+        .status
+        .success()
+    {
+        println!("{}: could not fetch {}", source.name, source.from);
+        return Ok(false);
+    }
+    let head = git(&["rev-parse", "HEAD"])?.stdout;
+    let fetched = git(&["rev-parse", "FETCH_HEAD"])?.stdout;
+    if head == fetched {
+        println!("{}: up to date", source.name);
+        return Ok(false);
+    }
+    // What the new version runs, read without checking it out yet.
+    let tree = git(&["ls-tree", "-r", "--name-only", "FETCH_HEAD"])?.stdout;
+    let tree = String::from_utf8_lossy(&tree).into_owned();
+    let in_plugins = tree
+        .lines()
+        .any(|f| f.starts_with("plugins/") && f.ends_with(".toml"));
+    println!("{} has a new version; its plugins run:", source.name);
+    for file in tree.lines().filter(|f| {
+        f.ends_with(".toml")
+            && if in_plugins {
+                f.starts_with("plugins/") && f.matches('/').count() == 1
+            } else {
+                !f.contains('/')
+            }
+    }) {
+        let text = git(&["show", &format!("FETCH_HEAD:{file}")])?.stdout;
+        let Ok(plugin) = toml::from_str::<crate::plugin::Plugin>(&String::from_utf8_lossy(&text))
+        else {
+            continue;
+        };
+        let name = Path::new(file).file_stem().unwrap_or_default();
+        let plugin = crate::plugin::Plugin {
+            name: name.to_string_lossy().into_owned(),
+            ..plugin
+        };
+        for line in crate::plugin::describe(&plugin) {
+            println!("  {line}");
+        }
+    }
+    if !yes && !ask(&format!("Update {}?", source.name))? {
+        return Ok(false);
+    }
+    if !git(&["reset", "--quiet", "--hard", "FETCH_HEAD"])?
+        .status
+        .success()
+    {
+        bail!("could not update {}", source.name);
+    }
+    Ok(true)
+}
+
+fn report_linked(linked: &crate::plugin::Linked) {
+    for (plugin, _) in &linked.plugins {
+        let key = plugin
+            .key
+            .map(|k| format!(" (Ctrl+B p {k})"))
+            .unwrap_or_default();
+        let missing = if plugin.installed() {
+            ""
+        } else {
+            ", but its program is missing here"
+        };
+        println!("  plugin {}{key}{missing}", plugin.name);
+    }
+    for name in &linked.taken {
+        println!("  {name}: left out, a plugin of that name is there already");
+    }
+    for name in &linked.gone {
+        println!("  {name}: removed, it is no longer there");
+    }
+}
+
+/// Asks a yes/no question in the terminal; no terminal means no.
+fn ask(question: &str) -> Result<bool> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        println!("{question} Pass --yes to answer without a terminal.");
+        return Ok(false);
+    }
+    print!("{question} [y/N] ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "j" | "ja"))
+}
+
+/// Tells every session here to read the plugin files again.
+fn reload_plugins() {
+    for name in protocol::sessions() {
+        if let Ok(path) = protocol::session_socket(&name) {
+            let _ = client::request_at(&path, Request::ReloadPlugins);
+        }
+    }
 }
 
 /// `imkr revive NAME`: starts a session that stopped with the machine or

@@ -23,6 +23,11 @@
 //! A plugin is a program like any other, so it can be written in any
 //! language and cannot take imkr down with it. Broken files are listed with
 //! what is wrong, the rest work.
+//!
+//! `imkr plugin add` brings plugins from a git repository or a directory:
+//! the clone is kept in `plugins/.sources/`, and each plugin file of it is
+//! linked into `plugins/`. `{dir}` in a command is the directory its file is
+//! in, for scripts that come with it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -148,16 +153,238 @@ pub fn load_from(dir: &Path) -> (Vec<Plugin>, Vec<Broken>) {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let parsed = std::fs::read_to_string(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|text| toml::from_str::<Plugin>(&text).map_err(|e| e.message().to_owned()));
-        match parsed {
+        match parse(&path) {
             Ok(plugin) if !plugin.enabled => {}
             Ok(plugin) => plugins.push(Plugin { name, ..plugin }),
             Err(problem) => broken.push(Broken { name, problem }),
         }
     }
     (plugins, broken)
+}
+
+/// A plugin file, with `{dir}` in its commands made the directory it is in
+/// (behind links), quoted for `sh`.
+fn parse(path: &Path) -> Result<Plugin, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let mut plugin = toml::from_str::<Plugin>(&text).map_err(|e| e.message().to_owned())?;
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    if let Some(dir) = real.parent() {
+        let dir = crate::client::sh_quote(&dir.to_string_lossy());
+        let fill = |command: &mut String| *command = command.replace("{dir}", &dir);
+        fill(&mut plugin.command);
+        if let Some(status) = &mut plugin.status {
+            fill(status);
+        }
+        plugin.actions.iter_mut().for_each(|a| fill(&mut a.run));
+        plugin.hooks.iter_mut().for_each(|h| fill(&mut h.run));
+    }
+    Ok(plugin)
+}
+
+/// Where plugins come from that `imkr plugin add` brought: a git
+/// repository, cloned into `plugins/.sources/NAME`, or a directory, used
+/// where it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Source {
+    pub name: String,
+    /// The repository's URL, or the directory.
+    pub from: String,
+    pub git: bool,
+}
+
+impl Source {
+    /// Where its files are.
+    pub fn root(&self, plugins: &Path) -> PathBuf {
+        if self.git {
+            sources_dir(plugins).join(&self.name)
+        } else {
+            PathBuf::from(&self.from)
+        }
+    }
+}
+
+fn sources_dir(plugins: &Path) -> PathBuf {
+    plugins.join(".sources")
+}
+
+pub fn load_sources(plugins: &Path) -> Vec<Source> {
+    std::fs::read_to_string(sources_dir(plugins).join("sources.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_sources(plugins: &Path, sources: &[Source]) -> std::io::Result<()> {
+    let dir = sources_dir(plugins);
+    std::fs::create_dir_all(&dir)?;
+    let json = serde_json::to_string_pretty(sources).unwrap_or_default();
+    std::fs::write(dir.join("sources.json"), json)
+}
+
+/// What `imkr plugin add` was given: a directory or plugin file here, a
+/// git URL, or `owner/repo` on GitHub. Returns the source's name, where
+/// it is and whether it is a git repository.
+pub fn parse_source(given: &str) -> Result<(String, String, bool), String> {
+    let path = Path::new(given);
+    if path.exists() {
+        let real = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+        let name = real
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return Ok((name, real.to_string_lossy().into_owned(), false));
+    }
+    let url = if given.contains("://") || given.starts_with("git@") {
+        given.to_owned()
+    } else if given.split('/').count() == 2 && !given.starts_with('.') && !given.contains(' ') {
+        format!("https://github.com/{given}")
+    } else {
+        return Err(format!("{given} is no directory, git URL or owner/repo"));
+    };
+    let name = url
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(".git")
+        .to_owned();
+    if name.is_empty() || name.starts_with('.') {
+        return Err(format!("cannot name a plugin source after {given}"));
+    }
+    Ok((name, url, true))
+}
+
+/// The plugin files a source brings: those in its `plugins/` directory if
+/// it has one, else at its top; a single file if the source is one.
+pub fn source_files(root: &Path) -> Vec<PathBuf> {
+    if root.is_file() {
+        return vec![root.to_owned()];
+    }
+    let tomls = |dir: &Path| -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|e| e == "toml"))
+            .collect();
+        files.sort();
+        files
+    };
+    let inner = tomls(&root.join("plugins"));
+    if inner.is_empty() { tomls(root) } else { inner }
+}
+
+/// What linking a source's files did, see `link_source`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Linked {
+    /// The plugins of the source, with their files.
+    pub plugins: Vec<(Plugin, PathBuf)>,
+    /// Files that are no plugins, and why.
+    pub skipped: Vec<(String, String)>,
+    /// Names taken by a file that is not this source's.
+    pub taken: Vec<String>,
+    /// Links removed because their file left the source.
+    pub gone: Vec<String>,
+}
+
+/// A source's plugins with their files, and its files that are none, with
+/// why.
+pub type Found = (Vec<(Plugin, PathBuf)>, Vec<(String, String)>);
+
+/// The plugins of the files in `root`, and those that are none.
+pub fn read_source(root: &Path) -> Found {
+    let mut plugins = Vec::new();
+    let mut skipped = Vec::new();
+    for file in source_files(root) {
+        let name = file
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match parse(&file) {
+            Ok(plugin) => plugins.push((Plugin { name, ..plugin }, file)),
+            Err(problem) => skipped.push((name, problem)),
+        }
+    }
+    (plugins, skipped)
+}
+
+/// Links each plugin file of the source at `root` into `plugins` as
+/// `NAME.toml`, leaving files of other sources and the user's own alone,
+/// and removes links into `root` whose file is gone.
+pub fn link_source(plugins: &Path, root: &Path) -> std::io::Result<Linked> {
+    std::fs::create_dir_all(plugins)?;
+    let (found, skipped) = read_source(root);
+    let mut linked = Linked {
+        skipped,
+        ..Linked::default()
+    };
+    for (plugin, file) in found {
+        let link = plugins.join(format!("{}.toml", plugin.name));
+        match std::fs::read_link(&link) {
+            Ok(target) if target == file => {}
+            Ok(target) if target.starts_with(root) => {
+                std::fs::remove_file(&link)?;
+                std::os::unix::fs::symlink(&file, &link)?;
+            }
+            Err(_) if !link.exists() && link.symlink_metadata().is_err() => {
+                std::os::unix::fs::symlink(&file, &link)?;
+            }
+            _ => {
+                linked.taken.push(plugin.name.clone());
+                continue;
+            }
+        }
+        linked.plugins.push((plugin, file));
+    }
+    for entry in std::fs::read_dir(plugins)?.flatten() {
+        let path = entry.path();
+        if let Ok(target) = std::fs::read_link(&path)
+            && target.starts_with(root)
+            && !target.exists()
+        {
+            std::fs::remove_file(&path)?;
+            linked.gone.push(
+                path.file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    Ok(linked)
+}
+
+/// Removes the links into `root` from `plugins`; returns their names.
+pub fn unlink_source(plugins: &Path, root: &Path) -> std::io::Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for entry in std::fs::read_dir(plugins)?.flatten() {
+        let path = entry.path();
+        if std::fs::read_link(&path).is_ok_and(|target| target.starts_with(root)) {
+            std::fs::remove_file(&path)?;
+            removed.extend(path.file_stem().map(|s| s.to_string_lossy().into_owned()));
+        }
+    }
+    removed.sort();
+    Ok(removed)
+}
+
+/// What a plugin will run, to look at before it is added: every command
+/// with what starts it.
+pub fn describe(plugin: &Plugin) -> Vec<String> {
+    let mut lines = vec![format!("{}: {}", plugin.title(), plugin.command)];
+    if let Some(status) = &plugin.status {
+        lines.push(format!("  status every {}s: {status}", plugin.interval));
+    }
+    for action in &plugin.actions {
+        lines.push(format!(
+            "  action {} ({}): {}",
+            action.key, action.title, action.run
+        ));
+    }
+    for hook in &plugin.hooks {
+        lines.push(format!("  on {}, by itself: {}", hook.on, hook.run));
+    }
+    lines
 }
 
 /// The plugins of this machine's config, see `load_from`.
@@ -234,6 +461,79 @@ fn run_status(command: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sources_are_told_apart() {
+        let (name, from, git) = parse_source("someone/imkr-plugins").unwrap();
+        assert_eq!(name, "imkr-plugins");
+        assert_eq!(from, "https://github.com/someone/imkr-plugins");
+        assert!(git);
+        let (name, _, git) = parse_source("git@github.com:someone/tools.git").unwrap();
+        assert_eq!((name.as_str(), git), ("tools", true));
+        let (name, _, _) = parse_source("https://example.com/x/more-plugins/").unwrap();
+        assert_eq!(name, "more-plugins");
+        assert!(parse_source("no such thing here").is_err());
+        assert!(parse_source("./missing/dir").is_err());
+        let dir = std::env::temp_dir();
+        let (_, from, git) = parse_source(&dir.to_string_lossy()).unwrap();
+        assert!(!git);
+        assert!(Path::new(&from).is_absolute());
+    }
+
+    #[test]
+    fn sources_link_their_plugins_and_take_them_back() {
+        let base = std::env::temp_dir().join(format!("imkr-sources-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let plugins = base.join("plugins");
+        let repo = base.join("repo");
+        std::fs::create_dir_all(repo.join("plugins")).unwrap();
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\n").unwrap();
+        std::fs::write(
+            repo.join("plugins/deploy.toml"),
+            "command = \"{dir}/bin/deploy\"\nkey = \"d\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("plugins/mine.toml"), "command = \"theirs\"\n").unwrap();
+        std::fs::write(repo.join("plugins/typo.toml"), "comand = \"x\"\n").unwrap();
+        // The user's own plugin of the same name stays.
+        std::fs::write(plugins.join("mine.toml"), "command = \"mine\"\n").unwrap();
+
+        let linked = link_source(&plugins, &repo).unwrap();
+        let names: Vec<&str> = linked
+            .plugins
+            .iter()
+            .map(|(p, _)| p.name.as_str())
+            .collect();
+        assert_eq!(names, ["deploy"]);
+        assert_eq!(linked.taken, ["mine"]);
+        assert_eq!(linked.skipped.len(), 1);
+        let (loaded, _) = load_from(&plugins);
+        let deploy = loaded.iter().find(|p| p.name == "deploy").unwrap();
+        let real = std::fs::canonicalize(repo.join("plugins")).unwrap();
+        assert_eq!(
+            deploy.command,
+            format!(
+                "{}/bin/deploy",
+                crate::client::sh_quote(&real.to_string_lossy())
+            )
+        );
+        assert_eq!(
+            loaded.iter().find(|p| p.name == "mine").unwrap().command,
+            "mine"
+        );
+
+        // Linking again changes nothing; a file gone from the source goes.
+        assert_eq!(link_source(&plugins, &repo).unwrap().taken, ["mine"]);
+        std::fs::remove_file(repo.join("plugins/deploy.toml")).unwrap();
+        assert_eq!(link_source(&plugins, &repo).unwrap().gone, ["deploy"]);
+        std::fs::write(repo.join("plugins/deploy.toml"), "command = \"d\"\n").unwrap();
+        link_source(&plugins, &repo).unwrap();
+        assert_eq!(unlink_source(&plugins, &repo).unwrap(), ["deploy"]);
+        assert!(plugins.join("mine.toml").exists());
+        assert!(!plugins.join("deploy.toml").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn plugin_files_load_and_broken_ones_are_named() {

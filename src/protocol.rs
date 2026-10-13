@@ -350,6 +350,8 @@ pub enum Request {
     },
     /// Show `text` in the control bar, e.g. why a switch failed.
     Flash { text: String },
+    /// Read the plugin files again, after `imkr plugin add` and the like.
+    ReloadPlugins,
     /// Send the active client to `target` (`host:session`), e.g. once a
     /// session started from a template on another machine runs.
     Go { target: String },

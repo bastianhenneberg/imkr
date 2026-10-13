@@ -428,6 +428,23 @@ run = "peppermint-tui notify"
 An action in the background says in the control bar when it is done or why it failed. Hooks run
 only on the machine the plugin's file is on, not where it was brought along to.
 
+### Plugins from a repository
+
+```bash
+imkr plugin add someone/imkr-plugins        # GitHub owner/repo, any git URL, or a directory
+imkr plugin                                 # the plugins, and where each came from
+imkr plugin update [NAME]                   # fetch new versions
+imkr plugin rm NAME
+```
+
+A repository brings the plugin files in its `plugins/` directory (or at its top, without one),
+and anything they need besides: `{dir}` in a command is the directory the plugin's file is in, e.g.
+`command = "{dir}/../bin/deploy"`. Before adding, and before taking a new version, imkr shows
+what each plugin will run, including hooks that run by themselves, and asks (`--yes` answers for
+scripts). The clone stays in `plugins/.sources/`, its files are linked into `plugins/`; a plugin
+of your own with the same name is left alone. Running sessions pick the changes up at once. A
+directory is used where it is, so its changes count right away.
+
 ## Other machines
 
 The machine you sit at is the **operator**, the beekeeper if you like (the *Imker* imkr is named

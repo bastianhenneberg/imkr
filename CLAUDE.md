@@ -123,6 +123,12 @@ Projekt-Slug: `imkr`
   (alle Plugins, dann Hand-Popups, kaputte zuletzt). Test: Plugins neben `IMKR_CONFIG`.
   Plugin-`[[actions]]` (`plugin::Action`, Taste in `Ctrl+B p`, `App::run_plugin_action`: Popup oder
   Hintergrund mit Meldung per `Request::Flash`) und `[[hooks]]` (in `run_hooks`, nur ohne `from`).
+  `imkr plugin add/update/rm` (`cli::plugin`): Quelle (`plugin::parse_source`: Pfad, git-URL,
+  `owner/repo`), Klon in `plugins/.sources/NAME`, Liste `.sources/sources.json`, Dateien aus
+  `plugins/` oder oberster Ebene (`source_files`) als Symlinks nach `plugins/` (`link_source`,
+  eigene gleichnamige bleiben), `{dir}` = Ordner der echten Datei (`plugin::parse`). Vorschau per
+  `describe` und Frage (ohne Terminal nur mit `--yes`); Update: `fetch` + Vorschau aus
+  `FETCH_HEAD` + `reset --hard` im Klon. Danach `Request::ReloadPlugins` an alle Sessions.
   Plugins folgen dem Operator: `Origin::plugins`, `merge_plugins` (eigene gewinnen, fremde mit
   `from`), `Plugin::installed` vor dem Start. Fake-Welt des Servers: Config in `rconf/`, sonst
   teilen sich beide Welten den Plugin-Ordner.

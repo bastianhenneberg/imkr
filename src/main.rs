@@ -64,6 +64,9 @@ Commands:
                 rename a hive
   save, restore short for `hive save` and `hive restore`
   plugins       list the plugins (~/.config/imkr/plugins/*.toml) and broken files
+  plugin add SOURCE [--yes] | update [NAME] | rm NAME
+                plugins from a git repository (URL or GitHub owner/repo)
+                or a directory, shown before they are added
   revive NAME   bring back a session that stopped (reboot, crash) or was
                 closed, without attaching; `ls` lists them with ◌
   forget NAME   forget such a session: its saved layout is deleted
@@ -269,7 +272,8 @@ fn main() -> Result<()> {
         ["move-window", ..] => cli::move_window(&args[1..]),
         ["popup", ..] => cli::popup(&args[1..]),
         ["hosts", ..] => cli::hosts(&args[1..]),
-        ["plugins"] => cli::plugins(),
+        ["plugins"] | ["plugin"] | ["plugin", "ls"] => cli::plugins(),
+        ["plugin", ..] => cli::plugin(&args[1..]),
         ["template", ..] => cli::template(&args[1..]),
         ["revive", name] => cli::revive(name),
         ["forget", name] => cli::forget(name),

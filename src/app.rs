@@ -2051,6 +2051,10 @@ impl App {
                 self.flash = Some(text);
                 Ok(serde_json::json!({}))
             }
+            Request::ReloadPlugins => {
+                self.load_plugins();
+                Ok(serde_json::json!({ "plugins": self.own_plugins.len() }))
+            }
             Request::Go { target } => {
                 self.switch_session(target);
                 Ok(serde_json::json!({}))
