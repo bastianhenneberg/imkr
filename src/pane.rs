@@ -815,7 +815,6 @@ impl Pane {
         text_between(&mut self.parser.lock().unwrap(), start, end)
     }
 
-    /// Every row of history and screen as text, by absolute row, for search.
     /// The text of `count` rows from absolute row `first` on, trailing
     /// blanks cut: what a view of the pane shows.
     pub fn rows_from(&self, first: usize, count: usize) -> Vec<String> {
@@ -831,6 +830,7 @@ impl Pane {
             .collect()
     }
 
+    /// Every row of history and screen as text, by absolute row, for search.
     pub fn rows_text(&self) -> Vec<String> {
         let parser = self.parser.lock().unwrap();
         let (rows, cols) = parser.size();

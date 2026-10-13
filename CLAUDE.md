@@ -37,7 +37,9 @@ Projekt-Slug: `imkr`
 - Sprünge wie flash.nvim: `Mode::Jump` mit `App::jump` (`Jump`: Eingabe + `JumpTarget`s),
   `jump_targets` sucht in den sichtbaren Zeilen aller Panes (`Pane::rows_from`, fokussiertes
   zuerst), Labels aus `JUMP_LABELS` ohne Zeichen, die auf einen Treffer folgen; `jump_key`
-  setzt Fokus und `CopyCursor`, `draw_jump` malt Treffer/Labels. `Ctrl+B j` oder `s` im
+  setzt Fokus und `CopyCursor` (eine Markierung im selben Pane bleibt, der Sprung setzt ihr
+  Ende), `draw_jump` malt Treffer/Labels. Copy-Mode: `w`/`b`/`e` (`word_motion`, Wörter =
+  alles zwischen Leerraum, `WORD_ROWS` um den Cursor), `V` zeilenweise. `Ctrl+B j` oder `s` im
   Copy-Mode; Copy-Mode auch auf `Ctrl+B y` (`[` braucht auf QWERTZ AltGr).
 - Maus, Selektion, Copy-Mode: `App::mouse`, `App::copy_key`. Positionen in Selektion/Copy-Cursor sind
   *absolute* Zeilen (0 = älteste Zeile im Verlauf), damit Scrollen sie nicht verschiebt. Text holt

@@ -377,6 +377,44 @@ struct JumpTarget {
     label: Option<char>,
 }
 
+/// A move by words in copy mode, see `word_motion`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Word {
+    Next,
+    Back,
+    End,
+}
+
+/// How many rows around the cursor a move by words looks at.
+const WORD_ROWS: usize = 50;
+
+/// Where a move by words lands in `rows` from `at` (row, column in
+/// characters): the start of the next word, of this or the one before, or
+/// the end of this or the next. Words are runs of anything but blanks.
+fn word_motion(rows: &[String], at: (usize, usize), motion: Word) -> Option<(usize, usize)> {
+    // Every cell as (row, col, is part of a word), a blank between rows.
+    let mut cells: Vec<(usize, usize, bool)> = Vec::new();
+    for (r, text) in rows.iter().enumerate() {
+        for (c, ch) in text.chars().enumerate() {
+            cells.push((r, c, !ch.is_whitespace()));
+        }
+        cells.push((r, text.chars().count(), false));
+    }
+    let here = cells
+        .iter()
+        .position(|&(r, c, _)| (r, c) >= at)
+        .unwrap_or(cells.len().saturating_sub(1));
+    let word = |i: usize| cells.get(i).is_some_and(|cell| cell.2);
+    let found = match motion {
+        Word::Next => (here + 1..cells.len()).find(|&i| word(i) && !word(i - 1)),
+        Word::End => (here + 1..cells.len()).find(|&i| word(i) && !word(i + 1)),
+        Word::Back => (0..here)
+            .rev()
+            .find(|&i| word(i) && (i == 0 || !word(i - 1))),
+    }?;
+    Some((cells[found].0, cells[found].1))
+}
+
 /// The keys labels are taken from, the easy ones first.
 const JUMP_LABELS: &str = "asdfghjklqwertyuiopzxcvbnm";
 
@@ -4468,7 +4506,11 @@ impl App {
                 pos: target.pos,
             };
             self.copy = Some(copy);
-            self.selection = None;
+            // With a selection there, the jump moves its end: two jumps
+            // mark any stretch of text. One in another pane starts over.
+            if self.selection.is_some_and(|s| s.pane != target.pane) {
+                self.selection = None;
+            }
             self.copy_show(copy);
             self.mode = Mode::Copy;
             return;
@@ -4508,6 +4550,36 @@ impl App {
                 frame.buffer_mut().set_string(x, y, c.to_string(), label);
             }
         }
+    }
+
+    /// Moves the copy cursor by words, as vim's `W`, `B` and `E` do: a word
+    /// is anything between blanks, so a path or URL is one.
+    fn copy_word(&mut self, motion: Word) {
+        let Some(copy) = self.copy else { return };
+        let Some(inner) = self.inner_of(copy.pane) else {
+            return;
+        };
+        let Some(pane) = self.panes.get(&copy.pane) else {
+            return;
+        };
+        let last = pane.history_len() + usize::from(inner.height).saturating_sub(1);
+        // A stretch of rows around the cursor is enough to find the word.
+        let first = match motion {
+            Word::Back => copy.pos.0.saturating_sub(WORD_ROWS - 1),
+            _ => copy.pos.0,
+        };
+        let count = (last + 1).saturating_sub(first).min(WORD_ROWS);
+        let rows = pane.rows_from(first, count);
+        let at = (copy.pos.0 - first, usize::from(copy.pos.1));
+        let Some((row, col)) = word_motion(&rows, at, motion) else {
+            return;
+        };
+        let copy = CopyCursor {
+            pane: copy.pane,
+            pos: (first + row, col as u16),
+        };
+        self.copy = Some(copy);
+        self.copy_show(copy);
     }
 
     /// Moves the copy cursor to the next match of the last search, in its
@@ -4591,6 +4663,25 @@ impl App {
             KeyCode::Char('n') => self.search_next(false),
             KeyCode::Char('N') => self.search_next(true),
             KeyCode::Char('s') => self.start_jump(),
+            KeyCode::Char('w') => self.copy_word(Word::Next),
+            KeyCode::Char('b') if !ctrl => self.copy_word(Word::Back),
+            KeyCode::Char('e') => self.copy_word(Word::End),
+            // Whole lines: from this one's start, the cursor at its end;
+            // j, k or a jump take more.
+            KeyCode::Char('V') => {
+                let width = self.inner_of(copy.pane).map_or(1, |r| r.width.max(1));
+                let line_end = (copy.pos.0, width - 1);
+                self.selection = Some(Selection {
+                    pane: copy.pane,
+                    anchor: (copy.pos.0, 0),
+                    head: line_end,
+                });
+                let copy = CopyCursor {
+                    pane: copy.pane,
+                    pos: line_end,
+                };
+                self.copy = Some(copy);
+            }
             KeyCode::Char('v' | ' ') => {
                 self.selection = match self.selection {
                     Some(_) => None,
@@ -10852,6 +10943,24 @@ fn hosted_command(argv: &[String]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn words_move_like_vim_big_words() {
+        let rows: Vec<String> = ["cargo test --release", "", "  src/app.rs:42 failed"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        // w: the next word, over the blank row.
+        assert_eq!(word_motion(&rows, (0, 0), Word::Next), Some((0, 6)));
+        assert_eq!(word_motion(&rows, (0, 11), Word::Next), Some((2, 2)));
+        // e: the end of this word, then of the next; a path is one word.
+        assert_eq!(word_motion(&rows, (0, 0), Word::End), Some((0, 4)));
+        assert_eq!(word_motion(&rows, (2, 2), Word::End), Some((2, 14)));
+        // b: back to the start of the word before.
+        assert_eq!(word_motion(&rows, (2, 2), Word::Back), Some((0, 11)));
+        assert_eq!(word_motion(&rows, (0, 8), Word::Back), Some((0, 6)));
+        assert_eq!(word_motion(&rows, (0, 0), Word::Back), None);
+    }
 
     #[test]
     fn sessions_stopped_by_a_shutdown_come_back() {

@@ -206,8 +206,8 @@ one and `git restore --source=<id> -- <path>` brings a file back as it was.
 | `Ctrl+B` `P` | Every pane everywhere, after its window (`1 api › claude`): Enter or digit goes there, `/` searches |
 | `Ctrl+B` `m` / `M` | Mark the pane for `Alt+1` … `Alt+9`, like Harpoon / list the marks: Enter goes there, `J` `K` reorder, `x` removes |
 | `Alt+1` … `Alt+9` | Straight to a marked pane, in any session, on any machine (setting *Marks on Alt+1-9*) |
-| `Ctrl+B` `[` or `y` | Copy mode: scroll back with vim keys (`Ctrl-U`/`Ctrl-D`, `Ctrl-B`/`Ctrl-F`, `g`/`G`), `/` and `?` search down and up, `n`/`N` next, `s` jump, `v` select, `y` copy, `q` quit |
-| `Ctrl+B` `j` | Jump like flash.nvim: type a few characters, every match in every pane on screen gets a label, its key puts the copy cursor there, into the other pane too; then `v` and `y` as in copy mode |
+| `Ctrl+B` `[` or `y` | Copy mode: scroll back with vim keys (`Ctrl-U`/`Ctrl-D`, `Ctrl-B`/`Ctrl-F`, `g`/`G`), `w`/`b`/`e` by words, `/` and `?` search down and up, `n`/`N` next, `s` jump, `v` select, `V` select lines, `y` copy, `q` quit |
+| `Ctrl+B` `j` | Jump like flash.nvim: type a few characters, every match in every pane on screen gets a label, its key puts the copy cursor there, into the other pane too. To mark: jump, `v`, jump again (`s`) to where it ends, `y` |
 | `Ctrl+B` `u` | Copy mode, one page up right away (`PgUp` works too) |
 | `Ctrl+B` `E` | The pane's whole history in `$EDITOR` |
 | `Ctrl+B` `c` … | Your commands from the config, e.g. `g` for lazygit |
