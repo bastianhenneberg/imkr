@@ -243,8 +243,8 @@ for you), `✦ done` (finished while you were elsewhere) or `✓ idle`. A window
 while you look elsewhere or are detached: through `notify-send`, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting `notifications = "system" | "terminal" | "off"`).
 
-imkr recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen
-and kilo. It guesses from their output and from questions on the screen. Other agents and
+imkr recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen,
+kilo and pi. It guesses from their output and from questions on the screen. Other agents and
 their questions go into the config (`extra_agents = ["my-agent"]`,
 `question_phrases = ["Proceed now?"]`), and `imkr explain --pane N` says why a pane counts as
 the agent it is, in its state, or as none. For exact states, let the agent report them with
@@ -260,6 +260,9 @@ imkr hooks              # or just prints them for ~/.claude/settings.json
 own from before replaced), and works where `~/.cargo/bin` is only on interactive shells' PATH.
 Waiting is reported both by permission requests and, for agents running with permissions
 skipped, by the notification that a question waits. Agents started after it report their state.
+Where pi is set up (`~/.pi/agent`), `--install` also puts an extension into its extensions that
+reports pi's state the same way: working while it runs, done after its turn, waiting when an
+error stays after pi's own retries.
 
 The hooks call `imkr status working|blocked|idle|clear`, which knows its pane from
 `$IMKR_PANE` and does nothing outside imkr. It reads the hook's JSON from stdin: a subagent
@@ -622,7 +625,8 @@ machine included (clients from before 0.7 keep their old code until they attach 
 imkr saves the layout to `~/.local/state/imkr/session.json` while it runs: windows,
 splits, floating panes and each pane's directory. If the server dies with the machine, the next
 `imkr` brings the layout back, shells start in their old directories, and agents are resumed:
-Claude Code and Codex by the session id their hooks report (`claude --resume <id>`), opencode,
+Claude Code, Codex and pi by the session id their hooks report (`claude --resume <id>`,
+`pi --session <id>`), opencode,
 aider, goose and cursor-agent with their last conversation in that directory. *Resume agents
 after a restart* in the settings starts them, only types the command for you to start with
 Enter, or leaves them off; `[resume_commands]` in the config sets the command per agent

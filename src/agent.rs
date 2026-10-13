@@ -63,6 +63,7 @@ const AGENTS: &[&str] = &[
     "cursor-agent",
     "qwen",
     "kilo",
+    "pi",
 ];
 
 /// Shells: a pane running one of these in the foreground has no agent.
@@ -373,8 +374,18 @@ mod tests {
             agent_name(&argv(&["node", "/usr/lib/node_modules/gemini.js"])).as_deref(),
             Some("gemini")
         );
+        // pi, as mise runs it.
+        assert_eq!(
+            agent_name(&argv(&[
+                "/home/me/.local/share/mise/installs/pi/0/pi/pi",
+                "-c"
+            ]))
+            .as_deref(),
+            Some("pi")
+        );
         assert_eq!(agent_name(&argv(&["nvim", "claude.md"])), None);
         assert_eq!(agent_name(&argv(&["vim"])), None);
+        assert_eq!(agent_name(&argv(&["pip", "install"])), None);
     }
 
     #[test]

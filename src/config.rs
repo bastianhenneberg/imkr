@@ -286,6 +286,7 @@ pub const DEFAULT_RESUME: &[(&str, &str)] = &[
     ("aider", "aider --restore-chat-history"),
     ("goose", "goose session --resume"),
     ("cursor-agent", "cursor-agent resume"),
+    ("pi", "pi --session {session}"),
 ];
 
 impl Config {

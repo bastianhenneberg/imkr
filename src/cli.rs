@@ -1379,6 +1379,23 @@ bin="$(command -v imkr 2>/dev/null || echo "$HOME/.cargo/bin/imkr")"
 exec "$bin" status "${1:-}"
 "#;
 
+/// The extension that makes pi report its state, as the hooks do for
+/// Claude Code; `imkr hooks --install` puts it into pi's extensions.
+const PI_EXTENSION: &str = include_str!("../integrations/pi/imkr-agent-state.ts");
+
+/// Puts `PI_EXTENSION` into `~/.pi/agent/extensions/` when pi is set up
+/// here. Where it went, `None` without pi.
+fn install_pi_extension(home: &Path) -> Result<Option<std::path::PathBuf>> {
+    let agent = home.join(".pi/agent");
+    if !agent.is_dir() {
+        return Ok(None);
+    }
+    let path = agent.join("extensions/imkr-agent-state.ts");
+    std::fs::create_dir_all(path.parent().expect("has a parent"))?;
+    std::fs::write(&path, PI_EXTENSION)?;
+    Ok(Some(path))
+}
+
 /// `imkr hooks [--install]`: the Claude Code hook config that reports the
 /// agent state; `--install` puts it into `~/.claude` right away.
 pub fn hooks(args: &[String]) -> Result<()> {
@@ -1465,6 +1482,12 @@ fn install_hooks() -> Result<()> {
         path.display()
     );
     println!("Claude Code sessions started from now on report their state to imkr.");
+    if let Some(extension) = install_pi_extension(&home)? {
+        println!(
+            "pi extension installed: {}; pi started from now on reports its state too.",
+            extension.display()
+        );
+    }
     Ok(())
 }
 

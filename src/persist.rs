@@ -655,7 +655,16 @@ mod tests {
             agent: Some("kilo".into()),
             ..Default::default()
         };
-        assert_eq!(kilo.resume_command(&commands), None);
+        assert_eq!(kilo.resume_command(&commands), None); // pi with the session its extension reported.
+        let pi = SavedPane {
+            agent: Some("pi".into()),
+            session: Some("0b5c9f2e-1111".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            pi.resume_command(&commands).as_deref(),
+            Some("pi --session 0b5c9f2e-1111")
+        );
     }
 
     #[test]

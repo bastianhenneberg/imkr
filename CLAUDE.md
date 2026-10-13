@@ -56,7 +56,11 @@ Projekt-Slug: `imkr`
   `Meta::label` („opus 5.5 · 300k“), in `list()` als `meta`, `AgentInfo::meta`. Keine Kosten:
   bräuchte eine Preistabelle.
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
-  (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). `Notification` mit
+  (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). pi: Erweiterung
+  `integrations/pi/imkr-agent-state.ts` (`PI_EXTENSION`, `install_pi_extension` nach
+  `~/.pi/agent/extensions/` wenn `~/.pi/agent` da), ruft `imkr status` mit `session_id` auf stdin;
+  Resume `pi --session {session}`. Test ohne API: Node-Skript lädt die .ts (Type-Stripping) und
+  löst `session_start`/`agent_start`/`agent_end` aus, als Programm `pi` in einem Pane. `Notification` mit
   `permission_prompt|elicitation_dialog` → blocked, für Agents im Bypass-Modus. Test mit Schein-HOME.
 - Verbindungen attachen erst nach `ClientMsg::Attach`; alle anderen (CLI, Agents) schicken
   `ClientMsg::Request` und bekommen `ServerMsg::Reply`. Befehle: `src/cli.rs`.
