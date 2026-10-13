@@ -45,6 +45,9 @@ const ICON: &str = include_str!("../web/icon.svg");
 const XTERM_JS: &str = include_str!("../web/vendor/xterm.js");
 const XTERM_CSS: &str = include_str!("../web/vendor/xterm.css");
 const FIT_JS: &str = include_str!("../web/vendor/addon-fit.js");
+/// Nerd Fonts' symbols, for the icons prompts and programs use: phones have
+/// no such font.
+const SYMBOLS_FONT: &[u8] = include_bytes!("../web/vendor/symbols-nerd-font-mono.woff2");
 
 pub fn main(args: &[String]) -> Result<()> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -645,16 +648,17 @@ fn handle(stream: TcpStream) -> Result<()> {
 }
 
 fn route(request: &HttpRequest) -> Response {
-    let cached = |kind, body: &str| {
+    let cached = |kind, body: &[u8]| {
         Response::new("200 OK", kind, body).with("Cache-Control", "public, max-age=86400".into())
     };
     let device = request.device();
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/xterm.js") => cached("text/javascript", XTERM_JS),
-        ("GET", "/xterm.css") => cached("text/css", XTERM_CSS),
-        ("GET", "/addon-fit.js") => cached("text/javascript", FIT_JS),
-        ("GET", "/manifest.json") => cached("application/manifest+json", MANIFEST),
-        ("GET", "/icon.svg") => cached("image/svg+xml", ICON),
+        ("GET", "/xterm.js") => cached("text/javascript", XTERM_JS.as_bytes()),
+        ("GET", "/xterm.css") => cached("text/css", XTERM_CSS.as_bytes()),
+        ("GET", "/addon-fit.js") => cached("text/javascript", FIT_JS.as_bytes()),
+        ("GET", "/manifest.json") => cached("application/manifest+json", MANIFEST.as_bytes()),
+        ("GET", "/icon.svg") => cached("image/svg+xml", ICON.as_bytes()),
+        ("GET", "/symbols.woff2") => cached("font/woff2", SYMBOLS_FONT),
         ("GET", "/pair") => pair_page(request.query.get("code").map_or("", String::as_str), ""),
         ("POST", "/pair") => {
             if !request.same_origin() {

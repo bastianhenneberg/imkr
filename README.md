@@ -502,7 +502,8 @@ imkr tells you as it does for its own: in the bar, with a bell, and a notificati
 `imkr web` shows this machine's sessions in a browser, made for phones: the agents that wait for
 you or are done, with their last lines and buttons to answer (`1`, `2`, `y`, Enter, Esc, or a
 line of text), every session with its windows and panes, and any pane as a terminal (xterm.js)
-to watch and type into, with a row of the keys a phone lacks (Esc, Tab, Ctrl, arrows). *Fit*
+to watch and type into, with a row of the keys a phone lacks (Esc, Tab, Ctrl, arrows) and
+Nerd Fonts' symbols built in, so prompts show their icons. *Fit*
 gives the pane the phone's size while you look at it, else the page shrinks the pane's text to
 fit. It works in any browser, Android or iPhone, and nothing is set up besides: the server is
 part of the imkr binary and is updated with it (`imkr update` and `imkr hosts sync`).

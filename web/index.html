@@ -11,6 +11,7 @@
 <link rel="apple-touch-icon" href="/icon.svg">
 <link rel="stylesheet" href="/xterm.css?v={{VERSION}}">
 <style>
+  @font-face { font-family:"Symbols Nerd Font Mono"; src:url("/symbols.woff2?v={{VERSION}}") format("woff2"); font-display:block; }
   :root {
     --bg:#f6f6f8; --fg:#1e1e2e; --muted:#6c6f85; --card:#fff; --line:#dcdce4;
     --accent:#1e66f5; --on-accent:#fff; --warn:#df8e1d; --ok:#40a02b; --danger:#d20f39; --key:#e6e6ee;
@@ -334,12 +335,18 @@ for (const [id, by] of [['smaller', 1 / 1.15], ['bigger', 1.15]]) {
   });
 }
 
+// The symbols font after the real ones: it has only icons, so letters come
+// from the font before it and icons from it.
+const MONO = 'ui-monospace, "JetBrains Mono", Menlo, Consolas, "Symbols Nerd Font Mono", monospace';
+// Loaded before the first terminal, else its icons stay boxes until redrawn.
+const symbols = document.fonts?.load('13px "Symbols Nerd Font Mono"', '\ue0b0').catch(() => {});
+
 function makeTerm() {
   term?.dispose();
   $('screen').innerHTML = '';
   $('screen').classList.toggle('fit', fit);
   term = new Terminal({
-    fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace',
+    fontFamily: MONO,
     fontSize: 13, scrollback: 5000, cursorBlink: false, allowProposedApi: false,
     theme: { background: '#1e1e2e', foreground: '#cdd6f4' },
   });
@@ -384,8 +391,10 @@ function layout() {
 }
 window.addEventListener('resize', () => layout());
 
-function connect() {
+async function connect() {
   clearTimeout(retryTimer);
+  if (!target) return;
+  await symbols;
   if (!target) return;
   if (ws) { ws.onclose = null; ws.close(); }
   makeTerm();
