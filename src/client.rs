@@ -43,15 +43,15 @@ type Writer = Arc<Mutex<Option<Box<dyn Write + Send>>>>;
 
 /// The way to a server: its socket here, or `imkr proxy` on another
 /// machine, reached through ssh.
-struct Conn {
-    reader: Box<dyn Read + Send>,
-    writer: Box<dyn Write + Send>,
+pub struct Conn {
+    pub reader: Box<dyn Read + Send>,
+    pub writer: Box<dyn Write + Send>,
     /// The ssh process, ended with the connection.
     ssh: Option<Child>,
 }
 
 impl Conn {
-    fn local(stream: UnixStream) -> Result<Self> {
+    pub fn local(stream: UnixStream) -> Result<Self> {
         Ok(Conn {
             writer: Box::new(stream.try_clone()?),
             reader: Box::new(stream),
@@ -62,7 +62,7 @@ impl Conn {
     /// Runs `imkr proxy` on `host` through ssh, for session `session` or
     /// the default one there, started if needed with `start`. Asks for a
     /// password or host key on the terminal if ssh must.
-    fn remote(host: &str, session: Option<&str>, start: bool) -> Result<Self> {
+    pub fn remote(host: &str, session: Option<&str>, start: bool) -> Result<Self> {
         let mut args = Vec::new();
         if let Some(name) = session {
             args.extend(["-s", name]);

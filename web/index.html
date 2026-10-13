@@ -55,6 +55,7 @@
   .state.done, .state.idle { color:var(--ok); border-color:var(--ok); }
   .state.working { color:var(--accent); border-color:var(--accent); }
   .empty { color:var(--muted); font-size:14px; }
+  h3.machine { font-size:12px; color:var(--muted); margin:14px 0 6px; font-weight:600; }
   .error { color:var(--danger); font-size:13px; margin-top:6px; }
 
   #term-view { display:none; position:fixed; inset:0; flex-direction:column; background:var(--bg); }
@@ -110,10 +111,10 @@ function ago(secs) {
   return Math.floor(secs / 86400) + 'd ago';
 }
 
-async function send(session, pane, text, enter) {
+async function send(host, session, pane, text, enter) {
   const res = await fetch('/api/send', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session, pane, text, enter }),
+    body: JSON.stringify({ host: host || null, session, pane, text, enter }),
   });
   if (res.status === 401) location.reload();
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
@@ -138,13 +139,22 @@ async function refresh() {
   }
 }
 
+// This machine first, then the others, each with its sessions.
+function machines() {
+  return [{ host: '', label: state.machine, sessions: state.sessions },
+    ...(state.hosts || []).map((h) => ({ host: h.host, label: h.host, sessions: h.sessions }))];
+}
+
 const QUICK = [['1','1'],['2','2'],['3','3'],['y','y'],['n','n'],['⏎','\r'],['Esc','\x1b']];
 
 function render() {
   const agents = [];
-  for (const s of state.sessions) {
-    if (s.dormant) continue;
-    for (const a of s.agent_panes || []) agents.push({ ...a, session: s.name });
+  const many = (state.hosts || []).length > 0;
+  for (const m of machines()) {
+    for (const s of m.sessions) {
+      if (s.dormant) continue;
+      for (const a of s.agent_panes || []) agents.push({ ...a, session: s.name, host: m.host, where: many ? `${m.label} › ${s.name}` : s.name });
+    }
   }
   // Inputs being typed into survive the redraw.
   const typing = document.activeElement?.closest?.('.card[data-key]')?.dataset.key;
@@ -161,10 +171,10 @@ function render() {
     if (!list.length) continue;
     html += `<h2>${label}</h2>`;
     for (const a of list) {
-      const key = `${a.session}/${a.pane}`;
-      html += `<div class="card ${kind}" data-key="${esc(key)}" data-session="${esc(a.session)}" data-pane="${a.pane}">
+      const key = `${a.host}:${a.session}/${a.pane}`;
+      html += `<div class="card ${kind}" data-key="${esc(key)}" data-host="${esc(a.host)}" data-session="${esc(a.session)}" data-pane="${a.pane}">
         <div class="title"><b>${esc(a.program)} · ${esc(a.dir)}</b><span class="sub">${ago(a.since)}</span></div>
-        <div class="sub">${esc(a.session)} › window ${a.workspace}${a.meta ? ' · ' + esc(a.meta) : ''}</div>
+        <div class="sub">${esc(a.where)} › window ${a.workspace}${a.meta ? ' · ' + esc(a.meta) : ''}</div>
         ${a.tail ? `<pre class="tail">${esc(a.tail)}</pre>` : ''}
         <div class="row">${QUICK.map(([l, t]) => `<button class="key" data-text="${esc(t)}">${esc(l)}</button>`).join('')}
           <button class="key primary" data-open>Open</button></div>
@@ -179,20 +189,26 @@ function render() {
 
 function renderSessions() {
   let html = '';
-  for (const s of state.sessions) {
-    const quiet = quietFor(s);
-    const counts = Object.entries(s.agents || {}).map(([k, n]) => `<span class="state ${esc(k)}">${n} ${esc(k)}</span>`).join(' ');
-    const isOpen = open.has(s.name) && !s.dormant;
-    html += `<div class="card session ${s.dormant ? 'dormant' : ''}" data-session="${esc(s.name)}">
-      <div class="head"><b>${esc(s.name)}</b>${counts}<span class="sub">${s.dormant ? esc(s.dormant) : quiet != null && quiet > 0 ? ago(quiet) : s.windows + ' win'}</span></div>`;
-    if (isOpen) {
-      const panes = (s.all_panes || []).slice().sort((a, b) => a.workspace - b.workspace || a.pane - b.pane);
-      for (const p of panes) {
-        html += `<div class="pane" data-pane="${p.pane}"><span>${p.workspace} ${esc(p.dir)} › ${esc(p.program)}</span>${p.state ? `<span class="state ${esc(p.state)}">${esc(p.state)}</span>` : ''}</div>`;
+  const all = machines();
+  for (const m of all) {
+    if (all.length > 1) html += `<h3 class="machine">${esc(m.label)}</h3>`;
+    if (!m.sessions.length) html += '<p class="empty">No sessions.</p>';
+    for (const s of m.sessions) {
+      const quiet = quietFor(s);
+      const counts = Object.entries(s.agents || {}).map(([k, n]) => `<span class="state ${esc(k)}">${n} ${esc(k)}</span>`).join(' ');
+      const id = `${m.host}:${s.name}`;
+      const isOpen = open.has(id) && !s.dormant;
+      html += `<div class="card session ${s.dormant ? 'dormant' : ''}" data-host="${esc(m.host)}" data-session="${esc(s.name)}" data-id="${esc(id)}">
+        <div class="head"><b>${esc(s.name)}</b>${counts}<span class="sub">${s.dormant ? esc(s.dormant) : quiet != null && quiet > 0 ? ago(quiet) : s.windows + ' win'}</span></div>`;
+      if (isOpen) {
+        const panes = (s.all_panes || []).slice().sort((a, b) => a.workspace - b.workspace || a.pane - b.pane);
+        for (const p of panes) {
+          html += `<div class="pane" data-pane="${p.pane}"><span>${p.workspace} ${esc(p.dir)} › ${esc(p.program)}</span>${p.state ? `<span class="state ${esc(p.state)}">${esc(p.state)}</span>` : ''}</div>`;
+        }
+        if (!panes.length) html += `<div class="pane"><span class="sub">imkr there is too old to list its panes</span></div>`;
       }
-      if (!panes.length) html += `<div class="pane"><span class="sub">imkr there is too old to list its panes</span></div>`;
+      html += '</div>';
     }
-    html += '</div>';
   }
   $('sessions').innerHTML = html || '<p class="empty">No sessions.</p>';
 }
@@ -207,13 +223,13 @@ function quietFor(s) {
 $('inbox').addEventListener('click', async (e) => {
   const card = e.target.closest('.card');
   if (!card) return;
-  const session = card.dataset.session, pane = Number(card.dataset.pane);
+  const host = card.dataset.host, session = card.dataset.session, pane = Number(card.dataset.pane);
   const button = e.target.closest('button');
   if (!button) return;
-  if (button.hasAttribute('data-open')) return openTerm(session, pane, card.querySelector('b').textContent);
+  if (button.hasAttribute('data-open')) return openTerm(host, session, pane, card.querySelector('b').textContent);
   if (button.dataset.text == null) return;
   e.preventDefault();
-  try { await send(session, pane, button.dataset.text, false); setTimeout(refresh, 600); }
+  try { await send(host, session, pane, button.dataset.text, false); setTimeout(refresh, 600); }
   catch (err) { card.querySelector('.error').textContent = err.message; }
 });
 
@@ -223,7 +239,7 @@ $('inbox').addEventListener('submit', async (e) => {
   const input = e.target.querySelector('input');
   if (!input.value) return;
   try {
-    await send(card.dataset.session, Number(card.dataset.pane), input.value, true);
+    await send(card.dataset.host, card.dataset.session, Number(card.dataset.pane), input.value, true);
     input.value = '';
     input.blur();
     setTimeout(refresh, 600);
@@ -234,8 +250,8 @@ $('sessions').addEventListener('click', (e) => {
   const card = e.target.closest('.session');
   if (!card || card.classList.contains('dormant')) return;
   const pane = e.target.closest('.pane[data-pane]');
-  if (pane) return openTerm(card.dataset.session, Number(pane.dataset.pane), pane.firstElementChild.textContent);
-  const name = card.dataset.session;
+  if (pane) return openTerm(card.dataset.host, card.dataset.session, Number(pane.dataset.pane), pane.firstElementChild.textContent);
+  const name = card.dataset.id;
   open.has(name) ? open.delete(name) : open.add(name);
   store.set('open', JSON.stringify([...open]));
   renderSessions();
@@ -281,8 +297,8 @@ $('compose').addEventListener('submit', (e) => {
   line.value = '';
 });
 
-function openTerm(session, pane, title) {
-  target = { session, pane };
+function openTerm(host, session, pane, title) {
+  target = { host, session, pane };
   $('term-title').textContent = title || `${session} › ${pane}`;
   document.body.classList.add('term');
   history.pushState({ term: true }, '');
@@ -377,6 +393,7 @@ function connect() {
   const url = new URL('/ws', location.href);
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const params = { session: target.session, pane: target.pane, fit: fit ? '1' : '0' };
+  if (target.host) params.host = target.host;
   if (fit) {
     // The pane takes this screen's size before its screen is sent.
     term.options.fontSize = Math.round(13 * scale);

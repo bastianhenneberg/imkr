@@ -111,6 +111,9 @@ Projekt-Slug: `imkr`
   `web::keep_running` (startet `imkr web --background`, wenn auf der Adresse nichts antwortet);
   der Prozess exect sich selbst, sobald `/proc/self/exe` gelöscht ist (Update). Adresse:
   `--listen`/`web_listen`, sonst 100.64.0.0/10 (`vpn_address`, getifaddrs), sonst 127.0.0.1:4657.
+  Andere Rechner: `other_machines` (per `Request::Places` von den lokalen Servern, ohne laufenden
+  Server eigenes Polling `polled_machines`), `/api/send` mit `host` → `imkr send` per ssh,
+  `/ws?host=` → `client::Conn::remote` (`imkr proxy`); nur Hosts aus dieser Liste (`known_machine`).
   Test: headless `chromium --remote-debugging-port` + Node-Skript per CDP (Node hat WebSocket).
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,

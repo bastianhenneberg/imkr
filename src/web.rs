@@ -21,6 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::client::Conn;
 use crate::layout::PaneId;
 use crate::protocol::{self, ClientMsg, Request, ServerMsg};
 
@@ -690,6 +691,7 @@ fn route(request: &HttpRequest) -> Response {
             "version": env!("CARGO_PKG_VERSION"),
             "device": device.map(|d| d.name),
             "sessions": crate::client::local_sessions(),
+            "hosts": other_machines(),
         })),
         ("POST", "/api/send") if request.same_origin() => send(&request.body),
         _ => Response::error("404 Not Found", "nothing here"),
@@ -720,6 +722,9 @@ fn pair_page(code: &str, message: &str) -> Response {
 
 #[derive(Deserialize)]
 struct Send {
+    /// Another machine, by the name ssh reaches it by.
+    #[serde(default)]
+    host: Option<String>,
     session: String,
     pane: PaneId,
     text: String,
@@ -732,6 +737,20 @@ fn send(body: &[u8]) -> Response {
     let Ok(send) = serde_json::from_slice::<Send>(body) else {
         return Response::error("400 Bad Request", "expected session, pane, text");
     };
+    if let Some(host) = &send.host {
+        let reply = known_machine(host, &send.session).and_then(|()| {
+            let pane = send.pane.to_string();
+            let mut args = vec!["-s", &send.session, "send", "--stdin", "--pane", &pane];
+            if !send.enter {
+                args.push("--no-enter");
+            }
+            crate::client::remote_output(host, &args, &send.text)
+        });
+        return match reply {
+            Ok(_) => Response::json(&serde_json::json!({})),
+            Err(e) => Response::error("409 Conflict", &format!("{e:#}")),
+        };
+    }
     let reply = session_path(&send.session).and_then(|path| {
         crate::client::request_at(
             &path,
@@ -746,6 +765,101 @@ fn send(body: &[u8]) -> Response {
         Ok(value) => Response::json(&value),
         Err(e) => Response::error("409 Conflict", &format!("{e:#}")),
     }
+}
+
+// --- Other machines ---
+
+/// How old the machines' sessions may get when this process asks them.
+const HOSTS_EVERY: Duration = Duration::from_secs(15);
+
+/// The sessions on the other machines. The sessions here ask them every
+/// 15 s anyway, through ssh (`Request::Places`); only when none runs does
+/// this process ask, in the background, so a page never waits for ssh.
+fn other_machines() -> Vec<protocol::HostInfo> {
+    let mut found: Vec<protocol::HostInfo> = Vec::new();
+    let mut asked = false;
+    for session in crate::client::local_sessions() {
+        if session.dormant.is_some() {
+            continue;
+        }
+        let Ok(path) = protocol::session_socket(&session.name) else {
+            continue;
+        };
+        let Ok(value) = crate::client::request_at(&path, Request::Places) else {
+            continue;
+        };
+        let Ok(hosts) = serde_json::from_value::<Vec<protocol::HostInfo>>(value) else {
+            continue;
+        };
+        asked = true;
+        for host in hosts {
+            if !found.iter().any(|h| h.host == host.host) {
+                found.push(host);
+            }
+        }
+    }
+    if asked { found } else { polled_machines() }
+}
+
+#[derive(Default)]
+struct Polled {
+    at: Option<std::time::Instant>,
+    asking: bool,
+    hosts: Vec<protocol::HostInfo>,
+}
+
+static POLLED: std::sync::Mutex<Polled> = std::sync::Mutex::new(Polled {
+    at: None,
+    asking: false,
+    hosts: Vec::new(),
+});
+
+/// The machines' sessions as this process last asked them; asks again in
+/// the background when that is longer than `HOSTS_EVERY` ago.
+fn polled_machines() -> Vec<protocol::HostInfo> {
+    let mut polled = POLLED.lock().unwrap();
+    let stale = polled.at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY);
+    if stale && !polled.asking {
+        polled.asking = true;
+        std::thread::spawn(|| {
+            let asked: Vec<_> = crate::client::known_hosts()
+                .into_iter()
+                .map(|host| {
+                    std::thread::spawn(move || {
+                        let sessions = crate::client::remote_sessions(&host).ok()?;
+                        Some(protocol::HostInfo { host, sessions })
+                    })
+                })
+                .collect();
+            let hosts = asked
+                .into_iter()
+                .filter_map(|asking| asking.join().ok().flatten())
+                .collect();
+            let mut polled = POLLED.lock().unwrap();
+            *polled = Polled {
+                at: Some(std::time::Instant::now()),
+                asking: false,
+                hosts,
+            };
+        });
+    }
+    polled.hosts.clone()
+}
+
+/// Whether `session` runs on `host`, one of the machines the page shows:
+/// nothing else is handed to ssh.
+fn known_machine(host: &str, session: &str) -> Result<()> {
+    if !protocol::valid_session_name(session) {
+        bail!("no session {session}");
+    }
+    let machines = other_machines();
+    let Some(machine) = machines.iter().find(|m| m.host == host) else {
+        bail!("{host} is not one of the machines here");
+    };
+    if !machine.sessions.iter().any(|s| s.name == session) {
+        bail!("no session {session} on {host}");
+    }
+    Ok(())
 }
 
 fn session_path(name: &str) -> Result<PathBuf> {
@@ -779,10 +893,24 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
     let session = request.query.get("session").cloned().unwrap_or_default();
     let pane: Option<PaneId> = request.query.get("pane").and_then(|p| p.parse().ok());
     let fit = request.query.get("fit").is_some_and(|f| f == "1");
-    let tapped = (|| -> Result<(UnixStream, serde_json::Value)> {
+    let host = request.query.get("host").filter(|h| !h.is_empty());
+    // The socket here, to end the tap with: the reading thread holds it too.
+    let mut socket = None;
+    let tapped = (|| -> Result<(Conn, serde_json::Value)> {
         let pane = pane.context("no pane")?;
-        let mut unix = UnixStream::connect(session_path(&session)?)
-            .with_context(|| format!("session {session} does not run"))?;
+        let mut conn = match host {
+            // Through ssh to `imkr proxy` there, as `imkr --host` does.
+            Some(host) => {
+                known_machine(host, &session)?;
+                Conn::remote(host, Some(&session), false)?
+            }
+            None => {
+                let unix = UnixStream::connect(session_path(&session)?)
+                    .with_context(|| format!("session {session} does not run"))?;
+                socket = Some(unix.try_clone()?);
+                Conn::local(unix)?
+            }
+        };
         let size = request
             .query
             .get("rows")
@@ -794,14 +922,15 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
             watch: !fit,
             size,
         };
-        ClientMsg::Request(tap).write_to(&mut unix)?;
-        match ServerMsg::read_from(&mut unix)? {
-            Some(ServerMsg::Reply(Ok(value))) => Ok((unix, value)),
+        ClientMsg::Request(tap).write_to(&mut conn.writer)?;
+        conn.writer.flush()?;
+        match ServerMsg::read_from(&mut conn.reader)? {
+            Some(ServerMsg::Reply(Ok(value))) => Ok((conn, value)),
             Some(ServerMsg::Reply(Err(message))) => bail!(message),
             _ => bail!("imkr there is too old to show panes, run `imkr update`"),
         }
     })();
-    let (mut unix, reply) = match tapped {
+    let (mut conn, reply) = match tapped {
         Ok(tapped) => tapped,
         Err(e) => {
             let _ = ws.send(text(serde_json::json!({ "error": format!("{e:#}") })));
@@ -821,7 +950,7 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
     // Output comes in on its own thread; this one waits for input, briefly,
     // and passes on what came meanwhile.
     let (tx, rx) = mpsc::channel::<Option<Vec<u8>>>();
-    let mut output = unix.try_clone()?;
+    let mut output = std::mem::replace(&mut conn.reader, Box::new(std::io::empty()));
     std::thread::Builder::new()
         .name("web-tap".into())
         .spawn(move || {
@@ -846,7 +975,8 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
         match ws.read() {
             Ok(Message::Binary(bytes)) => {
                 if ClientMsg::Input(bytes.to_vec())
-                    .write_to(&mut unix)
+                    .write_to(&mut conn.writer)
+                    .and_then(|()| conn.writer.flush())
                     .is_err()
                 {
                     break false;
@@ -886,7 +1016,11 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
     }
     let _ = ws.close(None);
     let _ = ws.flush();
-    let _ = unix.shutdown(std::net::Shutdown::Both);
+    // Ends the ssh process for another machine; here, the socket.
+    drop(conn);
+    if let Some(socket) = socket {
+        let _ = socket.shutdown(std::net::Shutdown::Both);
+    }
     Ok(())
 }
 

@@ -507,6 +507,14 @@ gives the pane the phone's size while you look at it, else the page shrinks the 
 fit. It works in any browser, Android or iPhone, and nothing is set up besides: the server is
 part of the imkr binary and is updated with it (`imkr update` and `imkr hosts sync`).
 
+The other machines imkr knows (`hosts`, and those reached with `--host`) are on the page too,
+grouped by machine: their agents in the inbox, their sessions and panes, reached through ssh as
+the session list reaches them. So one machine with `imkr web` is enough; pair the phone with the
+one that is always on.
+
+A firewall on the machine must let the port in, on the VPN only. With ufw and NetBird:
+`sudo ufw allow in on wt0 to any port 4657 proto tcp` (Tailscale: `tailscale0`).
+
 It listens on this machine's VPN address if there is one (Tailscale and NetBird both hand out
 addresses from 100.64.0.0/10), else only on 127.0.0.1, port 4657; `--listen` or `web_listen`
 picks another address. Put it on a VPN, not the open internet: with the phone in the same
