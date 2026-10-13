@@ -22,6 +22,7 @@ mod release;
 mod render;
 mod review;
 mod server;
+mod shapes;
 mod sidebar;
 mod template;
 mod theme;
@@ -97,6 +98,9 @@ For scripts and agents:
                 pane's shell, print its output and exit with its code
   shell-integration zsh|bash
                 what to eval in ~/.zshrc or ~/.bashrc for run and wait
+  layout ls | save NAME | NAME
+                the layouts (presets as in tmux, and saved ones), or save
+                the active window's, or give it one; its programs run on
   explain [--pane N] [--json]
                 why a pane counts as the agent it is, in its state
   worktree NAME [-- command]
@@ -217,6 +221,7 @@ fn main() -> Result<()> {
         ["subscribe", ..] => cli::subscribe(&args[1..], chosen),
         ["worktree", ..] => cli::worktree(&args[1..]),
         ["explain", ..] => cli::explain(&args[1..]),
+        ["layout", ..] => cli::layout(&args[1..]),
         ["run", ..] => cli::run(&args[1..]),
         ["shell-integration", ..] => cli::shell_integration(&args[1..]),
         ["checkpoints"] => {

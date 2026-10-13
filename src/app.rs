@@ -139,6 +139,8 @@ enum Mode {
     Marks(usize),
     /// Reviewing the changes in `App::review`.
     Review,
+    /// The layouts for this window, that one selected.
+    Layouts(usize),
     /// What agents did since then (seconds since 1970), that one selected.
     Recap(u64, usize),
 }
@@ -290,6 +292,8 @@ enum PromptFor {
     Worktree,
     /// A note on the line under the review's cursor.
     ReviewNote,
+    /// The name to save this window's layout as.
+    SaveLayout,
     /// The name of a window just opened. Esc closes it again and goes back
     /// to the window it was opened from.
     NewWindow {
@@ -1838,6 +1842,9 @@ impl App {
                 cwd,
             } => self.new_pane(&command, float, workspace, cwd),
             Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
+            Request::Layout { name, save } => self
+                .layout(&name, save)
+                .map(|()| serde_json::json!({ "layout": name, "window": self.workspace })),
             Request::LastCommand { pane } => self
                 .panes
                 .get(&pane)
@@ -2018,6 +2025,119 @@ impl App {
 
     /// Starts `command` in a new pane: floating or split off the focused one,
     /// in workspace `n` or the active one. Hidden workspaces stay hidden.
+    /// The layouts for this window: the presets, then the saved ones.
+    fn layout_items(&self) -> (Vec<String>, Vec<menu::MenuItem>) {
+        let n = self.ws.layout.panes().len();
+        let mut names = Vec::new();
+        let mut items = Vec::new();
+        for (name, what) in crate::shapes::PRESETS {
+            names.push((*name).to_owned());
+            items.push((name.to_string(), (*what).to_owned(), None));
+        }
+        for (name, shape) in crate::shapes::saved() {
+            let places = shape.panes();
+            let hint = if places == n {
+                format!("saved, {places} panes")
+            } else {
+                format!("saved, {places} panes, this window has {n}")
+            };
+            names.push(name.clone());
+            items.push((name, hint, Some("saved".to_owned())));
+        }
+        let items = items
+            .into_iter()
+            .enumerate()
+            .map(|(i, (title, hint, group))| menu::MenuItem {
+                key: list_key_char(i),
+                title,
+                hint,
+                danger: false,
+                apart: false,
+                color: None,
+                group,
+            })
+            .collect();
+        (names, items)
+    }
+
+    fn layouts_key(&mut self, key: KeyEvent, selected: usize) {
+        let (names, _) = self.layout_items();
+        let count = names.len().max(1);
+        let pick = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::Layouts((selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::Layouts((selected + 1) % count);
+                return;
+            }
+            KeyCode::Char('s') => {
+                self.prompt = Some(Prompt {
+                    purpose: PromptFor::SaveLayout,
+                    text: String::new(),
+                });
+                self.mode = Mode::Prompt;
+                return;
+            }
+            KeyCode::Char('x') => {
+                if let Some(name) = names.get(selected) {
+                    self.flash = Some(match crate::shapes::remove(name) {
+                        Ok(true) => format!("layout {name} removed"),
+                        Ok(false) => "only saved layouts can be removed".into(),
+                        Err(e) => format!("{e:#}"),
+                    });
+                }
+                return;
+            }
+            KeyCode::Enter => selected,
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => c as usize - '1' as usize,
+            _ => return,
+        };
+        self.mode = Mode::Normal;
+        if let Some(name) = names.get(pick).cloned()
+            && let Err(e) = self.layout(&name, false)
+        {
+            self.flash = Some(e);
+        }
+    }
+
+    /// Gives the active window the layout `name`, or saves its own as
+    /// `name` with `save`. Its panes take the places in order, places left
+    /// get a new shell, panes left over go after the last; floating ones
+    /// stay as they are.
+    fn layout(&mut self, name: &str, save: bool) -> Result<(), String> {
+        if name.is_empty() {
+            return Err("a layout needs a name".into());
+        }
+        if save {
+            let shape = crate::shapes::Shape::of(&self.ws.layout)
+                .ok_or("this window has no tiled panes")?;
+            crate::shapes::save(name, shape).map_err(|e| format!("{e:#}"))?;
+            self.flash = Some(format!("layout {name} saved"));
+            return Ok(());
+        }
+        let n = self.ws.layout.panes().len().max(1);
+        let (shape, even) = crate::shapes::named(name, n).ok_or(format!("no layout {name}"))?;
+        let focus = self.ws.focus;
+        for _ in n..shape.panes() {
+            self.new_pane(&[], false, Some(self.workspace), None)?;
+        }
+        let panes = self.ws.layout.panes();
+        let layout = shape.build(&panes, even).ok_or("no panes to lay out")?;
+        self.ws.layout = layout;
+        self.ws.zoomed = None;
+        if self.ws.contains(focus) {
+            self.ws.focus(focus);
+        }
+        self.flash = Some(format!("layout {name}"));
+        Ok(())
+    }
+
     /// Opens the review of the focused pane's repository: its diff read
     /// anew, the notes not sent yet kept.
     fn open_review(&mut self) {
@@ -2953,6 +3073,10 @@ impl App {
                 self.review_key(key);
                 Ok(())
             }
+            Mode::Layouts(selected) => {
+                self.layouts_key(key, selected);
+                Ok(())
+            }
             Mode::Recap(since, selected) => {
                 self.recap_key(key, since, selected);
                 Ok(())
@@ -3097,6 +3221,7 @@ impl App {
             Command::PaneToWindow(n) => self.pane_to_window(Some(n)),
             Command::PaneToNewWindow => self.pane_to_window(None),
             Command::Review => self.open_review(),
+            Command::Layouts => self.mode = Mode::Layouts(0),
             Command::Recap => self.open_recap(),
             Command::WorktreeWindow => {
                 self.prompt = Some(Prompt {
@@ -6153,6 +6278,11 @@ impl App {
                             self.flash = Some(e);
                         }
                     }
+                    PromptFor::SaveLayout => {
+                        if let Err(e) = self.layout(text.trim(), true) {
+                            self.flash = Some(e);
+                        }
+                    }
                     PromptFor::ReviewNote => {
                         self.mode = Mode::Review;
                         if let Some(review) = &mut self.review
@@ -7414,6 +7544,7 @@ impl App {
                         | Mode::Agents(_)
                         | Mode::Inbox(_)
                         | Mode::Review
+                        | Mode::Layouts(_)
                         | Mode::Recap(..)
                         | Mode::Windows(_)
                         | Mode::Panes(_)
@@ -7608,6 +7739,17 @@ impl App {
             }
             Mode::Inbox(selected) => self.draw_inbox(frame, body, selected),
             Mode::Review => self.draw_review(frame, body),
+            Mode::Layouts(selected) => {
+                let (_, items) = self.layout_items();
+                self.draw_list(
+                    frame,
+                    body,
+                    &format!(" ⬢ Layout for window {} ", self.workspace),
+                    &items,
+                    selected.min(items.len() - 1),
+                    bindings::LAYOUT_LIST_KEYS,
+                );
+            }
             Mode::Recap(since, selected) => {
                 let (_, items) = self.recap_items(since);
                 let when = protocol::chrono_like(since).unwrap_or_default();
@@ -7945,6 +8087,7 @@ impl App {
             PromptFor::MoveWindow(n) => format!(" Move window {n} to session "),
             PromptFor::Worktree => " New window in a git worktree, branch ".to_owned(),
             PromptFor::ReviewNote => " Note on this line ".to_owned(),
+            PromptFor::SaveLayout => " Save this window's layout as ".to_owned(),
             PromptFor::SaveHive => " Save running sessions as hive ".to_owned(),
             PromptFor::RenameHive(old) => format!(" Rename hive {old} "),
             PromptFor::RenameSession(old) => format!(" Rename session {old} "),
@@ -7971,6 +8114,7 @@ impl App {
                         "Enter open · new branch from here, or the one of that name · Esc cancel"
                     }
                     PromptFor::ReviewNote => "Enter keep · empty removes it · Esc cancel",
+                    PromptFor::SaveLayout => "Enter save · the same name replaces it · Esc cancel",
                 },
                 hint,
             ),
@@ -8305,6 +8449,11 @@ impl App {
                 "AWAY",
                 t.magenta,
                 "● started · ◆ asked · ✦ finished · Enter or digit go there · Esc close",
+            ),
+            Mode::Layouts(_) => (
+                "LAYOUT",
+                t.blue,
+                "↑↓ choose · Enter or digit give it this window · s save · x remove · Esc cancel",
             ),
             Mode::Review => (
                 "REVIEW",

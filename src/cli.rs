@@ -802,6 +802,40 @@ fn wait_command(args: &[String]) -> Result<()> {
     finish(pane, finished, timeout)
 }
 
+/// `imkr layout [ls | save NAME | NAME] [--window N]`: the layouts, or
+/// saving or giving one to the active window.
+pub fn layout(args: &[String]) -> Result<()> {
+    match args {
+        [] => bail!("usage: imkr layout ls | save NAME | NAME"),
+        [ls] if ls == "ls" => {
+            for (name, what) in crate::shapes::PRESETS {
+                println!("{name:<20} {what}");
+            }
+            for (name, shape) in crate::shapes::saved() {
+                println!("{name:<20} saved, {} panes", shape.panes());
+            }
+            Ok(())
+        }
+        [save, name] if save == "save" => {
+            client::request(Request::Layout {
+                name: name.clone(),
+                save: true,
+            })?;
+            println!("saved the active window's layout as {name}");
+            Ok(())
+        }
+        [name] => {
+            let reply = client::request(Request::Layout {
+                name: name.clone(),
+                save: false,
+            })?;
+            println!("window {} now has layout {name}", reply["window"]);
+            Ok(())
+        }
+        _ => bail!("usage: imkr layout ls | save NAME | NAME"),
+    }
+}
+
 /// `imkr explain [--pane N] [--json]`: why a pane counts as the agent it
 /// is, in its state.
 pub fn explain(args: &[String]) -> Result<()> {

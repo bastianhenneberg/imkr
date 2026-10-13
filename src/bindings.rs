@@ -61,6 +61,8 @@ pub enum Command {
     MoveWorkspace,
     /// Number the windows 1, 2, 3 … again, closing the gaps.
     RenumberWorkspaces,
+    /// The layouts to give this window: presets and saved ones.
+    Layouts,
     /// Show or hide the popup used last.
     TogglePopup,
     /// Every agent here and elsewhere, to jump to.
@@ -789,6 +791,12 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Char('m')), C::MoveWorkspace)],
     },
     Binding {
+        label: "l",
+        description: "layout…",
+        group: Group::Workspaces,
+        keys: &[(Key::plain(Char('l')), C::Layouts)],
+    },
+    Binding {
         label: "=",
         description: "renumber windows",
         group: Group::Workspaces,
@@ -907,6 +915,15 @@ pub const MARK_LIST_KEYS: &[KeyHint] = &[
     ("Enter", "or key go there"),
     ("J K", "move down/up"),
     ("x", "remove"),
+    ("Esc", "cancel"),
+];
+
+/// The keys of the layout list (`Ctrl+B w l`).
+pub const LAYOUT_LIST_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    ("Enter", "or key give it this window"),
+    ("s", "save this window's as…"),
+    ("x", "remove a saved one"),
     ("Esc", "cancel"),
 ];
 

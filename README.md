@@ -157,6 +157,7 @@ one and `git restore --source=<id> -- <path>` brings a file back as it was.
 | `Ctrl+B` `{` / `}` | Swap the pane with the previous / next one |
 | `Ctrl+B` `>` `1`–`9` / `n` | Move the pane into that window (made if needed) / a new one; it keeps running, a window left empty goes |
 | `Ctrl+B` `=` | Give all panes equal sizes |
+| `Ctrl+B` `w` `l` | Layout for this window: `even-horizontal`, `even-vertical`, `main-vertical`, `main-horizontal`, `tiled` as in tmux, or one saved with `s`. Its panes take the places in order and keep running, places left get a shell; `imkr layout NAME`, `imkr layout save NAME`, `imkr layout ls` from a shell |
 | `Ctrl+B` `f` … | Floating panes menu: `f` float/tile, `n` new, `o` next, arrows move |
 | `Ctrl+B` `Shift+←↑↓→` | Move a floating pane |
 | `Ctrl+B` `n` | New window, asks for its name right away (Esc closes it again) |

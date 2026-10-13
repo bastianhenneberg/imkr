@@ -372,6 +372,9 @@ pub enum Request {
         command: Vec<String>,
         cwd: Option<PathBuf>,
     },
+    /// Gives the active window the layout `name` (a preset or a saved
+    /// one), or saves its layout as `name` with `save`.
+    Layout { name: String, save: bool },
     /// What the shell in pane `pane` told of its commands (OSC 133): how
     /// many finished, whether one runs, the last one's output and exit.
     LastCommand { pane: PaneId },
