@@ -314,17 +314,25 @@ use KeyCode::{Char, Esc};
 
 pub const BINDINGS: &[Binding] = &[
     // The main menu, after the prefix.
+    // tmux's keys, and keys without Shift on a German keyboard.
     Binding {
-        label: "%",
+        label: "% # |",
         description: "split side by side",
         group: Group::Panes,
-        keys: &[(Key::plain(Char('%')), C::SplitRow)],
+        keys: &[
+            (Key::plain(Char('%')), C::SplitRow),
+            (Key::plain(Char('#')), C::SplitRow),
+            (Key::plain(Char('|')), C::SplitRow),
+        ],
     },
     Binding {
-        label: "\"",
+        label: "\" -",
         description: "split top and bottom",
         group: Group::Panes,
-        keys: &[(Key::plain(Char('"')), C::SplitColumn)],
+        keys: &[
+            (Key::plain(Char('"')), C::SplitColumn),
+            (Key::plain(Char('-')), C::SplitColumn),
+        ],
     },
     Binding {
         label: "x",
@@ -1157,6 +1165,19 @@ mod tests {
         assert_eq!(
             lookup(Menu::Root, event(Char('%'), none)),
             Some(C::SplitRow)
+        );
+        // Without Shift on a German keyboard, besides tmux's.
+        assert_eq!(
+            lookup(Menu::Root, event(Char('#'), none)),
+            Some(C::SplitRow)
+        );
+        assert_eq!(
+            lookup(Menu::Root, event(Char('|'), none)),
+            Some(C::SplitRow)
+        );
+        assert_eq!(
+            lookup(Menu::Root, event(Char('-'), none)),
+            Some(C::SplitColumn)
         );
         assert_eq!(
             lookup(Menu::Root, event(KeyCode::Left, none)),

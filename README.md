@@ -161,8 +161,8 @@ one and `git restore --source=<id> -- <path>` brings a file back as it was.
 
 | Key | Action |
 |---|---|
-| `Ctrl+B` `%` | Split the pane side by side |
-| `Ctrl+B` `"` | Split the pane top and bottom |
+| `Ctrl+B` `%` (or `#`, `\|`) | Split the pane side by side |
+| `Ctrl+B` `"` (or `-`) | Split the pane top and bottom; `#` and `-` need no Shift on a German keyboard |
 | `Ctrl+B` `x` | Close the pane (asks first) |
 | `Ctrl+B` `r` | Name the pane (`Ctrl+B` `w` `r` names the window) |
 | `Ctrl+B` `z` | Zoom: the pane alone over the whole window, again to go back |
