@@ -123,6 +123,8 @@ enum Mode {
     Hives(usize),
     /// The agents' accounts, see `account_items`.
     Accounts(usize),
+    /// A jump like flash.nvim's, see `Jump`.
+    Jump,
     /// Choosing the session to move this window to, that entry selected.
     MoveTo(u8, usize),
     /// The list of every agent, here and elsewhere, that one selected.
@@ -356,6 +358,27 @@ struct CopyCursor {
     pane: PaneId,
     pos: (usize, u16),
 }
+
+/// A jump like flash.nvim's (`Mode::Jump`): what is typed so far and the
+/// matches on screen, each with its label.
+#[derive(Clone, Debug, Default)]
+struct Jump {
+    query: String,
+    targets: Vec<JumpTarget>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct JumpTarget {
+    pane: PaneId,
+    /// Absolute row and column, as `CopyCursor::pos`.
+    pos: (usize, u16),
+    /// Where it shows: the pane's view row.
+    row: u16,
+    label: Option<char>,
+}
+
+/// The keys labels are taken from, the easy ones first.
+const JUMP_LABELS: &str = "asdfghjklqwertyuiopzxcvbnm";
 
 /// The entries of the quit menu, in order.
 const MENU: [(char, MenuEntry); 3] = [
@@ -718,6 +741,8 @@ pub struct App {
     divider: Vec<bool>,
     selection: Option<Selection>,
     copy: Option<CopyCursor>,
+    /// The jump being typed, see `Jump`.
+    jump: Option<Jump>,
     /// A short message for the control bar, e.g. what was copied. Cleared by
     /// the next key.
     flash: Option<String>,
@@ -846,6 +871,7 @@ impl App {
             divider: Vec::new(),
             selection: None,
             copy: None,
+            jump: None,
             flash: None,
             confirm_target: None,
             confirm_list: Vec::new(),
@@ -3595,6 +3621,10 @@ impl App {
                 self.accounts_key(key, selected);
                 Ok(())
             }
+            Mode::Jump => {
+                self.jump_key(key);
+                Ok(())
+            }
             Mode::MoveTo(window, selected) => {
                 self.move_to_key(key, window, selected);
                 Ok(())
@@ -3965,6 +3995,10 @@ impl App {
             Command::Sessions => self.open_sessions(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::Accounts => self.mode = Mode::Accounts(0),
+            Command::Jump => {
+                self.enter_copy();
+                self.start_jump();
+            }
             Command::PluginMarket => {
                 let exe = std::env::current_exe()
                     .map_or("imkr".into(), |e| e.to_string_lossy().into_owned());
@@ -4335,6 +4369,147 @@ impl App {
         }
     }
 
+    fn start_jump(&mut self) {
+        if self.copy.is_none() {
+            return;
+        }
+        self.jump = Some(Jump::default());
+        self.mode = Mode::Jump;
+    }
+
+    /// The matches of `query` in every pane on screen, the focused one
+    /// first, top to bottom, each labelled with a key that does not go on
+    /// any match, so that typing more narrows them down instead.
+    fn jump_targets(&self, query: &str) -> Vec<JumpTarget> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let fold = !query.chars().any(char::is_uppercase);
+        let norm = |s: &str| if fold { s.to_lowercase() } else { s.to_owned() };
+        let wanted = norm(query);
+        let mut rects = self.rects_of(&self.ws);
+        rects.sort_by_key(|(id, _)| *id != self.ws.focus);
+        let mut targets = Vec::new();
+        // Characters that follow a match: typing one of them goes on.
+        let mut next = std::collections::HashSet::new();
+        for (id, rect) in rects {
+            let Some(pane) = self.panes.get(&id) else {
+                continue;
+            };
+            let inner = self.inner(rect);
+            let top = pane.history_len() - pane.scroll_offset();
+            for (row, text) in pane
+                .rows_from(top, usize::from(inner.height))
+                .iter()
+                .enumerate()
+            {
+                let text = norm(text);
+                for (byte, _) in text.match_indices(&wanted) {
+                    let col = text[..byte].chars().count();
+                    if let Some(c) = text[byte + wanted.len()..].chars().next() {
+                        next.insert(c.to_ascii_lowercase());
+                    }
+                    targets.push(JumpTarget {
+                        pane: id,
+                        pos: (top + row, col as u16),
+                        row: row as u16,
+                        label: None,
+                    });
+                }
+            }
+        }
+        let mut labels = JUMP_LABELS.chars().filter(|c| !next.contains(c));
+        for target in &mut targets {
+            target.label = labels.next();
+        }
+        targets
+    }
+
+    /// A key while jumping: a label jumps there, other characters narrow the
+    /// matches down, Enter takes the first, Backspace takes one back, Esc
+    /// goes back to copy mode where it was.
+    fn jump_key(&mut self, key: KeyEvent) {
+        let Some(mut jump) = self.jump.take() else {
+            self.mode = Mode::Copy;
+            return;
+        };
+        let to = match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Copy;
+                return;
+            }
+            KeyCode::Enter => jump.targets.first().copied(),
+            KeyCode::Backspace => {
+                jump.query.pop();
+                None
+            }
+            KeyCode::Char(c) if key.modifiers.difference(KeyModifiers::SHIFT).is_empty() => {
+                match jump.targets.iter().find(|t| t.label == Some(c)) {
+                    Some(target) => Some(*target),
+                    None => {
+                        jump.query.push(c);
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some(target) = to {
+            // Into that pane's copy mode, at the match.
+            if let Some(copy) = self.copy
+                && copy.pane != target.pane
+                && let Some(pane) = self.panes.get_mut(&copy.pane)
+            {
+                pane.scroll_to(0);
+            }
+            self.ws.focus(target.pane);
+            let copy = CopyCursor {
+                pane: target.pane,
+                pos: target.pos,
+            };
+            self.copy = Some(copy);
+            self.selection = None;
+            self.copy_show(copy);
+            self.mode = Mode::Copy;
+            return;
+        }
+        jump.targets = self.jump_targets(&jump.query);
+        self.jump = Some(jump);
+    }
+
+    /// The labels of a jump over the panes, the matches marked.
+    fn draw_jump(&self, frame: &mut Frame) {
+        let Some(jump) = &self.jump else { return };
+        let t = theme::current();
+        let matched = Style::new().fg(t.on_accent).bg(t.subtle);
+        let label = Style::new()
+            .fg(t.on_accent)
+            .bg(t.accent)
+            .add_modifier(Modifier::BOLD);
+        let rects: HashMap<PaneId, Rect> = self
+            .rects_of(&self.ws)
+            .into_iter()
+            .map(|(id, rect)| (id, self.inner(rect)))
+            .collect();
+        let width = jump.query.chars().count() as u16;
+        for target in &jump.targets {
+            let Some(inner) = rects.get(&target.pane) else {
+                continue;
+            };
+            let x = inner.x + target.pos.1;
+            let y = inner.y + target.row;
+            if y >= inner.bottom() || x >= inner.right() {
+                continue;
+            }
+            let room = inner.right() - x;
+            let area = Rect::new(x, y, width.min(room), 1);
+            frame.buffer_mut().set_style(area, matched);
+            if let Some(c) = target.label {
+                frame.buffer_mut().set_string(x, y, c.to_string(), label);
+            }
+        }
+    }
+
     /// Moves the copy cursor to the next match of the last search, in its
     /// direction or, with `reverse`, the other way. Wraps around.
     fn search_next(&mut self, reverse: bool) {
@@ -4415,6 +4590,7 @@ impl App {
             }
             KeyCode::Char('n') => self.search_next(false),
             KeyCode::Char('N') => self.search_next(true),
+            KeyCode::Char('s') => self.start_jump(),
             KeyCode::Char('v' | ' ') => {
                 self.selection = match self.selection {
                     Some(_) => None,
@@ -8974,6 +9150,7 @@ impl App {
                     bindings::HIVE_LIST_KEYS,
                 );
             }
+            Mode::Jump => self.draw_jump(frame),
             Mode::Accounts(selected) => {
                 let (_, items) = self.account_items();
                 self.draw_list(
@@ -9866,6 +10043,11 @@ impl App {
                 "HIVES",
                 t.accent,
                 "↑↓ choose · Enter bring back · s save new · u update · r rename · x delete · Esc cancel",
+            ),
+            Mode::Jump => (
+                "JUMP",
+                t.accent,
+                "type what to jump to · its label jumps · Enter the first · Esc back",
             ),
             Mode::Accounts(_) => (
                 "ACCOUNTS",

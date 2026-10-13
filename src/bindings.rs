@@ -115,6 +115,9 @@ pub enum Command {
     PluginMarket,
     /// The agents' accounts: for this session, or the focused agent now.
     Accounts,
+    /// Jump like flash.nvim: type a few characters, every match on screen
+    /// gets a label, the label's key puts the copy cursor there.
+    Jump,
 }
 
 impl Command {
@@ -489,11 +492,21 @@ pub const BINDINGS: &[Binding] = &[
             (Key::plain(Char('N')), C::NewWindowElsewhere),
         ],
     },
+    // `y` as well: `[` needs AltGr on a German keyboard.
     Binding {
-        label: "[",
+        label: "[ y",
         description: "copy mode",
         group: Group::View,
-        keys: &[(Key::plain(Char('[')), C::CopyMode)],
+        keys: &[
+            (Key::plain(Char('[')), C::CopyMode),
+            (Key::plain(Char('y')), C::CopyMode),
+        ],
+    },
+    Binding {
+        label: "j",
+        description: "jump to text on screen",
+        group: Group::View,
+        keys: &[(Key::plain(Char('j')), C::Jump)],
     },
     Binding {
         label: "u",
@@ -1215,7 +1228,12 @@ mod tests {
             lookup(Menu::Root, event(Char('b'), KeyModifiers::CONTROL)),
             Some(C::SendPrefix)
         );
-        assert_eq!(lookup(Menu::Root, event(Char('y'), none)), None);
+        assert_eq!(
+            lookup(Menu::Root, event(Char('y'), none)),
+            Some(C::CopyMode)
+        );
+        assert_eq!(lookup(Menu::Root, event(Char('j'), none)), Some(C::Jump));
+        assert_eq!(lookup(Menu::Root, event(Char('k'), none)), None);
         assert_eq!(
             lookup(Menu::Root, event(Char(';'), none)),
             Some(C::LastPane)

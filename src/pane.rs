@@ -816,6 +816,21 @@ impl Pane {
     }
 
     /// Every row of history and screen as text, by absolute row, for search.
+    /// The text of `count` rows from absolute row `first` on, trailing
+    /// blanks cut: what a view of the pane shows.
+    pub fn rows_from(&self, first: usize, count: usize) -> Vec<String> {
+        let parser = self.parser.lock().unwrap();
+        let (_, cols) = parser.size();
+        (first..first + count)
+            .map(|abs| {
+                parser
+                    .abs_row(abs, 0, cols)
+                    .map(|(text, _)| text.trim_end().to_owned())
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
     pub fn rows_text(&self) -> Vec<String> {
         let parser = self.parser.lock().unwrap();
         let (rows, cols) = parser.size();

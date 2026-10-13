@@ -34,6 +34,11 @@ Projekt-Slug: `imkr`
   Window → Pane), „Hive“ ist unser eigener Begriff. Intern (Code, Save-Files, Protokoll, JSON der
   CLI-Antworten) bleibt `workspace`, damit Live-Update und alte Saves weiterlaufen. `--workspace`
   bleibt Alias für `--window`.
+- Sprünge wie flash.nvim: `Mode::Jump` mit `App::jump` (`Jump`: Eingabe + `JumpTarget`s),
+  `jump_targets` sucht in den sichtbaren Zeilen aller Panes (`Pane::rows_from`, fokussiertes
+  zuerst), Labels aus `JUMP_LABELS` ohne Zeichen, die auf einen Treffer folgen; `jump_key`
+  setzt Fokus und `CopyCursor`, `draw_jump` malt Treffer/Labels. `Ctrl+B j` oder `s` im
+  Copy-Mode; Copy-Mode auch auf `Ctrl+B y` (`[` braucht auf QWERTZ AltGr).
 - Maus, Selektion, Copy-Mode: `App::mouse`, `App::copy_key`. Positionen in Selektion/Copy-Cursor sind
   *absolute* Zeilen (0 = älteste Zeile im Verlauf), damit Scrollen sie nicht verschiebt. Text holt
   `pane::text_between`. Maus-Kodierung für Programme: `src/mouse.rs`, Clipboard (OSC 52): `src/clipboard.rs`.
