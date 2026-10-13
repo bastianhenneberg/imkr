@@ -114,6 +114,11 @@ Projekt-Slug: `imkr`
   Andere Rechner: `other_machines` (per `Request::Places` von den lokalen Servern, ohne laufenden
   Server eigenes Polling `polled_machines`), `/api/send` mit `host` → `imkr send` per ssh,
   `/ws?host=` → `client::Conn::remote` (`imkr proxy`); nur Hosts aus dieser Liste (`known_machine`).
+  Ganze Session: `/ws?attach=1` → `web::attach` startet `imkr [--host H] -s S` als Client in
+  einem eigenen pty (schreibt über ein `dup` des Masters, nicht portable-ptys Writer: der tippt
+  beim Drop Ctrl+D, das der Client ans Pane weitergäbe), Größe per Text `{"cols","rows"}`.
+  Seite: `target.whole`, Tastaturmodus `body.kbd` (`setKbd`: Vollbild, Querformat, Keyboard Lock,
+  Wake Lock, jeweils nur wo der Browser es erlaubt).
   Verbundene Geräte: `note_seen` (bei `/api/state`, WS-Start/-Ende, alle `STILL_THERE` im WS)
   → `<state>/web-seen.json`, `web::connected()` (jünger als `SEEN_FOR`) → `Places::web` in
   `watch_places` → Sidebar „Phones“ (`Data::phones`, vor `machine_label` aus dem Lock holen).

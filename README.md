@@ -533,8 +533,15 @@ imkr web devices         # the paired devices
 imkr web forget phone    # unpair one (or `all`)
 ```
 
+*Whole session*, at the top of an opened session, shows imkr itself in the browser: every
+window, the sidebar, `Ctrl+B` and its menus, as in a terminal. With a Bluetooth keyboard (and
+glasses, or the phone sideways) that is a full workplace: ⌨ in the terminal's bar switches to
+keyboard mode, full screen without the key bar and the line to type in; ⌨ ✕ in the corner, or
+leaving full screen, switches back. Over plain HTTP the browser may not keep the screen awake:
+set a longer screen timeout on the phone for that.
+
 While a device has the page open, the sidebar of the sessions here lists it under *Phones*, with
-the pane it shows as a terminal.
+the pane or session it shows.
 
 Pairing gives the device a token in a cookie; only paired devices see anything or type into a
 pane. *Web view for phones* in the settings (`web = true`) keeps it running: every imkr server

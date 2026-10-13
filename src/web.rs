@@ -1095,6 +1095,9 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
          Sec-WebSocket-Accept: {accept}\r\n\r\n"
     )?;
     let mut ws = tungstenite::WebSocket::from_raw_socket(stream.try_clone()?, Role::Server, None);
+    if request.query.get("attach").is_some_and(|a| a == "1") {
+        return attach(ws, stream, request);
+    }
     let text = |value: serde_json::Value| Message::text(value.to_string());
     let session = request.query.get("session").cloned().unwrap_or_default();
     let pane: Option<PaneId> = request.query.get("pane").and_then(|p| p.parse().ok());
@@ -1239,6 +1242,170 @@ fn terminal(mut stream: TcpStream, request: &HttpRequest) -> std::io::Result<()>
     if let Some(socket) = socket {
         let _ = socket.shutdown(std::net::Shutdown::Both);
     }
+    Ok(())
+}
+
+/// A whole session in the browser: `imkr` itself, as a client in a pty of
+/// this process, so that the prefix, the sidebar and every window work as
+/// in a terminal. Output and input as with a pane; a text message
+/// `{"cols":C,"rows":R}` resizes it.
+fn attach(
+    mut ws: tungstenite::WebSocket<TcpStream>,
+    stream: TcpStream,
+    request: &HttpRequest,
+) -> std::io::Result<()> {
+    use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+    use tungstenite::Message;
+    let text = |value: serde_json::Value| Message::text(value.to_string());
+    let session = request.query.get("session").cloned().unwrap_or_default();
+    let host = request.query.get("host").filter(|h| !h.is_empty());
+    let number = |key: &str, default: u16| {
+        request
+            .query
+            .get(key)
+            .and_then(|n| n.parse::<u16>().ok())
+            .unwrap_or(default)
+    };
+    let size = PtySize {
+        rows: number("rows", 24).clamp(5, 500),
+        cols: number("cols", 80).clamp(20, 1000),
+        pixel_width: 0,
+        pixel_height: 0,
+    };
+    let opened = (|| -> Result<_> {
+        match host {
+            Some(host) => known_machine(host, &session)?,
+            None if !protocol::valid_session_name(&session) => bail!("no session {session}"),
+            None => {}
+        }
+        let pair = native_pty_system().openpty(size)?;
+        let mut cmd = CommandBuilder::new(std::env::current_exe()?);
+        if let Some(host) = host {
+            cmd.args(["--host", host]);
+        }
+        cmd.args(["-s", &session]);
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        // The session asked for, not the one this process was started from.
+        cmd.env_remove("IMKR_SOCKET");
+        cmd.env_remove("IMKR_SESSION");
+        if let Some(home) = std::env::var_os("HOME") {
+            cmd.cwd(home);
+        }
+        let child = pair.slave.spawn_command(cmd)?;
+        drop(pair.slave);
+        let reader = pair.master.try_clone_reader()?;
+        // A copy of the master to type with: portable-pty's own writer types
+        // Ctrl+D when dropped, which imkr would pass on to a pane.
+        let fd = pair.master.as_raw_fd().context("no pty")?;
+        // SAFETY: the master stays open while it is borrowed here.
+        let writer = std::fs::File::from(
+            unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?,
+        );
+        Ok((pair.master, child, reader, writer))
+    })();
+    let (master, mut child, mut reader, mut writer) = match opened {
+        Ok(opened) => opened,
+        Err(e) => {
+            let _ = ws.send(text(serde_json::json!({ "error": format!("{e:#}") })));
+            let _ = ws.close(None);
+            let _ = ws.flush();
+            return Ok(());
+        }
+    };
+    if ws
+        .send(text(serde_json::json!({
+            "rows": size.rows, "cols": size.cols, "fit": true,
+        })))
+        .is_err()
+    {
+        let _ = child.kill();
+        return Ok(());
+    }
+    let device = request.device().map(|d| d.name).unwrap_or_default();
+    let shown = match host {
+        Some(host) => format!("{host}:{session}"),
+        None => session.clone(),
+    };
+    note_seen(&device, &request.peer, Some(Some(shown)));
+    let mut told = std::time::Instant::now();
+    let (tx, rx) = mpsc::channel::<Option<Vec<u8>>>();
+    std::thread::Builder::new()
+        .name("web-attach".into())
+        .spawn(move || {
+            let mut buf = [0u8; 16384];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => {
+                        let _ = tx.send(None);
+                        break;
+                    }
+                    Ok(n) => {
+                        if tx.send(Some(buf[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        })?;
+    stream.set_read_timeout(Some(POLL))?;
+    let ended = 'session: loop {
+        match ws.read() {
+            Ok(Message::Binary(bytes)) => {
+                if writer.write_all(&bytes).is_err() {
+                    break false;
+                }
+            }
+            Ok(Message::Text(message)) => {
+                let size: serde_json::Value = serde_json::from_str(&message).unwrap_or_default();
+                if let (Some(cols), Some(rows)) = (size["cols"].as_u64(), size["rows"].as_u64()) {
+                    let _ = master.resize(PtySize {
+                        rows: (rows as u16).clamp(5, 500),
+                        cols: (cols as u16).clamp(20, 1000),
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
+                }
+            }
+            Ok(Message::Close(_)) => break false,
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(e))
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => break false,
+        }
+        let mut pending = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(Some(bytes)) => pending.extend_from_slice(&bytes),
+                Ok(None) | Err(mpsc::TryRecvError::Disconnected) => {
+                    if !pending.is_empty() {
+                        let _ = ws.send(Message::binary(pending));
+                    }
+                    break 'session true;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+            }
+        }
+        if !pending.is_empty() && ws.send(Message::binary(pending)).is_err() {
+            break false;
+        }
+        if told.elapsed() >= STILL_THERE {
+            told = std::time::Instant::now();
+            note_seen(&device, &request.peer, None);
+        }
+    };
+    note_seen(&device, &request.peer, Some(None));
+    // The client goes, the session stays: as when a terminal is closed.
+    let _ = child.kill();
+    let _ = child.wait();
+    if ended {
+        let _ = ws.send(text(serde_json::json!({ "exited": true })));
+    }
+    let _ = ws.close(None);
+    let _ = ws.flush();
     Ok(())
 }
 

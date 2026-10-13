@@ -70,6 +70,11 @@
   #keys .key { flex:none; }
   #compose { display:flex; gap:6px; padding:0 8px 8px; padding-bottom:max(8px, env(safe-area-inset-bottom)); }
   #compose input { flex:1; min-width:0; font:15px ui-monospace, monospace; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+  /* Keyboard mode: a hardware keyboard types, the screen is all terminal. */
+  body.kbd #term-view header, body.kbd #keys, body.kbd #compose { display:none; }
+  #kbd-off { display:none; position:absolute; top:6px; right:8px; z-index:3; opacity:.45; }
+  body.kbd #kbd-off { display:block; }
+  .pane.whole span:first-child { color:var(--accent); }
   #status { position:absolute; top:60px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 12px; font-size:13px; display:none; }
 </style>
 </head>
@@ -90,7 +95,9 @@
     <button class="key" id="smaller" aria-label="Smaller">A−</button>
     <button class="key" id="bigger" aria-label="Bigger">A+</button>
     <button class="key" id="fit" title="Resize the pane to this screen">Fit</button>
+    <button class="key" id="kbd" title="Keyboard mode: full screen, no key bar">⌨</button>
   </header>
+  <button class="key" id="kbd-off" title="Leave keyboard mode">⌨ ✕</button>
   <div id="screen"></div>
   <div id="status"></div>
   <div id="keys"></div>
@@ -202,6 +209,7 @@ function renderSessions() {
       html += `<div class="card session ${s.dormant ? 'dormant' : ''}" data-host="${esc(m.host)}" data-session="${esc(s.name)}" data-id="${esc(id)}">
         <div class="head"><b>${esc(s.name)}</b>${counts}<span class="sub">${s.dormant ? esc(s.dormant) : quiet != null && quiet > 0 ? ago(quiet) : s.windows + ' win'}</span></div>`;
       if (isOpen) {
+        html += `<div class="pane whole" data-whole><span>▶ Whole session, as in a terminal</span></div>`;
         const panes = (s.all_panes || []).slice().sort((a, b) => a.workspace - b.workspace || a.pane - b.pane);
         for (const p of panes) {
           html += `<div class="pane" data-pane="${p.pane}"><span>${p.workspace} ${esc(p.dir)} › ${esc(p.program)}</span>${p.state ? `<span class="state ${esc(p.state)}">${esc(p.state)}</span>` : ''}</div>`;
@@ -250,6 +258,10 @@ $('inbox').addEventListener('submit', async (e) => {
 $('sessions').addEventListener('click', (e) => {
   const card = e.target.closest('.session');
   if (!card || card.classList.contains('dormant')) return;
+  if (e.target.closest('.pane[data-whole]')) {
+    const host = card.dataset.host;
+    return openTerm(host, card.dataset.session, null, (host ? host + ':' : '') + card.dataset.session, true);
+  }
   const pane = e.target.closest('.pane[data-pane]');
   if (pane) return openTerm(card.dataset.host, card.dataset.session, Number(pane.dataset.pane), pane.firstElementChild.textContent);
   const name = card.dataset.id;
@@ -298,12 +310,13 @@ $('compose').addEventListener('submit', (e) => {
   line.value = '';
 });
 
-function openTerm(host, session, pane, title) {
-  target = { host, session, pane };
+function openTerm(host, session, pane, title, whole = false) {
+  target = { host, session, pane, whole };
   $('term-title').textContent = title || `${session} › ${pane}`;
   document.body.classList.add('term');
   history.pushState({ term: true }, '');
   $('fit').classList.toggle('on', fit);
+  $('fit').style.display = whole ? 'none' : '';
   connect();
 }
 
@@ -373,9 +386,18 @@ function charWidth(family) {
 function layout() {
   if (!term) return;
   const box = $('screen');
-  if (fit) {
+  if (fit || target?.whole) {
     term.options.fontSize = Math.round(13 * scale);
     const want = fitAddon.proposeDimensions();
+    // A whole session takes a new size as it is.
+    if (target?.whole) {
+      if (want && paneSize && (want.cols !== paneSize.cols || want.rows !== paneSize.rows)) {
+        paneSize = { cols: want.cols, rows: want.rows };
+        term.resize(want.cols, want.rows);
+        if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(paneSize));
+      }
+      return;
+    }
     // A new size comes with a new screen: connect again.
     if (want && paneSize && (want.cols !== paneSize.cols || want.rows !== paneSize.rows)) {
       clearTimeout(refitTimer);
@@ -401,9 +423,11 @@ async function connect() {
   status('Connecting…');
   const url = new URL('/ws', location.href);
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const params = { session: target.session, pane: target.pane, fit: fit ? '1' : '0' };
+  const params = target.whole
+    ? { session: target.session, attach: '1' }
+    : { session: target.session, pane: target.pane, fit: fit ? '1' : '0' };
   if (target.host) params.host = target.host;
-  if (fit) {
+  if (fit || target.whole) {
     // The pane takes this screen's size before its screen is sent.
     term.options.fontSize = Math.round(13 * scale);
     const want = fitAddon.proposeDimensions();
@@ -421,7 +445,7 @@ async function connect() {
     }
     const msg = JSON.parse(e.data);
     if (msg.error) { ended = true; status(msg.error); return; }
-    if (msg.exited) { ended = true; status('The pane ended.'); return; }
+    if (msg.exited) { ended = true; status(target.whole ? 'Detached from the session.' : 'The pane ended.'); return; }
     if (msg.cols) {
       retry = 0;
       status('');
@@ -429,7 +453,7 @@ async function connect() {
       term.reset();
       term.resize(msg.cols, msg.rows);
       layout();
-      if (!fit) term.scrollToBottom();
+      if (!fit && !target.whole) term.scrollToBottom();
     }
   };
   socket.onclose = () => {
@@ -440,6 +464,29 @@ async function connect() {
     retryTimer = setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
   };
 }
+
+// --- Keyboard mode: a Bluetooth keyboard, glasses, the phone sideways ---
+
+let wakeLock = null;
+async function setKbd(on) {
+  document.body.classList.toggle('kbd', on);
+  store.set('kbd', on ? '1' : '0');
+  try {
+    if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
+    if (!on && document.fullscreenElement) await document.exitFullscreen();
+  } catch {}
+  // Each of these only where the browser allows it; none is needed.
+  try { if (on) await screen.orientation?.lock?.('landscape'); else screen.orientation?.unlock?.(); } catch {}
+  try { if (on) await navigator.keyboard?.lock?.(); else navigator.keyboard?.unlock?.(); } catch {}
+  try { if (on) wakeLock = await navigator.wakeLock?.request('screen'); else { wakeLock?.release(); wakeLock = null; } } catch {}
+  setTimeout(() => { layout(); term?.focus(); }, 150);
+}
+$('kbd').addEventListener('click', () => setKbd(true));
+$('kbd-off').addEventListener('click', () => setKbd(false));
+document.addEventListener('fullscreenchange', () => {
+  // Leaving full screen by the browser's own way ends keyboard mode too.
+  if (!document.fullscreenElement && document.body.classList.contains('kbd')) setKbd(false);
+});
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
