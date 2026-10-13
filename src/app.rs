@@ -141,8 +141,17 @@ enum Mode {
     Review,
     /// The layouts for this window, that one selected.
     Layouts(usize),
+    /// The menu of `App::context`, that item selected.
+    Context(usize),
     /// What agents did since then (seconds since 1970), that one selected.
     Recap(u64, usize),
+}
+
+/// A menu opened by a right click: where, and what it offers.
+struct Context {
+    area: Rect,
+    title: String,
+    items: Vec<(char, &'static str, Command)>,
 }
 
 /// A review open with `Ctrl+B v`: the diff, where the cursor is, the
@@ -584,6 +593,8 @@ pub struct App {
     /// looked.
     away_since: Option<u64>,
     recap_since: Option<u64>,
+    /// The menu a right click opened, while `Mode::Context` shows it.
+    context: Option<Context>,
     /// The review, kept with its notes while closed until they are sent.
     review: Option<Review>,
     /// The agent selected in the inbox. The list changes while it is open,
@@ -729,6 +740,7 @@ impl App {
             list_query: None,
             inbox_answer: String::new(),
             review: None,
+            context: None,
             activity: Default::default(),
             away_since: None,
             recap_since: None,
@@ -2044,6 +2056,171 @@ impl App {
 
     /// Starts `command` in a new pane: floating or split off the focused one,
     /// in workspace `n` or the active one. Hidden workspaces stay hidden.
+    /// A right click: a window tab's menu, or a pane's, unless the program
+    /// in it uses the mouse itself (Shift+right click opens it anyway).
+    fn open_context(&mut self, event: MouseEvent) -> Result<()> {
+        let pos = Position::new(event.column, event.row);
+        let (title, items): (String, Vec<(char, &'static str, Command)>) =
+            if let Some(n) = self.tab_at(pos).filter(|&n| n > 0) {
+                self.switch_workspace(n);
+                (
+                    format!(" Window {n} "),
+                    vec![
+                        ('r', "rename", Command::RenameWorkspace),
+                        ('l', "layout…", Command::Layouts),
+                        ('m', "move to session…", Command::MoveWorkspace),
+                        ('c', "new window", Command::NewWorkspace),
+                        ('t', "new window in a worktree…", Command::WorktreeWindow),
+                    ],
+                )
+            } else if let Some((id, rect)) = self.pane_at(pos) {
+                let inner = self.inner(rect);
+                if self.forward_mouse(id, event, inner)? {
+                    return Ok(());
+                }
+                self.ws.focus(id);
+                (
+                    format!(" Pane {id} "),
+                    vec![
+                        ('%', "split side by side", Command::SplitRow),
+                        ('"', "split stacked", Command::SplitColumn),
+                        ('z', "zoom", Command::Zoom),
+                        ('f', "float / tile", Command::ToggleFloat),
+                        ('r', "rename", Command::RenamePane),
+                        ('>', "move to window…", Command::Open(Menu::PaneTo)),
+                        ('!', "make it a popup", Command::BreakPopup),
+                        ('x', "close", Command::ClosePane),
+                    ],
+                )
+            } else {
+                return Ok(());
+            };
+        let width = items
+            .iter()
+            .map(|(_, label, _)| label.chars().count())
+            .max()
+            .unwrap_or(0) as u16
+            + 8;
+        let height = items.len() as u16 + 2;
+        let screen = self.screen;
+        let area = Rect {
+            x: pos.x.min(screen.width.saturating_sub(width)),
+            y: pos.y.min(screen.height.saturating_sub(height)),
+            width: width.min(screen.width),
+            height: height.min(screen.height),
+        };
+        self.context = Some(Context { area, title, items });
+        self.mode = Mode::Context(0);
+        Ok(())
+    }
+
+    /// Runs the context menu's item `i` and closes it.
+    fn run_context(&mut self, i: usize) -> Result<()> {
+        let command = self
+            .context
+            .take()
+            .and_then(|c| c.items.get(i).map(|item| item.2));
+        self.mode = Mode::Normal;
+        match command {
+            Some(Command::Open(menu)) => {
+                self.mode = Mode::Prefix(menu);
+                Ok(())
+            }
+            Some(command) => self.run_command(command),
+            None => Ok(()),
+        }
+    }
+
+    fn context_key(&mut self, key: KeyEvent, selected: usize) -> Result<()> {
+        let count = self.context.as_ref().map_or(1, |c| c.items.len().max(1));
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.context = None;
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::Context((selected + count - 1) % count)
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::Context((selected + 1) % count)
+            }
+            KeyCode::Enter => return self.run_context(selected),
+            KeyCode::Char(c) => {
+                let found = self
+                    .context
+                    .as_ref()
+                    .and_then(|ctx| ctx.items.iter().position(|item| item.0 == c));
+                if let Some(i) = found {
+                    return self.run_context(i);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// A click on an item runs it, anywhere else closes the menu.
+    fn context_mouse(&mut self, event: MouseEvent) -> Result<()> {
+        let pos = Position::new(event.column, event.row);
+        let Some(area) = self.context.as_ref().map(|c| c.area) else {
+            self.mode = Mode::Normal;
+            return Ok(());
+        };
+        let inside = area.contains(pos) && pos.y > area.y && pos.y + 1 < area.bottom();
+        match event.kind {
+            MouseEventKind::Moved | MouseEventKind::Drag(_) if inside => {
+                self.mode = Mode::Context(usize::from(pos.y - area.y - 1));
+            }
+            MouseEventKind::Down(MouseButton::Left) if inside => {
+                return self.run_context(usize::from(pos.y - area.y - 1));
+            }
+            MouseEventKind::Down(_) => {
+                self.context = None;
+                self.mode = Mode::Normal;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn draw_context(&self, frame: &mut Frame, selected: usize) {
+        let Some(context) = &self.context else {
+            return;
+        };
+        let t = theme::current();
+        let lines: Vec<Line> = context
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, (key, label, command))| {
+                let mut style = if *command == Command::ClosePane {
+                    Style::new().fg(t.danger)
+                } else {
+                    Style::new()
+                };
+                if i == selected {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+                Line::from(vec![
+                    Span::styled(format!(" {key}  "), Style::new().fg(t.accent)),
+                    Span::styled(
+                        format!(
+                            "{label:<w$} ",
+                            w = usize::from(context.area.width.saturating_sub(7))
+                        ),
+                        style,
+                    ),
+                ])
+            })
+            .collect();
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(t.accent))
+            .title(context.title.clone());
+        frame.render_widget(Clear, context.area);
+        frame.render_widget(Paragraph::new(lines).block(block), context.area);
+    }
+
     /// The layouts for this window: the presets, then the saved ones.
     fn layout_items(&self) -> (Vec<String>, Vec<menu::MenuItem>) {
         let n = self.ws.layout.panes().len();
@@ -3096,6 +3273,7 @@ impl App {
                 self.layouts_key(key, selected);
                 Ok(())
             }
+            Mode::Context(selected) => self.context_key(key, selected),
             Mode::Recap(since, selected) => {
                 self.recap_key(key, since, selected);
                 Ok(())
@@ -3714,6 +3892,9 @@ impl App {
     /// copies it, the wheel scrolls back. Programs that asked for the mouse
     /// get the events instead, unless Shift is held.
     fn mouse(&mut self, event: MouseEvent) -> Result<()> {
+        if let Mode::Context(_) = self.mode {
+            return self.context_mouse(event);
+        }
         if !matches!(self.mode, Mode::Normal | Mode::Repeat(..) | Mode::Copy) {
             return Ok(());
         }
@@ -3947,6 +4128,7 @@ impl App {
                     pane.scroll(if up { 3 } else { -3 });
                 }
             }
+            MouseEventKind::Down(MouseButton::Right) => self.open_context(event)?,
             _ => self.forward_to_focused(event)?,
         }
         Ok(())
@@ -7631,6 +7813,7 @@ impl App {
                         | Mode::Inbox(_)
                         | Mode::Review
                         | Mode::Layouts(_)
+                        | Mode::Context(_)
                         | Mode::Recap(..)
                         | Mode::Windows(_)
                         | Mode::Panes(_)
@@ -7832,6 +8015,7 @@ impl App {
             }
             Mode::Inbox(selected) => self.draw_inbox(frame, body, selected),
             Mode::Review => self.draw_review(frame, body),
+            Mode::Context(selected) => self.draw_context(frame, selected),
             Mode::Layouts(selected) => {
                 let (_, items) = self.layout_items();
                 self.draw_list(
@@ -8542,6 +8726,11 @@ impl App {
                 "AWAY",
                 t.magenta,
                 "● started · ◆ asked · ✦ finished · Enter or digit go there · Esc close",
+            ),
+            Mode::Context(_) => (
+                "MENU",
+                t.blue,
+                "click or ↑↓ Enter · its key · Esc or a click outside closes",
             ),
             Mode::Layouts(_) => (
                 "LAYOUT",

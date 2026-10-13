@@ -634,6 +634,10 @@ The terminal's title shows the window and the focused pane, e.g. `imkr · 2 api 
 - The buttons in a pane's top border split it side by side (`┃`) or top and bottom (`━`), zoom
   it (`⤢`) or close it (`×`, asks first). Floating panes have `×` only.
 - The sidebar's bottom border opens a new window, a new floating pane or the settings.
+- Right click a pane for its menu (split, zoom, float, rename, move to another window, make it
+  a popup, close), a window tab for the window's (rename, layout, move to another session, new
+  window, worktree). Programs that use the mouse get the right click; Shift+right click opens
+  the menu over them.
 - Drag the border between two panes to resize them.
 - Drag a floating pane by its title bar, resize it by its bottom right corner.
 - Drag over text to select it, it is copied when you let go. A double click copies a word.

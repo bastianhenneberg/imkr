@@ -117,6 +117,9 @@ Projekt-Slug: `imkr`
   für Klartext-URLs). Ctrl+Klick in `App::mouse` vor `forward_mouse` → `Pane::link_at` →
   `ServerMsg::Open` (Tag 6, nur an Clients mit `Caps::open`) → Client `open_url` (xdg-open).
   Test: Fake-`xdg-open` im Scratchpad, Klick als `tmux send-keys -l $'\e[<16;x;yM'` (16 = Ctrl).
+- Kontextmenü: Rechtsklick → `App::open_context` (Tab → Window-Befehle, Pane → Pane-Befehle, außer
+  das Programm nimmt die Maus), `Context` mit `Command`s, `Mode::Context`, eigene Zeichnung
+  (`draw_context`), Klick per Zeile (`context_mouse`). Test: `tmux send-keys -l $'\e[<2;x;yM'`.
 - OSC 52 aus Panes: `clipboard::Osc52Scanner` im Pane-Reader (vor dem Grafik-Scanner, über
   Lesegrenzen), `AppEvent::Clipboard` → `send_active`. Clipboard-Abfragen (`?`) werden verworfen.
   Test verschachtelt: im Pane `ssh -t -- server <scratchpad>/bin/imkr` aufrufen, nicht `imkr`
