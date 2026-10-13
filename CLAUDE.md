@@ -98,6 +98,20 @@ Projekt-Slug: `imkr`
   Test: Fake-ssh (`env -u IMKR_SOCKET … PATH=<fake-home>/.cargo/bin:…`), Datei `down` → 255.
   Lokale Testwelt mit eigenem HOME, sonst landen Befehle in der echten zsh-History.
   Direkte `ssh server 'imkr …'` im Test nehmen sonst das installierte imkr!
+- Web/Handy: `src/web.rs` (`imkr web`, eigener Prozess, HTTP von Hand auf `TcpListener`, je
+  Verbindung ein Thread, `Connection: close`; WebSocket per `tungstenite` (`derive_accept_key`,
+  `from_raw_socket`), Seiten in `web/` per `include_str!`, xterm.js + addon-fit eingebettet in
+  `web/vendor/`). Daten: `client::local_sessions` (`/api/state`), Tippen `Request::Send`
+  (`/api/send`), Terminal `/ws` = `Request::Tap` mit `watch` (Pane behält Größe und beantwortet
+  selbst, `Pane::tapped` zählt nur nicht-watch; `Pane::resize` wirft Zuschauer raus → Seite
+  verbindet neu) oder `size` (Fit: Größe vor dem Bildschirmabzug). Kopplung: Code in
+  `<state>/web-pairing.json` (10 min, 5 Versuche), Geräte mit Token in `web-devices.json` (0600),
+  Cookie `imkr_device`, POST/WS nur mit passendem `Origin` (Falle: `Referrer-Policy: no-referrer`
+  lässt Chrome `Origin: null` schicken). Einstellung `web`: `watch_places` ruft minütlich
+  `web::keep_running` (startet `imkr web --background`, wenn auf der Adresse nichts antwortet);
+  der Prozess exect sich selbst, sobald `/proc/self/exe` gelöscht ist (Update). Adresse:
+  `--listen`/`web_listen`, sonst 100.64.0.0/10 (`vpn_address`, getifaddrs), sonst 127.0.0.1:4657.
+  Test: headless `chromium --remote-debugging-port` + Node-Skript per CDP (Node hat WebSocket).
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
   `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet

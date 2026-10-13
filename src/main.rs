@@ -30,6 +30,7 @@ mod term;
 mod theme;
 mod tmux;
 mod upgrade;
+mod web;
 mod workspace;
 mod worktree;
 
@@ -76,6 +77,11 @@ Commands:
   hosts sync    the latest release on every one of them: installed where
                 imkr is missing, upgraded with its sessions elsewhere
   hosts tailnet the machines of your Tailscale network, and which imkr uses
+  web [--listen ADDR[:PORT]]
+                this machine's sessions and agents in a phone's browser,
+                on the VPN address (Tailscale, NetBird) or 127.0.0.1
+  web pair | devices | forget NAME|all
+                pair a phone (a code for ten minutes), list or remove them
   rename-session NAME
                 rename the session (`-s OLD rename-session NEW` for another)
   kill-server   shut down the session's server and every pane in it
@@ -258,6 +264,7 @@ fn main() -> Result<()> {
         ["new", ..] => cli::new(&args[1..]),
         ["hosted", ..] => cli::hosted(&args[1..]),
         ["attach-pane", ..] => cli::attach_pane(&args[1..]),
+        ["web", ..] => web::main(&args[1..]),
         ["rename", ..] => cli::rename(&args[1..]),
         ["move-window", ..] => cli::move_window(&args[1..]),
         ["popup", ..] => cli::popup(&args[1..]),

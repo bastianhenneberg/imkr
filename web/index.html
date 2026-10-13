@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#1e1e2e">
+<title>imkr · {{MACHINE}}</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/xterm.css?v={{VERSION}}">
+<style>
+  :root {
+    --bg:#f6f6f8; --fg:#1e1e2e; --muted:#6c6f85; --card:#fff; --line:#dcdce4;
+    --accent:#1e66f5; --on-accent:#fff; --warn:#df8e1d; --ok:#40a02b; --danger:#d20f39; --key:#e6e6ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#1e1e2e; --fg:#cdd6f4; --muted:#9399b2; --card:#262637; --line:#3a3a50;
+      --accent:#89b4fa; --on-accent:#1e1e2e; --warn:#f9e2af; --ok:#a6e3a1; --danger:#f38ba8; --key:#313147;
+    }
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; }
+  body { font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  button { font:inherit; color:inherit; }
+  header { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:10px; padding:10px 16px; padding-top:max(10px, env(safe-area-inset-top)); background:var(--bg); border-bottom:1px solid var(--line); }
+  header h1 { font-size:17px; margin:0; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); flex:none; }
+  .dot.off { background:var(--danger); }
+  main { padding:12px 16px 32px; max-width:760px; margin:0 auto; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:18px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px; }
+  .card.blocked { border-left:4px solid var(--warn); }
+  .card.done { border-left:4px solid var(--ok); }
+  .title { display:flex; gap:8px; align-items:baseline; }
+  .title b { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sub { color:var(--muted); font-size:13px; }
+  pre.tail { margin:8px 0; padding:8px; background:var(--bg); border-radius:8px; font:12px/1.35 ui-monospace, monospace; white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+  .key { min-width:38px; padding:7px 9px; border-radius:8px; border:1px solid var(--line); background:var(--key); font-family:ui-monospace, monospace; font-size:14px; }
+  .key.primary { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+  .key.on { outline:2px solid var(--accent); }
+  .say { display:flex; gap:6px; margin-top:8px; }
+  .say input { flex:1; min-width:0; font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .session { padding:0; overflow:hidden; }
+  .session > .head { display:flex; gap:8px; align-items:baseline; padding:11px 12px; cursor:pointer; }
+  .session > .head b { flex:1; }
+  .session.dormant { opacity:.55; }
+  .pane { display:flex; gap:8px; align-items:baseline; padding:10px 12px; border-top:1px solid var(--line); cursor:pointer; }
+  .pane span:first-child { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .state { font-size:12px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); white-space:nowrap; }
+  .state.blocked { color:var(--warn); border-color:var(--warn); }
+  .state.done, .state.idle { color:var(--ok); border-color:var(--ok); }
+  .state.working { color:var(--accent); border-color:var(--accent); }
+  .empty { color:var(--muted); font-size:14px; }
+  .error { color:var(--danger); font-size:13px; margin-top:6px; }
+
+  #term-view { display:none; position:fixed; inset:0; flex-direction:column; background:var(--bg); }
+  body.term #term-view { display:flex; }
+  body.term #home { display:none; }
+  #term-view header { position:static; }
+  #term-view header .key { min-width:0; }
+  #screen { flex:1; min-height:0; overflow:auto; background:#1e1e2e; padding:2px; }
+  #screen.fit { overflow:hidden; }
+  #keys { display:flex; gap:5px; overflow-x:auto; padding:6px 8px; border-top:1px solid var(--line); }
+  #keys .key { flex:none; }
+  #compose { display:flex; gap:6px; padding:0 8px 8px; padding-bottom:max(8px, env(safe-area-inset-bottom)); }
+  #compose input { flex:1; min-width:0; font:15px ui-monospace, monospace; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+  #status { position:absolute; top:60px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 12px; font-size:13px; display:none; }
+</style>
+</head>
+<body>
+<div id="home">
+  <header><span class="dot" id="dot"></span><h1>imkr · {{MACHINE}}</h1><span class="sub" id="device"></span></header>
+  <main>
+    <div id="inbox"></div>
+    <h2>Sessions</h2>
+    <div id="sessions"><p class="empty">Loading…</p></div>
+  </main>
+</div>
+
+<div id="term-view">
+  <header>
+    <button class="key" id="back" aria-label="Back">‹</button>
+    <h1 id="term-title"></h1>
+    <button class="key" id="smaller" aria-label="Smaller">A−</button>
+    <button class="key" id="bigger" aria-label="Bigger">A+</button>
+    <button class="key" id="fit" title="Resize the pane to this screen">Fit</button>
+  </header>
+  <div id="screen"></div>
+  <div id="status"></div>
+  <div id="keys"></div>
+  <form id="compose"><input id="line" placeholder="Type, then send" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send"><button class="key primary">⏎</button></form>
+</div>
+
+<script src="/xterm.js?v={{VERSION}}"></script>
+<script src="/addon-fit.js?v={{VERSION}}"></script>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+function ago(secs) {
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+  if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+  return Math.floor(secs / 86400) + 'd ago';
+}
+
+async function send(session, pane, text, enter) {
+  const res = await fetch('/api/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session, pane, text, enter }),
+  });
+  if (res.status === 401) location.reload();
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+}
+
+// --- Home: what waits, what is done, every session ---
+
+let state = null;
+const open = new Set(JSON.parse(store.get('open', '[]')));
+
+async function refresh() {
+  if (document.hidden || document.body.classList.contains('term')) return;
+  try {
+    const res = await fetch('/api/state');
+    if (res.status === 401) return location.reload();
+    state = await res.json();
+    $('dot').classList.remove('off');
+    $('device').textContent = state.device || '';
+    render();
+  } catch {
+    $('dot').classList.add('off');
+  }
+}
+
+const QUICK = [['1','1'],['2','2'],['3','3'],['y','y'],['n','n'],['⏎','\r'],['Esc','\x1b']];
+
+function render() {
+  const agents = [];
+  for (const s of state.sessions) {
+    if (s.dormant) continue;
+    for (const a of s.agent_panes || []) agents.push({ ...a, session: s.name });
+  }
+  // Inputs being typed into survive the redraw.
+  const typing = document.activeElement?.closest?.('.card[data-key]')?.dataset.key;
+  const drafts = {};
+  for (const input of document.querySelectorAll('#inbox .say input')) drafts[input.closest('.card').dataset.key] = input.value;
+  if (typing) {
+    // Redrawing would take the keyboard away.
+    return renderSessions();
+  }
+  const groups = [['blocked', 'Waits for you'], ['done', 'Done']];
+  let html = '';
+  for (const [kind, label] of groups) {
+    const list = agents.filter((a) => a.state === kind).sort((a, b) => a.since - b.since);
+    if (!list.length) continue;
+    html += `<h2>${label}</h2>`;
+    for (const a of list) {
+      const key = `${a.session}/${a.pane}`;
+      html += `<div class="card ${kind}" data-key="${esc(key)}" data-session="${esc(a.session)}" data-pane="${a.pane}">
+        <div class="title"><b>${esc(a.program)} · ${esc(a.dir)}</b><span class="sub">${ago(a.since)}</span></div>
+        <div class="sub">${esc(a.session)} › window ${a.workspace}${a.meta ? ' · ' + esc(a.meta) : ''}</div>
+        ${a.tail ? `<pre class="tail">${esc(a.tail)}</pre>` : ''}
+        <div class="row">${QUICK.map(([l, t]) => `<button class="key" data-text="${esc(t)}">${esc(l)}</button>`).join('')}
+          <button class="key primary" data-open>Open</button></div>
+        <form class="say"><input placeholder="Answer" value="${esc(drafts[key] || '')}" enterkeyhint="send"><button class="key primary">Send</button></form>
+        <div class="error"></div>
+      </div>`;
+    }
+  }
+  $('inbox').innerHTML = html || '<h2>Agents</h2><p class="empty">No agent waits for you.</p>';
+  renderSessions();
+}
+
+function renderSessions() {
+  let html = '';
+  for (const s of state.sessions) {
+    const quiet = quietFor(s);
+    const counts = Object.entries(s.agents || {}).map(([k, n]) => `<span class="state ${esc(k)}">${n} ${esc(k)}</span>`).join(' ');
+    const isOpen = open.has(s.name) && !s.dormant;
+    html += `<div class="card session ${s.dormant ? 'dormant' : ''}" data-session="${esc(s.name)}">
+      <div class="head"><b>${esc(s.name)}</b>${counts}<span class="sub">${s.dormant ? esc(s.dormant) : quiet != null && quiet > 0 ? ago(quiet) : s.windows + ' win'}</span></div>`;
+    if (isOpen) {
+      const panes = (s.all_panes || []).slice().sort((a, b) => a.workspace - b.workspace || a.pane - b.pane);
+      for (const p of panes) {
+        html += `<div class="pane" data-pane="${p.pane}"><span>${p.workspace} ${esc(p.dir)} › ${esc(p.program)}</span>${p.state ? `<span class="state ${esc(p.state)}">${esc(p.state)}</span>` : ''}</div>`;
+      }
+      if (!panes.length) html += `<div class="pane"><span class="sub">imkr there is too old to list its panes</span></div>`;
+    }
+    html += '</div>';
+  }
+  $('sessions').innerHTML = html || '<p class="empty">No sessions.</p>';
+}
+
+function quietFor(s) {
+  const agents = s.agent_panes || [];
+  if (!agents.length) return null;
+  if (agents.some((a) => a.state === 'working' || a.state === 'blocked')) return 0;
+  return Math.min(...agents.map((a) => a.since));
+}
+
+$('inbox').addEventListener('click', async (e) => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  const session = card.dataset.session, pane = Number(card.dataset.pane);
+  const button = e.target.closest('button');
+  if (!button) return;
+  if (button.hasAttribute('data-open')) return openTerm(session, pane, card.querySelector('b').textContent);
+  if (button.dataset.text == null) return;
+  e.preventDefault();
+  try { await send(session, pane, button.dataset.text, false); setTimeout(refresh, 600); }
+  catch (err) { card.querySelector('.error').textContent = err.message; }
+});
+
+$('inbox').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const card = e.target.closest('.card');
+  const input = e.target.querySelector('input');
+  if (!input.value) return;
+  try {
+    await send(card.dataset.session, Number(card.dataset.pane), input.value, true);
+    input.value = '';
+    input.blur();
+    setTimeout(refresh, 600);
+  } catch (err) { card.querySelector('.error').textContent = err.message; }
+});
+
+$('sessions').addEventListener('click', (e) => {
+  const card = e.target.closest('.session');
+  if (!card || card.classList.contains('dormant')) return;
+  const pane = e.target.closest('.pane[data-pane]');
+  if (pane) return openTerm(card.dataset.session, Number(pane.dataset.pane), pane.firstElementChild.textContent);
+  const name = card.dataset.session;
+  open.has(name) ? open.delete(name) : open.add(name);
+  store.set('open', JSON.stringify([...open]));
+  renderSessions();
+});
+
+// --- Terminal ---
+
+const KEYS = [['Esc','\x1b'],['Tab','\t'],['Ctrl',null],['↑','\x1b[A'],['↓','\x1b[B'],['←','\x1b[D'],['→','\x1b[C'],
+  ['⏎','\r'],['^C','\x03'],['⇧Tab','\x1b[Z'],['PgUp','\x1b[5~'],['PgDn','\x1b[6~'],['1','1'],['2','2'],['3','3'],['y','y'],['n','n']];
+let term = null, fitAddon = null, ws = null, target = null, ctrl = false, retry = 0, retryTimer = null;
+// Fit by default: a pane of a desktop's width is unreadable on a phone.
+let fit = store.get('fit', '1') === '1';
+let scale = Number(store.get('scale', '1')) || 1;
+const status = (text) => { $('status').textContent = text; $('status').style.display = text ? 'block' : 'none'; };
+
+$('keys').innerHTML = KEYS.map(([l, t]) => `<button class="key" ${t == null ? 'id="ctrl"' : `data-text="${esc(t)}"`}>${esc(l)}</button>`).join('');
+$('keys').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.id === 'ctrl') { ctrl = !ctrl; b.classList.toggle('on', ctrl); return; }
+  input(b.dataset.text);
+  term?.focus();
+});
+// Keeps the phone's keyboard where it is when a key is tapped.
+$('keys').addEventListener('mousedown', (e) => e.preventDefault());
+
+function input(text) {
+  if (ctrl && text.length === 1) {
+    const c = text.toUpperCase().charCodeAt(0);
+    if (c >= 64 && c < 96) text = String.fromCharCode(c - 64);
+    ctrl = false;
+    $('ctrl').classList.remove('on');
+  }
+  if (ws?.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(text));
+}
+
+$('compose').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const line = $('line');
+  if (line.value) input(line.value);
+  // Enter on its own, as a key and not part of the text.
+  setTimeout(() => input('\r'), 30);
+  line.value = '';
+});
+
+function openTerm(session, pane, title) {
+  target = { session, pane };
+  $('term-title').textContent = title || `${session} › ${pane}`;
+  document.body.classList.add('term');
+  history.pushState({ term: true }, '');
+  $('fit').classList.toggle('on', fit);
+  connect();
+}
+
+function closeTerm() {
+  target = null;
+  clearTimeout(retryTimer);
+  ws?.close();
+  ws = null;
+  term?.dispose();
+  term = null;
+  status('');
+  document.body.classList.remove('term');
+  refresh();
+}
+
+$('back').addEventListener('click', () => history.back());
+window.addEventListener('popstate', () => { if (target) closeTerm(); });
+$('fit').addEventListener('click', () => {
+  fit = !fit;
+  store.set('fit', fit ? '1' : '0');
+  $('fit').classList.toggle('on', fit);
+  connect();
+});
+for (const [id, by] of [['smaller', 1 / 1.15], ['bigger', 1.15]]) {
+  $(id).addEventListener('click', () => {
+    scale = Math.min(3, Math.max(0.4, scale * by));
+    store.set('scale', String(scale));
+    layout();
+  });
+}
+
+function makeTerm() {
+  term?.dispose();
+  $('screen').innerHTML = '';
+  $('screen').classList.toggle('fit', fit);
+  term = new Terminal({
+    fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace',
+    fontSize: 13, scrollback: 5000, cursorBlink: false, allowProposedApi: false,
+    theme: { background: '#1e1e2e', foreground: '#cdd6f4' },
+  });
+  fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open($('screen'));
+  term.onData((data) => input(data));
+  term.onBinary((data) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(Uint8Array.from(data, (c) => c.charCodeAt(0)));
+  });
+}
+
+let paneSize = null, refitTimer = null;
+
+// The width of a column, per pixel of font size.
+function charWidth(family) {
+  const ctx = document.createElement('canvas').getContext('2d');
+  ctx.font = `100px ${family}`;
+  return ctx.measureText('W'.repeat(20)).width / 20 / 100;
+}
+
+// Fits the terminal: in fit mode the pane takes this screen's size; else
+// the font shrinks until the pane's width fits, scaled by A−/A+.
+function layout() {
+  if (!term) return;
+  const box = $('screen');
+  if (fit) {
+    term.options.fontSize = Math.round(13 * scale);
+    const want = fitAddon.proposeDimensions();
+    // A new size comes with a new screen: connect again.
+    if (want && paneSize && (want.cols !== paneSize.cols || want.rows !== paneSize.rows)) {
+      clearTimeout(refitTimer);
+      refitTimer = setTimeout(connect, 250);
+    }
+    return;
+  }
+  if (!paneSize) return;
+  term.resize(paneSize.cols, paneSize.rows);
+  const width = box.clientWidth - 6;
+  const fitting = width / (paneSize.cols * charWidth(term.options.fontFamily));
+  term.options.fontSize = Math.max(5, Math.min(18, Math.floor(fitting * scale)));
+}
+window.addEventListener('resize', () => layout());
+
+function connect() {
+  clearTimeout(retryTimer);
+  if (!target) return;
+  if (ws) { ws.onclose = null; ws.close(); }
+  makeTerm();
+  status('Connecting…');
+  const url = new URL('/ws', location.href);
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const params = { session: target.session, pane: target.pane, fit: fit ? '1' : '0' };
+  if (fit) {
+    // The pane takes this screen's size before its screen is sent.
+    term.options.fontSize = Math.round(13 * scale);
+    const want = fitAddon.proposeDimensions();
+    if (want) Object.assign(params, { cols: want.cols, rows: want.rows });
+  }
+  url.search = new URLSearchParams(params);
+  const socket = new WebSocket(url);
+  socket.binaryType = 'arraybuffer';
+  ws = socket;
+  let ended = false;
+  socket.onmessage = (e) => {
+    if (typeof e.data !== 'string') {
+      term.write(new Uint8Array(e.data));
+      return;
+    }
+    const msg = JSON.parse(e.data);
+    if (msg.error) { ended = true; status(msg.error); return; }
+    if (msg.exited) { ended = true; status('The pane ended.'); return; }
+    if (msg.cols) {
+      retry = 0;
+      status('');
+      paneSize = { cols: msg.cols, rows: msg.rows };
+      term.reset();
+      term.resize(msg.cols, msg.rows);
+      layout();
+      if (!fit) term.scrollToBottom();
+    }
+  };
+  socket.onclose = () => {
+    if (ws !== socket || !target || ended) return;
+    // The pane changed its size, imkr was updated, or the network went:
+    // connect again, for a fresh screen.
+    status('Reconnecting…');
+    retryTimer = setTimeout(connect, Math.min(5000, 300 * 2 ** retry++));
+  };
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (target && (!ws || ws.readyState > WebSocket.OPEN)) connect();
+  refresh();
+});
+setInterval(refresh, 3000);
+refresh();
+</script>
+</body>
+</html>

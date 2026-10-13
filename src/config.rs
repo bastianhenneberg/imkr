@@ -221,6 +221,11 @@ pub struct Config {
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
+    /// Keeps `imkr web` running, the sessions in a phone's browser.
+    pub web: bool,
+    /// Where `imkr web` listens, e.g. `100.97.56.232:4657`; without it on
+    /// this machine's Tailscale/NetBird address, else only on 127.0.0.1.
+    pub web_listen: Option<String>,
     /// This machine's name for you and your other machines, e.g. how they
     /// reach it by ssh (`laptop`). Without it, its hostname, which machines
     /// set up alike may share.
@@ -386,6 +391,8 @@ impl Default for Config {
             revive_sessions: true,
             checkpoints: false,
             sessions_on_start: false,
+            web: false,
+            web_listen: None,
             name: None,
             hosts: Vec::new(),
         }
@@ -551,6 +558,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Shared pane borders",
         value: |c| if c.shared_borders { "on" } else { "off" }.to_owned(),
         step: |c, _| c.shared_borders = !c.shared_borders,
+    },
+    Setting {
+        name: "Web view for phones (imkr web)",
+        value: |c| if c.web { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.web = !c.web,
     },
     Setting {
         name: "Restart all sessions after a reboot",

@@ -491,6 +491,8 @@ const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(5);
 /// How often hives saved on other machines are fetched.
 const HIVES_EVERY: Duration = Duration::from_secs(60);
+/// How often a server makes sure `imkr web` runs, if switched on.
+const WEB_EVERY: Duration = Duration::from_secs(60);
 
 /// Where images are placed, by (image, placement): column, row, columns
 /// and rows.
@@ -593,6 +595,8 @@ pub struct App {
     conns: HashMap<ClientId, UnixStream>,
     /// Connections showing a pane elsewhere, see `Request::Tap`.
     taps: HashMap<ClientId, PaneId>,
+    /// Those of `taps` that only watch: their size is not the pane's.
+    watchers: HashSet<ClientId>,
     /// The machine list (`Mode::NewSessionWhere`) picks where a window
     /// runs, not a session.
     hosting: bool,
@@ -759,6 +763,7 @@ impl App {
             origin: None,
             active: None,
             taps: HashMap::new(),
+            watchers: HashSet::new(),
             hosting: false,
             carried: HashMap::new(),
             carried_until: None,
@@ -1443,8 +1448,8 @@ impl App {
                 }
                 Ok(())
             }
-            AppEvent::ClientMsg(id, ClientMsg::Request(Request::Tap { pane })) => {
-                self.tap(id, pane)
+            AppEvent::ClientMsg(id, ClientMsg::Request(Request::Tap { pane, watch, size })) => {
+                self.tap(id, pane, watch, size)
             }
             AppEvent::ClientMsg(id, ClientMsg::Input(bytes)) => {
                 if let Some(pane) = self.taps.get(&id).and_then(|p| self.panes.get_mut(p)) {
@@ -1457,9 +1462,10 @@ impl App {
             AppEvent::ClientMsg(id, ClientMsg::Event(Event::Resize(cols, rows)))
                 if self.taps.contains_key(&id) =>
             {
+                let watching = self.watchers.contains(&id);
                 match self.taps.get(&id).and_then(|p| self.panes.get_mut(p)) {
-                    Some(pane) => pane.resize(rows, cols),
-                    None => Ok(()),
+                    Some(pane) if !watching => pane.resize(rows, cols),
+                    _ => Ok(()),
                 }
             }
             AppEvent::ClientMsg(id, ClientMsg::Request(request)) => {
@@ -1486,7 +1492,10 @@ impl App {
             }
             AppEvent::ClientGone(id) => {
                 self.conns.remove(&id);
-                self.taps.remove(&id);
+                if let Some(pane) = self.taps.remove(&id).and_then(|p| self.panes.get(&p)) {
+                    pane.untap(id);
+                }
+                self.watchers.remove(&id);
                 if self.take_client(id).is_some() {
                     self.fit_screen(false);
                 }
@@ -1523,19 +1532,33 @@ impl App {
     }
 
     /// Shows pane `pane` on connection `id`, see `Request::Tap`.
-    fn tap(&mut self, id: ClientId, pane: PaneId) -> Result<()> {
+    fn tap(
+        &mut self,
+        id: ClientId,
+        pane: PaneId,
+        watch: bool,
+        size: Option<(u16, u16)>,
+    ) -> Result<()> {
         let Some(stream) = self.conns.get_mut(&id) else {
             return Ok(());
         };
-        let Some(shown) = self.panes.get(&pane) else {
+        let Some(shown) = self.panes.get_mut(&pane) else {
             return ServerMsg::Reply(Err(format!("no pane {pane}")))
                 .write_to(stream)
                 .map_err(Into::into);
         };
-        ServerMsg::Reply(Ok(serde_json::json!({ "pane": pane }))).write_to(stream)?;
+        if let Some((rows, cols)) = size.filter(|_| !watch) {
+            shown.resize(rows, cols)?;
+        }
+        let (rows, cols) = shown.size();
+        let reply = serde_json::json!({ "pane": pane, "rows": rows, "cols": cols });
+        ServerMsg::Reply(Ok(reply)).write_to(stream)?;
         let mut stream = stream.try_clone()?;
-        let (screen, output) = shown.tap();
+        let (screen, output) = shown.tap(id, watch);
         self.taps.insert(id, pane);
+        if watch {
+            self.watchers.insert(id);
+        }
         // The new terminal learns what runs in it with the next look.
         self.told.remove(&pane);
         thread::Builder::new()
@@ -9396,6 +9419,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
         // and pane.
         let mut states: HashMap<(String, String, PaneId), String> = HashMap::new();
         let mut noted: Vec<String> = Vec::new();
+        let mut web_at: Option<Instant> = None;
         loop {
             let own = protocol::session_name();
             let local: Vec<_> = crate::client::local_sessions()
@@ -9414,6 +9438,10 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
             if running != noted && std::env::var_os("IMKR_SOCKET").is_none() {
                 let _ = persist::note_running(&running);
                 noted = running;
+            }
+            if web_at.is_none_or(|at| at.elapsed() >= WEB_EVERY) {
+                web_at = Some(Instant::now());
+                crate::web::keep_running();
             }
             places.lock().unwrap().local = local;
 

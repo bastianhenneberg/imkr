@@ -480,6 +480,42 @@ session's own, grouped by session (`⇄ codingmachine · brain`), those that nee
 goes to the session and shows the agent's pane. When one elsewhere comes to need you or finishes,
 imkr tells you as it does for its own: in the bar, with a bell, and a notification.
 
+## On the phone
+
+`imkr web` shows this machine's sessions in a browser, made for phones: the agents that wait for
+you or are done, with their last lines and buttons to answer (`1`, `2`, `y`, Enter, Esc, or a
+line of text), every session with its windows and panes, and any pane as a terminal (xterm.js)
+to watch and type into, with a row of the keys a phone lacks (Esc, Tab, Ctrl, arrows). *Fit*
+gives the pane the phone's size while you look at it, else the page shrinks the pane's text to
+fit. It works in any browser, Android or iPhone, and nothing is set up besides: the server is
+part of the imkr binary and is updated with it (`imkr update` and `imkr hosts sync`).
+
+It listens on this machine's VPN address if there is one (Tailscale and NetBird both hand out
+addresses from 100.64.0.0/10), else only on 127.0.0.1, port 4657; `--listen` or `web_listen`
+picks another address. Put it on a VPN, not the open internet: with the phone in the same
+tailnet or NetBird network, `http://<address>:4657` is all it takes. In the home Wi-Fi,
+`--listen 192.168.1.10` works too; `0.0.0.0` (every network) only with care.
+
+```bash
+imkr web                 # serve; prints the address, and a code if no device is paired yet
+imkr web pair            # a code to pair another device, good for ten minutes and five tries
+imkr web devices         # the paired devices
+imkr web forget phone    # unpair one (or `all`)
+```
+
+Pairing gives the device a token in a cookie; only paired devices see anything or type into a
+pane. *Web view for phones* in the settings (`web = true`) keeps it running: every imkr server
+starts it when nothing answers on its address, after a reboot too, and it moves to a new binary
+by itself after an update.
+
+```toml
+web = true
+web_listen = "100.97.56.232:4657"   # optional
+```
+
+Without HTTPS a browser will not install the page as an app; it works as a page all the same. For
+HTTPS put it behind `tailscale serve 4657` or the reverse proxy of your NetBird or other server.
+
 ## Updates
 
 A new version does not need a restart:

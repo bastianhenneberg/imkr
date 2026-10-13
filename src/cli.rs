@@ -1249,7 +1249,12 @@ pub fn attach_pane(args: &[String]) -> Result<()> {
     let pane: PaneId = pane.parse().context("PANE is a number")?;
     let mut stream = std::os::unix::net::UnixStream::connect(protocol::socket_path()?)
         .context("no imkr server running")?;
-    protocol::ClientMsg::Request(Request::Tap { pane }).write_to(&mut stream)?;
+    protocol::ClientMsg::Request(Request::Tap {
+        pane,
+        watch: false,
+        size: None,
+    })
+    .write_to(&mut stream)?;
     match protocol::ServerMsg::read_from(&mut stream)? {
         Some(protocol::ServerMsg::Reply(Ok(_))) => {}
         Some(protocol::ServerMsg::Reply(Err(message))) => bail!(message),

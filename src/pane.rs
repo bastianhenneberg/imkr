@@ -67,7 +67,22 @@ const TAPPED_HISTORY: usize = 2000;
 
 /// See `Pane::taps`. Bounded: a tap that falls this far behind is cut off,
 /// rather than holding up the pane or filling memory.
-type Taps = Arc<Mutex<Vec<std::sync::mpsc::SyncSender<Vec<u8>>>>>;
+type Taps = Arc<Mutex<Vec<Tap>>>;
+
+/// See `Pane::tap`.
+struct Tap {
+    /// The connection, see `Pane::untap`.
+    id: u64,
+    out: std::sync::mpsc::SyncSender<Vec<u8>>,
+    /// Only watches: the pane keeps its size and answers its program.
+    watch: bool,
+}
+
+impl Tap {
+    fn send(&self, bytes: &[u8]) -> bool {
+        self.out.try_send(bytes.to_vec()).is_ok()
+    }
+}
 const TAP_BACKLOG: usize = 1024;
 
 /// A finished command: where its output starts and ends, its exit code.
@@ -443,8 +458,8 @@ impl Pane {
                             // everything after the screen it was sent.
                             let tapped = {
                                 let mut taps = reader_taps.lock().unwrap();
-                                taps.retain(|tap| tap.try_send(buf[..n].to_vec()).is_ok());
-                                !taps.is_empty()
+                                taps.retain(|tap| tap.send(&buf[..n]));
+                                taps.iter().any(|tap| !tap.watch)
                             };
                             drop(parser);
                             // A tapped pane's terminal is the one showing it,
@@ -465,7 +480,7 @@ impl Pane {
                 // An empty chunk tells taps the pane ended, rather than
                 // that they were cut off.
                 for tap in reader_taps.lock().unwrap().drain(..) {
-                    let _ = tap.try_send(Vec::new());
+                    let _ = tap.send(&[]);
                 }
                 let _ = events.send(AppEvent::PtyExited(id));
             })?;
@@ -476,7 +491,8 @@ impl Pane {
     /// Shows the pane elsewhere: the bytes that draw its history and
     /// screen as they are now, and a receiver for everything it outputs
     /// from then on.
-    pub fn tap(&self) -> (Vec<u8>, std::sync::mpsc::Receiver<Vec<u8>>) {
+    /// See `Tap::watch`.
+    pub fn tap(&self, id: u64, watch: bool) -> (Vec<u8>, std::sync::mpsc::Receiver<Vec<u8>>) {
         let (tx, rx) = std::sync::mpsc::sync_channel(TAP_BACKLOG);
         let parser = self.parser.lock().unwrap();
         let mut out = Vec::new();
@@ -491,7 +507,7 @@ impl Pane {
             }
         }
         out.extend_from_slice(&parser.state_formatted());
-        self.taps.lock().unwrap().push(tx);
+        self.taps.lock().unwrap().push(Tap { id, out: tx, watch });
         drop(parser);
         (out, rx)
     }
@@ -499,7 +515,19 @@ impl Pane {
     /// Whether the pane is shown elsewhere, see `tap`; its size is then
     /// that of the terminal showing it.
     pub fn tapped(&self) -> bool {
-        !self.taps.lock().unwrap().is_empty()
+        self.taps.lock().unwrap().iter().any(|tap| !tap.watch)
+    }
+
+    /// Drops the tap of connection `id` once it is gone, rather than when
+    /// the next output finds no one listening: until then the pane would
+    /// keep the size of a terminal that no longer shows it.
+    pub fn untap(&self, id: u64) {
+        self.taps.lock().unwrap().retain(|tap| tap.id != id);
+    }
+
+    /// Rows and columns.
+    pub fn size(&self) -> (u16, u16) {
+        self.size
     }
 
     /// Stops reading the pty and waits until the reader is done, so the
@@ -673,10 +701,7 @@ impl Pane {
     /// Tells the terminals showing this pane elsewhere what runs in it.
     pub fn tell_taps(&self, bytes: &[u8]) {
         let _parser = self.parser.lock().unwrap();
-        self.taps
-            .lock()
-            .unwrap()
-            .retain(|tap| tap.try_send(bytes.to_vec()).is_ok());
+        self.taps.lock().unwrap().retain(|tap| tap.send(bytes));
     }
 
     pub fn program(&self) -> Option<String> {
@@ -830,11 +855,11 @@ impl Pane {
             return Ok(());
         }
         self.size = (rows, cols);
-        self.parser
-            .lock()
-            .unwrap()
-            .screen_mut()
-            .set_size(rows, cols);
+        let mut parser = self.parser.lock().unwrap();
+        parser.screen_mut().set_size(rows, cols);
+        // What watches sees the old size: it connects again for the new.
+        self.taps.lock().unwrap().retain(|tap| !tap.watch);
+        drop(parser);
         self.master.resize(PtySize {
             rows,
             cols,

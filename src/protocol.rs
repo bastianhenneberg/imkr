@@ -409,7 +409,18 @@ pub enum Request {
     /// its history and screen and then its output come as
     /// `ServerMsg::Output`, `ServerMsg::Exited` when it ends. Input goes
     /// back as `ClientMsg::Input`, the size as a resize event.
-    Tap { pane: PaneId },
+    /// With `watch` the pane keeps its size and answers its program
+    /// itself: it is still shown here (the web view); the connection is
+    /// cut off when its size changes, to connect again for a fresh screen.
+    Tap {
+        pane: PaneId,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        watch: bool,
+        /// Rows and columns to give the pane first, so its screen comes
+        /// at the size it is shown at (not when watching).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<(u16, u16)>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -682,7 +693,21 @@ mod tests {
                 workspace: Some(2),
                 cwd: None,
             }),
-            ClientMsg::Request(Request::Tap { pane: 4 }),
+            ClientMsg::Request(Request::Tap {
+                pane: 4,
+                watch: false,
+                size: None,
+            }),
+            ClientMsg::Request(Request::Tap {
+                pane: 4,
+                watch: false,
+                size: Some((40, 50)),
+            }),
+            ClientMsg::Request(Request::Tap {
+                pane: 4,
+                watch: true,
+                size: None,
+            }),
             ClientMsg::Input(b"\x1b[A\r".to_vec()),
         ];
         let mut wire = Vec::new();
