@@ -291,6 +291,9 @@ enum PromptFor {
     /// The name of a session to start and switch to, on that machine
     /// (`None`: this one).
     NewSession(Option<String>),
+    /// The directory session `Place` starts in, from the template (one
+    /// shell without).
+    SessionDir(Place, Option<crate::template::Template>),
     /// The name to save the running sessions as a hive under.
     SaveHive,
     /// A new name for the hive called this.
@@ -4765,8 +4768,12 @@ impl App {
     /// Asks for the template of the new session `place` when there are
     /// any, else goes there right away.
     fn choose_template(&mut self, place: Place) {
-        if self.templates().is_empty() || self.session_exists(&place) {
+        if self.session_exists(&place) {
             self.go_to(&place);
+            return;
+        }
+        if self.templates().is_empty() {
+            self.ask_session_dir(place, None);
             return;
         }
         self.new_session = Some(place);
@@ -4815,10 +4822,29 @@ impl App {
         let Some(place) = self.new_session.take() else {
             return;
         };
-        match templates.get(pick).cloned().flatten() {
-            Some(template) => self.start_from_template(place, &template),
-            None => self.go_to(&place),
+        if let Some(template) = templates.get(pick).cloned() {
+            self.ask_session_dir(place, template);
         }
+    }
+
+    /// Asks where session `place` starts, suggesting the template's root,
+    /// else where the user is here, else the home directory there.
+    fn ask_session_dir(&mut self, place: Place, template: Option<crate::template::Template>) {
+        let root = template.as_ref().and_then(|t| t.root.as_ref());
+        let suggested = match (root, &place.host) {
+            (Some(root), _) => root.replace("{session}", &place.name),
+            (None, None) => self
+                .panes
+                .get(&self.ws.focus)
+                .and_then(|p| p.cwd())
+                .map_or("~".into(), |cwd| crate::template::with_tilde(&cwd)),
+            (None, Some(_)) => "~".into(),
+        };
+        self.prompt = Some(Prompt {
+            purpose: PromptFor::SessionDir(place, template),
+            text: suggested,
+        });
+        self.mode = Mode::Prompt;
     }
 
     /// Starts session `place` from `template` and goes there: here right
@@ -6671,6 +6697,16 @@ impl App {
                             }
                         }
                     }
+                    PromptFor::SessionDir(place, template) => {
+                        // Without a template: one shell, in that directory.
+                        let mut template = template.unwrap_or_else(|| crate::template::Template {
+                            windows: vec![crate::template::Window::default()],
+                            ..Default::default()
+                        });
+                        let dir = text.trim().trim_end_matches('/');
+                        template.root = Some(if dir.is_empty() { "~" } else { dir }.to_owned());
+                        self.start_from_template(place, &template);
+                    }
                     PromptFor::NewSession(host) => {
                         let name = text.trim().to_owned();
                         if protocol::valid_session_name(&name) {
@@ -6706,6 +6742,25 @@ impl App {
                         }
                     }
                 }
+            }
+            // Directories on this machine complete like in a shell.
+            KeyCode::Tab => {
+                if let PromptFor::SessionDir(Place { host: None, .. }, _) = prompt.purpose {
+                    prompt.text = crate::template::complete_dir(&prompt.text);
+                }
+            }
+            KeyCode::Char('w') if ctrl && matches!(prompt.purpose, PromptFor::SessionDir(..)) => {
+                // Back to the directory above, as Ctrl+W does for a word.
+                let trimmed = prompt.text.trim_end_matches('/');
+                let cut = trimmed.rfind('/').map_or(0, |i| i + 1);
+                prompt.text.truncate(cut);
+            }
+            KeyCode::Char(c)
+                if !ctrl
+                    && matches!(prompt.purpose, PromptFor::SessionDir(..))
+                    && prompt.text.len() < MAX_PATH =>
+            {
+                prompt.text.push(c);
             }
             KeyCode::Backspace if ctrl => prompt.text.clear(),
             KeyCode::Char('u' | 'w') if ctrl => prompt.text.clear(),
@@ -8556,6 +8611,10 @@ impl App {
             PromptFor::NewWindow { window, .. } => format!(" Name new window {window} "),
             PromptFor::Search { forward: true } => " Search down ".to_owned(),
             PromptFor::Search { forward: false } => " Search up ".to_owned(),
+            PromptFor::SessionDir(place, _) => match &place.host {
+                Some(host) => format!(" Directory of {} on {host} ", place.name),
+                None => format!(" Directory of {} ", place.name),
+            },
             PromptFor::NewSession(None) => " New session ".to_owned(),
             PromptFor::NewSession(Some(host)) => format!(" New session on {host} "),
             PromptFor::MoveWindow(n) => format!(" Move window {n} to session "),
@@ -8568,10 +8627,20 @@ impl App {
         };
         let accent = theme::current().accent;
         let hint = Style::new().add_modifier(Modifier::DIM);
+        let width = (MAX_NAME as u16 + 8).max(72);
+        // A long directory shows its end, where the typing is.
+        let room = usize::from(width.saturating_sub(9));
+        let count = prompt.text.chars().count();
+        let shown = if count > room {
+            let tail: String = prompt.text.chars().skip(count + 1 - room).collect();
+            format!("…{tail}")
+        } else {
+            prompt.text.clone()
+        };
         let lines = vec![
             Line::from(vec![
                 Span::styled("› ", Style::new().fg(accent).add_modifier(Modifier::BOLD)),
-                Span::raw(prompt.text.clone()),
+                Span::raw(shown.clone()),
             ]),
             Line::default(),
             Line::styled(
@@ -8580,6 +8649,12 @@ impl App {
                     PromptFor::NewWindow { .. } => "Enter save · Esc closes the window again",
                     PromptFor::Search { .. } => "Enter find · then n next, N previous · Esc cancel",
                     PromptFor::NewSession(_) => "Enter start and switch · letters, digits, - and _",
+                    PromptFor::SessionDir(Place { host: None, .. }, _) => {
+                        "Enter start · Tab completes · Ctrl+W up a directory · Esc cancel"
+                    }
+                    PromptFor::SessionDir(..) => {
+                        "Enter start · ~ is the home directory there · Esc cancel"
+                    }
                     PromptFor::MoveWindow(_) => "Enter move · a new name starts it · Esc cancel",
                     PromptFor::RenameSession(_) => "Enter rename · letters, digits, - and _",
                     PromptFor::SaveHive => "Enter save · letters, digits, - and _ · Esc cancel",
@@ -8593,7 +8668,6 @@ impl App {
                 hint,
             ),
         ];
-        let width = (MAX_NAME as u16 + 8).max(56);
         let popup = centered(area, width, lines.len() as u16 + 2);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -8606,7 +8680,7 @@ impl App {
         let inner = block.inner(popup);
         frame.render_widget(Clear, popup);
         frame.render_widget(Paragraph::new(lines).block(block), popup);
-        let x = inner.x + 2 + prompt.text.chars().count() as u16;
+        let x = inner.x + 2 + shown.chars().count() as u16;
         frame.set_cursor_position(Position::new(
             x.min(inner.right().saturating_sub(1)),
             inner.y,
@@ -9514,6 +9588,8 @@ fn find_in_rows(
 
 /// Names are cut to this many characters.
 const MAX_NAME: usize = 32;
+/// The longest directory typed in a prompt.
+const MAX_PATH: usize = 400;
 
 /// The button after the tabs that opens a new workspace.
 const NEW_TAB: &str = " + ";

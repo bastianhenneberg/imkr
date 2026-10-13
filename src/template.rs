@@ -277,6 +277,53 @@ pub fn home_dir(dir: &Path) -> PathBuf {
     }
 }
 
+/// `text` completed as a directory on this machine, like a shell's Tab:
+/// the one directory it starts, with a `/`, or what all of them share.
+/// `~` stays as typed.
+pub fn complete_dir(text: &str) -> String {
+    let (parent, prefix) = match text.rfind('/') {
+        Some(i) => (&text[..=i], &text[i + 1..]),
+        None if text == "~" => return "~/".into(),
+        None => ("", text),
+    };
+    let listed = if parent.is_empty() {
+        PathBuf::from(".")
+    } else {
+        home_dir(Path::new(parent))
+    };
+    let Ok(entries) = std::fs::read_dir(&listed) else {
+        return text.to_owned();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.starts_with(prefix) && (prefix.starts_with('.') || !n.starts_with('.')))
+        .collect();
+    names.sort();
+    match names.as_slice() {
+        [] => text.to_owned(),
+        [one] => format!("{parent}{one}/"),
+        [first, rest @ ..] => {
+            let mut shared = first.clone();
+            for name in rest {
+                let len = shared
+                    .chars()
+                    .zip(name.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                shared = shared.chars().take(len).collect();
+            }
+            format!("{parent}{shared}")
+        }
+    }
+}
+
+/// `path` with the home directory as `~`, as typed in a prompt.
+pub fn with_tilde(path: &Path) -> String {
+    tilde(path, std::env::var_os("HOME").as_deref().map(Path::new))
+}
+
 fn tilde(path: &Path, home: Option<&Path>) -> String {
     match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".into(),
@@ -369,6 +416,30 @@ pub fn write(template: &Template) -> anyhow::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directories_complete_like_a_shell() {
+        let dir = std::env::temp_dir().join(format!("imkr-complete-{}", std::process::id()));
+        for sub in ["alpha", "alpine", "beta", ".hidden"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        std::fs::write(dir.join("alfile"), "").unwrap();
+        let base = format!("{}/", dir.display());
+        // Shared start, then the only one, files left out.
+        assert_eq!(complete_dir(&format!("{base}al")), format!("{base}alp"));
+        assert_eq!(
+            complete_dir(&format!("{base}alph")),
+            format!("{base}alpha/")
+        );
+        assert_eq!(complete_dir(&format!("{base}b")), format!("{base}beta/"));
+        assert_eq!(complete_dir(&format!("{base}x")), format!("{base}x"));
+        assert_eq!(
+            complete_dir(&format!("{base}.h")),
+            format!("{base}.hidden/")
+        );
+        assert_eq!(complete_dir("~"), "~/");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     const CODING: &str = r#"
 title = "Coding"

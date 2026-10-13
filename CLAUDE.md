@@ -125,7 +125,10 @@ Projekt-Slug: `imkr`
   lokal `client::start_from`, remote `start_from_on` (`hive start` per ssh), danach `Request::Go`.
   `~` bleibt bis `App::restore` (`template::home_dir`, Home des Zielrechners). Folgen dem Operator
   über `Origin::templates`. Splits ↔ Layout: `Layout::splits`/`split_at`. Laufende Sessions
-  speichern nie `command` (nach einem Crash startet nichts von selbst).
+  speichern nie `command` (nach einem Crash startet nichts von selbst). Nach der Vorlage (auch
+  „leer“ und ohne Vorlagen) fragt `ask_session_dir` den Ordner (`PromptFor::SessionDir`,
+  Vorschlag root/fokussiertes Pane/`~`, Tab = `template::complete_dir` nur lokal, `MAX_PATH`);
+  der Ordner wird `Template::root`, „leer“ = Vorlage mit einem Window.
 - Ruhende Sessions: `persist::dormant_sessions` (State-Dateien ohne laufenden Server = stopped,
   Hive `last` = closed), `client::local_sessions` hängt sie mit `SessionInfo::dormant` an (also
   auch in `ls --json` und für andere Rechner). `go_to` holt closed per `persist::revive` (remote
