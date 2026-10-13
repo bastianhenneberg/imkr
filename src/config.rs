@@ -211,6 +211,9 @@ pub struct Config {
     /// Each attached terminal shows its own window, like herdr; off, all
     /// show the same one, like tmux.
     pub own_window_per_client: bool,
+    /// After the machine restarted, `imkr` starts again every session that
+    /// ran when it went down, not just the one it goes to.
+    pub revive_sessions: bool,
     /// After each agent turn, its repository's state as a commit on
     /// `refs/imkr/checkpoints/…`, to go back to; branch, index and files
     /// stay as they are.
@@ -380,6 +383,7 @@ impl Default for Config {
             tmux_shim: false,
             shared_borders: false,
             own_window_per_client: true,
+            revive_sessions: true,
             checkpoints: false,
             sessions_on_start: false,
             name: None,
@@ -547,6 +551,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Shared pane borders",
         value: |c| if c.shared_borders { "on" } else { "off" }.to_owned(),
         step: |c, _| c.shared_borders = !c.shared_borders,
+    },
+    Setting {
+        name: "Restart all sessions after a reboot",
+        value: |c| if c.revive_sessions { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.revive_sessions = !c.revive_sessions,
     },
     Setting {
         name: "Own window per attached terminal",

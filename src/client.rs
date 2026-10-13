@@ -538,6 +538,9 @@ pub struct Remote {
 pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Result<()> {
     let mut remote = remote;
     let mut flash = None;
+    if start && crate::config::Config::load().0.revive_sessions {
+        revive_stopped();
+    }
     if last && let Some((last_host, last_name)) = last_place() {
         match last_host {
             Some(host) => {
@@ -1153,6 +1156,31 @@ pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Resul
         });
     }
     Ok(report)
+}
+
+/// Starts again the sessions of this machine that ran when it went down
+/// (`persist::were_running`) and stopped with it, each from its saved
+/// layout and history, as going there would.
+fn revive_stopped() {
+    if std::env::var_os("IMKR_SOCKET").is_some() {
+        return;
+    }
+    let names = crate::persist::were_running();
+    if names.is_empty() {
+        return;
+    }
+    let stopped = crate::persist::dormant_sessions(&[]);
+    for name in names {
+        let Some(dormant) = stopped.iter().find(|d| d.name == name && !d.closed) else {
+            continue;
+        };
+        let Ok(socket) = session_socket(&dormant.name) else {
+            continue;
+        };
+        if UnixStream::connect(&socket).is_err() {
+            let _ = start_server(&socket, Some(&dormant.name));
+        }
+    }
 }
 
 /// Starts each of `sessions` that does not run here, from its layout.

@@ -110,6 +110,37 @@ pub fn path_for(name: &str) -> Result<PathBuf> {
 }
 
 /// `$XDG_STATE_HOME/imkr`, falling back to `~/.local/state/imkr`.
+/// The sessions of this machine that ran when it was last looked, see
+/// `note_running`.
+fn running_file() -> Result<PathBuf> {
+    Ok(state_dir()?.join("running"))
+}
+
+/// Notes the sessions running now. Every server keeps it current, so after
+/// the machine went down with all of them, it still lists them all: those
+/// `were_running`. One quit on purpose is left out by the others.
+pub fn note_running(names: &[String]) -> Result<()> {
+    let path = running_file()?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(path, names.join("\n") + "\n")?;
+    Ok(())
+}
+
+/// The sessions that ran last time, by `note_running`.
+pub fn were_running() -> Vec<String> {
+    running_file()
+        .and_then(|path| Ok(fs::read_to_string(path)?))
+        .map(|text| {
+            text.lines()
+                .filter(|n| crate::protocol::valid_session_name(n))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn state_dir() -> Result<PathBuf> {
     let base = match std::env::var_os("XDG_STATE_HOME") {
         Some(dir) => PathBuf::from(dir),

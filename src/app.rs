@@ -9237,12 +9237,26 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
         // The state each agent elsewhere was last seen in, by host, session
         // and pane.
         let mut states: HashMap<(String, String, PaneId), String> = HashMap::new();
+        let mut noted: Vec<String> = Vec::new();
         loop {
             let own = protocol::session_name();
             let local: Vec<_> = crate::client::local_sessions()
                 .into_iter()
                 .filter(|s| s.name != own)
                 .collect();
+            // What runs, for bringing it all back after a restart. Only the
+            // sessions of the user's own runtime directory, not tests'.
+            let mut running: Vec<String> = local
+                .iter()
+                .filter(|s| s.dormant.is_none())
+                .map(|s| s.name.clone())
+                .chain([own.clone()])
+                .collect();
+            running.sort();
+            if running != noted && std::env::var_os("IMKR_SOCKET").is_none() {
+                let _ = persist::note_running(&running);
+                noted = running;
+            }
             places.lock().unwrap().local = local;
 
             if hives_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {

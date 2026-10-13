@@ -134,7 +134,11 @@ Projekt-Slug: `imkr`
   auch in `ls --json` und für andere Rechner). `go_to` holt closed per `persist::revive` (remote
   `imkr revive`) zurück, stopped stellt der startende Server selbst her. `imkr forget`, `x` in
   `Ctrl+B S`. Server erben keine Claude-Sitzungsvariablen (`client::is_agent_session_var`), sonst
-  speichert Claude in den Panes keine Transcripts.
+  speichert Claude in den Panes keine Transcripts. Nach Neustart: `watch_places` schreibt die
+  laufenden Sessions nach `<state>/running` (`persist::note_running`, nur ohne `IMKR_SOCKET`),
+  `client::run` startet per `revive_stopped` die dort genannten, die jetzt stopped sind
+  (Einstellung `revive_sessions`). Bewusst beendete fallen raus: die übrigen Server schreiben
+  die Datei neu, und ihr State ist gelöscht.
 - Shell-Integration (OSC 133): `LinkScanner` liefert auch `Piece::Mark` (A/B/C/D;exit), `Pane::shell`
   (`Shell::mark`: C = Ausgabe beginnt, D = fertig), `Pane::last_command` (Ende exklusiv: `text`
   nimmt die Endzelle mit), `Request::LastCommand`; CLI `run`, `wait` ohne `--until`,
