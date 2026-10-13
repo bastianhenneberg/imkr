@@ -213,7 +213,9 @@ one and `git restore --source=<id> -- <path>` brings a file back as it was.
 | `Ctrl+B` `Ctrl+B` | Send `Ctrl+B` to the shell |
 
 Pressing `Ctrl+B` opens a menu with every key, like which-key in Neovim. `f` and `w` open
-submenus, `⌫` goes back.
+submenus, `⌫` goes back. Without remembering a key: `Enter` (or `↓`/`↑` in submenus, where the
+arrows mean nothing else) picks from the menu with the arrows, `Enter` or `→` runs the entry and
+picks on in a submenu, `←` goes back; after `Ctrl+B` alone the arrows still change the pane.
 Focus, move and resize repeat: for 600 ms after one of them, arrow keys work without the prefix.
 A pane closes when its shell exits, imkr exits with the last pane.
 

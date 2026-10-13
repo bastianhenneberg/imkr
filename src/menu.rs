@@ -23,6 +23,7 @@ pub fn draw_which_key(
     side: Side,
     menu: Menu,
     commands: &[(char, String)],
+    selected: Option<usize>,
 ) {
     let area = inset(area);
     // Border and one column of padding on each side.
@@ -32,13 +33,15 @@ pub fn draw_which_key(
             Group::Commands,
             commands,
             "none yet, add [[commands]] to config.toml",
+            selected,
         ),
         Menu::Plugins => command_lines(
             Group::Plugins,
             commands,
             "none yet, add plugins/NAME.toml next to config.toml",
+            selected,
         ),
-        menu => groups(menu.groups(), max_width),
+        menu => groups(menu.groups(), max_width, selected),
     };
     // Rare keys of the main menu in one quiet line at the bottom.
     // It wraps at the width of the groups above, so it never widens the box.
@@ -87,14 +90,14 @@ pub fn draw_help(frame: &mut Frame, area: Rect, scroll: u16) {
     let max_width = usize::from(area.width).saturating_sub(6);
     let mut root = Menu::Root.groups().to_vec();
     root.push(Group::More);
-    lines.extend(groups(&root, max_width));
+    lines.extend(groups(&root, max_width, None));
     let submenus: Vec<Group> = Menu::ALL
         .iter()
         .filter(|m| **m != Menu::Root)
         .flat_map(|m| m.groups().iter().copied())
         .collect();
     lines.push(Line::default());
-    lines.extend(groups(&submenus, max_width));
+    lines.extend(groups(&submenus, max_width, None));
     // The lists take keys of their own once they are open.
     for (title, key, keys) in crate::bindings::LISTS {
         lines.push(Line::default());
@@ -186,8 +189,17 @@ fn draw_box_scrolled(
 /// otherwise.
 /// The groups in a grid: as many side by side as fit into `max_width`,
 /// the rest in further rows.
-fn groups(groups: &[Group], max_width: usize) -> Vec<Line<'static>> {
-    let columns: Vec<Vec<Line>> = groups.iter().map(|&g| group_lines(g)).collect();
+/// `selected`: the entry picked with the arrows, counted over the groups.
+fn groups(groups: &[Group], max_width: usize, selected: Option<usize>) -> Vec<Line<'static>> {
+    let mut before = 0;
+    let columns: Vec<Vec<Line>> = groups
+        .iter()
+        .map(|&g| {
+            let here = selected.and_then(|s| s.checked_sub(before));
+            before += in_group(g).filter(|b| crate::bindings::pickable(b)).count();
+            group_lines(g, here)
+        })
+        .collect();
     let widths: Vec<usize> = columns
         .iter()
         .map(|lines| lines.iter().map(Line::width).max().unwrap_or(0))
@@ -486,8 +498,13 @@ fn key_style() -> Style {
 
 /// The commands menu: the user's commands from the config, then back and
 /// cancel.
-fn command_lines(group: Group, commands: &[(char, String)], none: &str) -> Vec<Line<'static>> {
-    let mut lines = group_lines(group);
+fn command_lines(
+    group: Group,
+    commands: &[(char, String)],
+    none: &str,
+    selected: Option<usize>,
+) -> Vec<Line<'static>> {
+    let mut lines = group_lines(group, selected.and_then(|s| s.checked_sub(commands.len())));
     let fixed = lines.split_off(1);
     if commands.is_empty() {
         lines.push(Line::styled(
@@ -495,19 +512,38 @@ fn command_lines(group: Group, commands: &[(char, String)], none: &str) -> Vec<L
             Style::new().add_modifier(Modifier::DIM),
         ));
     }
-    for (key, name) in commands {
-        lines.push(Line::from(vec![
+    for (i, (key, name)) in commands.iter().enumerate() {
+        let line = Line::from(vec![
             Span::styled(key.to_string(), key_style()),
             Span::raw(" ".repeat(2 + GAP)),
             Span::raw(name.clone()),
-        ]));
+        ]);
+        lines.push(if selected == Some(i) {
+            picked(line)
+        } else {
+            line
+        });
     }
     lines.extend(fixed);
     lines
 }
 
-/// A group's title followed by one line per binding, keys aligned.
-fn group_lines(group: Group) -> Vec<Line<'static>> {
+/// `line` as the entry picked with the arrows.
+fn picked(line: Line<'static>) -> Line<'static> {
+    // On each span: columns are joined from spans, the line's own style
+    // would get lost.
+    let reversed = Style::new().add_modifier(Modifier::REVERSED);
+    Line::from(
+        line.spans
+            .into_iter()
+            .map(|span| span.patch_style(reversed))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// A group's title followed by one line per binding, keys aligned; the
+/// `selected` one of those to pick (see `bindings::pickable`) stands out.
+fn group_lines(group: Group, selected: Option<usize>) -> Vec<Line<'static>> {
     let bindings: Vec<&Binding> = in_group(group).collect();
     let key_width = bindings
         .iter()
@@ -527,10 +563,15 @@ fn group_lines(group: Group) -> Vec<Line<'static>> {
     )];
     // Entries that open a submenu stand out in one colour everywhere.
     let submenu = Style::new().fg(theme::current().magenta);
+    let mut pickable = 0;
     for binding in bindings {
         let pad = key_width - binding.label.chars().count() + GAP;
         let opens_menu = binding.description.ends_with('…');
-        lines.push(Line::from(vec![
+        let this = crate::bindings::pickable(binding).then(|| {
+            pickable += 1;
+            pickable - 1
+        });
+        let line = Line::from(vec![
             Span::styled(
                 binding.label,
                 if opens_menu {
@@ -545,7 +586,12 @@ fn group_lines(group: Group) -> Vec<Line<'static>> {
             } else {
                 Span::raw(binding.description)
             },
-        ]));
+        ]);
+        lines.push(if this.is_some() && this == selected {
+            picked(line)
+        } else {
+            line
+        });
     }
     lines
 }
@@ -589,6 +635,55 @@ mod tests {
             .join("\n")
     }
 
+    /// The text of the cells drawn reversed: the entry picked with arrows.
+    fn reversed(width: u16, height: u16, draw: impl Fn(&mut Frame, Rect)) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, frame.area())).unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                let cell = &buffer[(x, y)];
+                if cell.modifier.contains(Modifier::REVERSED) {
+                    text.push_str(cell.symbol());
+                }
+            }
+        }
+        text.trim().to_owned()
+    }
+
+    #[test]
+    fn arrows_pick_what_the_keys_would_run() {
+        // The first entry of the session menu, then the next, as
+        // `pick_keys` orders them.
+        let keys = crate::bindings::pick_keys(Menu::Session, &[]);
+        assert!(keys.len() > 2);
+        let first = reversed(120, 40, |f, a| {
+            draw_which_key(f, a, Side::Left, Menu::Session, &[], Some(0))
+        });
+        assert!(first.contains("switch"), "{first}");
+        let second = reversed(120, 40, |f, a| {
+            draw_which_key(f, a, Side::Left, Menu::Session, &[], Some(1))
+        });
+        assert!(second.contains("new session"), "{second}");
+        // The user's commands come first in their menu.
+        let commands = [('g', "lazygit".to_owned())];
+        let own = reversed(120, 40, |f, a| {
+            draw_which_key(f, a, Side::Left, Menu::Commands, &commands, Some(0))
+        });
+        assert!(own.contains("lazygit"), "{own}");
+        // `←↑↓→ pane there` is no one thing: left out of the main menu.
+        let root = crate::bindings::pick_keys(Menu::Root, &[]);
+        assert!(!root.contains(&crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Left,
+            crossterm::event::KeyModifiers::NONE
+        )));
+        let none = reversed(120, 40, |f, a| {
+            draw_which_key(f, a, Side::Left, Menu::Root, &[], None)
+        });
+        assert!(none.is_empty(), "{none}");
+    }
+
     #[test]
     fn choices_list_the_keys_they_take() {
         let items = [MenuItem {
@@ -620,7 +715,7 @@ mod tests {
     #[test]
     fn which_key_fits_side_by_side_on_a_wide_screen() {
         let screen = render(120, 30, |f, a| {
-            draw_which_key(f, a, Side::Right, Menu::Root, &[])
+            draw_which_key(f, a, Side::Right, Menu::Root, &[], None)
         });
         let row = screen
             .lines()
@@ -636,7 +731,7 @@ mod tests {
     #[test]
     fn which_key_stacks_on_a_narrow_screen() {
         let screen = render(40, 60, |f, a| {
-            draw_which_key(f, a, Side::Left, Menu::Root, &[])
+            draw_which_key(f, a, Side::Left, Menu::Root, &[], None)
         });
         let row = screen
             .lines()
@@ -649,10 +744,10 @@ mod tests {
     #[test]
     fn which_key_opens_on_the_chosen_side() {
         let left = render(120, 30, |f, a| {
-            draw_which_key(f, a, Side::Left, Menu::Root, &[])
+            draw_which_key(f, a, Side::Left, Menu::Root, &[], None)
         });
         let right = render(120, 30, |f, a| {
-            draw_which_key(f, a, Side::Right, Menu::Root, &[])
+            draw_which_key(f, a, Side::Right, Menu::Root, &[], None)
         });
         let corner = |screen: &str| {
             let row = screen.lines().find(|l| l.contains("⬢ Ctrl+B")).unwrap();
@@ -665,7 +760,7 @@ mod tests {
     #[test]
     fn which_key_shows_the_open_submenu() {
         let screen = render(120, 30, |f, a| {
-            draw_which_key(f, a, Side::Left, Menu::Floating, &[])
+            draw_which_key(f, a, Side::Left, Menu::Floating, &[], None)
         });
         assert!(screen.contains("next floating pane"));
         assert!(!screen.contains("split side by side"));
@@ -675,7 +770,7 @@ mod tests {
     fn commands_menu_lists_the_users_commands() {
         let commands = [('g', "lazygit".to_owned())];
         let screen = render(80, 20, |f, a| {
-            draw_which_key(f, a, Side::Left, Menu::Commands, &commands)
+            draw_which_key(f, a, Side::Left, Menu::Commands, &commands, None)
         });
         assert!(screen.contains("lazygit") && screen.contains("cancel"));
     }

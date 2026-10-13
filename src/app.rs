@@ -94,6 +94,9 @@ enum Mode {
     Normal,
     /// The prefix was pressed, the next key is a command in this menu.
     Prefix(Menu),
+    /// The which-key menu, its entries picked with the arrows: the menu
+    /// and the entry chosen, see `bindings::pick_keys`.
+    Pick(Menu, usize),
     /// A repeatable command just ran from this menu, its keys repeat without
     /// the prefix until the deadline.
     Repeat(Instant, Menu),
@@ -3471,9 +3474,26 @@ impl App {
 
         match self.mode {
             Mode::Prefix(menu) => {
+                // Enter, or ↑/↓ where they mean nothing else, picks from the
+                // which-key menu with the arrows.
+                let picks = self.config.which_key.enabled
+                    && matches!(key.code, KeyCode::Enter | KeyCode::Up | KeyCode::Down)
+                    && key.modifiers.is_empty()
+                    && bindings::lookup(menu, key).is_none();
+                let count = bindings::pick_keys(menu, &self.which_key_commands(menu)).len();
+                if picks && count > 0 {
+                    let at = if key.code == KeyCode::Up {
+                        count - 1
+                    } else {
+                        0
+                    };
+                    self.mode = Mode::Pick(menu, at);
+                    return Ok(());
+                }
                 self.mode = Mode::Normal;
                 self.command(menu, key)
             }
+            Mode::Pick(menu, at) => self.pick_key(menu, at, key),
             Mode::Help(scroll) => {
                 self.mode = match key.code {
                     KeyCode::Char('j') | KeyCode::Down => Mode::Help(scroll.saturating_add(1)),
@@ -3615,6 +3635,64 @@ impl App {
                 Ok(())
             }
         }
+    }
+
+    /// What the user's commands or the plugins add to the which-key menu
+    /// `menu`, as key and name.
+    fn which_key_commands(&self, menu: Menu) -> Vec<(char, String)> {
+        match menu {
+            Menu::Plugins => self
+                .plugins
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|p| {
+                    let main = p.key.map(|k| (k, p.title().to_owned()));
+                    let actions = p
+                        .actions
+                        .iter()
+                        .map(|a| (a.key, format!("{} › {}", p.title(), a.title)));
+                    main.into_iter().chain(actions)
+                })
+                .collect(),
+            _ => self
+                .config
+                .commands
+                .iter()
+                .map(|c| (c.key, c.name.clone()))
+                .collect(),
+        }
+    }
+
+    /// A key while the which-key menu is picked from with the arrows: ↑/↓
+    /// choose, Enter or → runs the entry (a submenu opens picked from too),
+    /// ← or Backspace goes back to the main menu, other keys work as ever.
+    fn pick_key(&mut self, menu: Menu, at: usize, key: KeyEvent) -> Result<()> {
+        let keys = bindings::pick_keys(menu, &self.which_key_commands(menu));
+        let count = keys.len().max(1);
+        match key.code {
+            KeyCode::Down => self.mode = Mode::Pick(menu, (at + 1) % count),
+            KeyCode::Up => self.mode = Mode::Pick(menu, (at + count - 1) % count),
+            KeyCode::Enter | KeyCode::Right => {
+                self.mode = Mode::Normal;
+                if let Some(&chosen) = keys.get(at) {
+                    self.command(menu, chosen)?;
+                    if let Mode::Prefix(submenu) = self.mode {
+                        self.mode = Mode::Pick(submenu, 0);
+                    }
+                }
+            }
+            KeyCode::Left | KeyCode::Backspace if menu != Menu::Root => {
+                self.mode = Mode::Pick(Menu::Root, 0);
+            }
+            KeyCode::Left => {}
+            KeyCode::Esc => self.mode = Mode::Normal,
+            _ => {
+                self.mode = Mode::Normal;
+                self.command(menu, key)?;
+            }
+        }
+        Ok(())
     }
 
     /// Runs the command bound to `key` after the prefix. Unbound keys just
@@ -8414,29 +8492,14 @@ impl App {
 
         match self.mode {
             Mode::Prefix(menu) if self.config.which_key.enabled => {
-                let commands: Vec<(char, String)> = match menu {
-                    Menu::Plugins => self
-                        .plugins
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .flat_map(|p| {
-                            let main = p.key.map(|k| (k, p.title().to_owned()));
-                            let actions = p
-                                .actions
-                                .iter()
-                                .map(|a| (a.key, format!("{} › {}", p.title(), a.title)));
-                            main.into_iter().chain(actions)
-                        })
-                        .collect(),
-                    _ => self
-                        .config
-                        .commands
-                        .iter()
-                        .map(|c| (c.key, c.name.clone()))
-                        .collect(),
-                };
-                menu::draw_which_key(frame, body, self.config.which_key.position, menu, &commands);
+                let commands = self.which_key_commands(menu);
+                let side = self.config.which_key.position;
+                menu::draw_which_key(frame, body, side, menu, &commands, None);
+            }
+            Mode::Pick(menu, at) => {
+                let commands = self.which_key_commands(menu);
+                let side = self.config.which_key.position;
+                menu::draw_which_key(frame, body, side, menu, &commands, Some(at));
             }
             Mode::Settings(selected) => menu::draw_settings(
                 frame,
@@ -9299,7 +9362,12 @@ impl App {
             .as_ref()
             .is_some_and(|p| matches!(p.purpose, PromptFor::Search { .. }));
         let (label, color, keys) = match self.mode {
-            Mode::Prefix(_) => ("PREFIX", t.accent, "? all keys · Esc cancel"),
+            Mode::Prefix(_) => ("PREFIX", t.accent, "? all keys · Enter pick · Esc cancel"),
+            Mode::Pick(..) => (
+                "PREFIX",
+                t.accent,
+                "↑↓ choose · Enter or → run · ← back · or the key · Esc cancel",
+            ),
             Mode::Menu(_) => (
                 "QUIT",
                 t.magenta,

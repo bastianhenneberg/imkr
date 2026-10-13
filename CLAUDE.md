@@ -337,6 +337,10 @@ Projekt-Slug: `imkr`
   Server) und `[[hooks]]` in der Config (`config::Hook`, `HOOK_EVENTS`, `hook_problems`):
   `App::check_hooks` vergleicht je Tick (`HookPanes`, erster Blick feuert nichts),
   `run_hooks` startet `sh -c` im Hintergrund, attach/detach direkt in `attach`/`detach`.
+- Which-Key mit Pfeilen: `Mode::Pick(menu, i)`, Einträge `bindings::pick_keys` (eigene Befehle/
+  Plugins zuerst, dann `pickable` Bindings je Gruppe: alle Tasten = derselbe Befehl), `App::pick_key`
+  führt die Taste per `command` aus; Hervorhebung `menu::picked` je Span (Spalten werden aus Spans
+  neu gebaut, Line-Style ginge verloren). Start mit Enter, ↑↓ nur wo im Menü unbelegt.
 - Tastenbelegung nach dem Prefix steht **nur** in `src/bindings.rs` (`BINDINGS`). Which-Key-Menü,
   Hilfe-Overlay und `imkr keys` lesen daraus, neue Befehle dort eintragen, nicht in `app.rs`.
 - Einstellungen: `src/config.rs` (serde/TOML, `SETTINGS`-Tabelle fürs Settings-Menü). Neue

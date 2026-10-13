@@ -254,6 +254,11 @@ pub struct Key {
 }
 
 impl Key {
+    /// The key as a terminal reports it.
+    pub fn event(&self) -> KeyEvent {
+        KeyEvent::new(self.code, self.mods)
+    }
+
     const fn plain(code: KeyCode) -> Self {
         Self {
             code,
@@ -1006,6 +1011,38 @@ pub fn lookup(menu: Menu, event: KeyEvent) -> Option<Command> {
         .flat_map(|binding| binding.keys)
         .find(|(key, _)| key.matches(event))
         .map(|&(_, command)| command)
+}
+
+/// Whether a binding is one thing to pick with the arrows in the which-key
+/// menu: all its keys do the same (not `1-9` or `←↑↓→`).
+pub fn pickable(binding: &Binding) -> bool {
+    binding
+        .keys
+        .first()
+        .is_some_and(|(_, first)| binding.keys.iter().all(|(_, c)| c == first))
+}
+
+/// The keys of what the which-key menu of `menu` lets pick with the arrows,
+/// in the order shown: `commands` (the user's or the plugins') first, then
+/// the menu's bindings group by group.
+pub fn pick_keys(menu: Menu, commands: &[(char, String)]) -> Vec<KeyEvent> {
+    let own = matches!(menu, Menu::Commands | Menu::Plugins);
+    let mut keys: Vec<KeyEvent> = if own {
+        commands
+            .iter()
+            .map(|(c, _)| KeyEvent::new(Char(*c), KeyModifiers::NONE))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for group in menu.groups() {
+        keys.extend(
+            in_group(*group)
+                .filter(|b| pickable(b))
+                .map(|b| b.keys[0].0.event()),
+        );
+    }
+    keys
 }
 
 pub fn in_group(group: Group) -> impl Iterator<Item = &'static Binding> {
