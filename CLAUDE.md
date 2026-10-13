@@ -250,6 +250,12 @@ Projekt-Slug: `imkr`
   Panes stehen überall hinter ihrem Window: `1 api › claude` (`window_name_of`).
   Listen gruppieren nach Rechner: `MenuItem::group` (Überschrift über dem ersten Eintrag jeder
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
+- Ruhezeit je Session: `SessionInfo::quiet_for` (aus `AgentInfo::since`, 0 bei working/blocked,
+  `None` ohne Agents), eigene Session `App::quiet_for`; `Ctrl+B S` zeigt „✓1 2h ago“, `o` blendet
+  alte aus (`hide_old`, `OLD_AFTER` 12 h, ruhend oder ohne Agents). Damit die Zeit Updates und
+  Neustarts übersteht: `SavedPane::idle_since` → `App::carried` (gilt bis zum ersten Idle, höchstens
+  `CARRIED_FOR`), übernommene Panes setzen `last_output` 60 s zurück (sonst kurz „working“), und
+  `Handover::unseen` hält ✦ done über ein Update.
 - Recap: `App::activity` (Zustandswechsel aus `update_agents`, max. 500), `away_since` (gesetzt in
   `take_client`, wenn der letzte Client geht), `attach` öffnet `Mode::Recap` nach ≥ 60 s mit
   Aktivität, `Ctrl+B s l` (`open_recap`) später. Test: abhängen, Fake-Agent starten, 66 s warten.

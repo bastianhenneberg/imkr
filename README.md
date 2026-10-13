@@ -517,6 +517,11 @@ every 20 seconds in `<session>.scrollback/` next to the file, readable by you on
 cannot survive a restart. Ending the session on purpose (`Ctrl+B Q`, `kill-server`, or
 exiting the last shell) deletes the file and keeps the layout in the hive `last`.
 
+`Ctrl+B S` says how long a session's agents have been quiet, e.g. `✓1 2d ago`, so an old one
+stands out among many; a session without agents shows neither time nor state. `o` hides the old
+ones (not running, no agents, or quiet for 12 hours) and shows them again. `imkr ls` gives the
+time too.
+
 Sessions that do not run are listed with `◌`, in `Ctrl+B S` as a group of their own after the
 running ones, in the sidebar and in `imkr ls`:
 *stopped* ones (the machine restarted, or the server crashed) and *closed* ones (ended on

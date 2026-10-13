@@ -49,6 +49,9 @@ pub struct Handover {
     #[serde(default)]
     pub popup_full: bool,
     pub focus_mode: bool,
+    /// Agents done whose pane was not looked at since: they stay done.
+    #[serde(default)]
+    pub unseen: Vec<PaneId>,
     pub saved: Saved,
     pub panes: BTreeMap<PaneId, HandoverPane>,
 }

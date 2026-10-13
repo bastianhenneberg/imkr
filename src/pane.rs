@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -224,6 +224,11 @@ impl Pane {
         let mut pane = Self::start(id, size, Box::new(master), child, &before, events)?;
         pane.reported = from.reported;
         pane.transcript = from.transcript.clone();
+        // What it wrote was read before the handover: the pane is not busy
+        // just because it was taken over.
+        if let Some(long_ago) = Instant::now().checked_sub(Duration::from_secs(60)) {
+            *pane.last_output.lock().unwrap() = long_ago;
+        }
         Ok(pane)
     }
 

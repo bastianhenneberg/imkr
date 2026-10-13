@@ -32,6 +32,10 @@ pub struct Saved {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SavedPane {
     pub cwd: Option<PathBuf>,
+    /// Since when its agent is idle, seconds since 1970, so it keeps its
+    /// age across updates and restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_since: Option<u64>,
     /// The agent running in the pane, if any.
     pub agent: Option<String>,
     /// The agent's session id, from its hooks.
@@ -593,6 +597,7 @@ mod tests {
                     session: Some("0b8a-42".into()),
                     name: Some("backend".into()),
                     command: None,
+                    idle_since: Some(1_790_000_000),
                 },
             ),
             (2, SavedPane::default()),

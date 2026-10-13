@@ -198,6 +198,19 @@ pub struct AgentInfo {
 }
 
 impl SessionInfo {
+    /// How long its agents have been quiet, in seconds: 0 while one works
+    /// or waits, `None` without agents.
+    pub fn quiet_for(&self) -> Option<u64> {
+        if self
+            .agent_panes
+            .iter()
+            .any(|a| a.state == "working" || a.state == "blocked")
+        {
+            return Some(0);
+        }
+        self.agent_panes.iter().map(|a| a.since).min()
+    }
+
     /// The state that needs attention most among its agents, and how many
     /// agents there are.
     pub fn urgent(&self) -> Option<(AgentState, usize)> {

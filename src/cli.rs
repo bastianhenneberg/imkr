@@ -107,6 +107,10 @@ pub fn ls(args: &[String]) -> Result<()> {
                 agents.push_str(&format!("  {} {count} {}", state.symbol(), state.name()));
             }
         }
+        if let Some(quiet) = info.quiet_for().filter(|&q| q >= 60) {
+            let ago = crate::sidebar::age(std::time::Duration::from_secs(quiet));
+            agents.push_str(&format!(" · {ago} ago"));
+        }
         println!(
             "{marker} {:<16} {} panes in {} windows{agents}",
             info.name, info.panes, info.windows

@@ -186,8 +186,15 @@ enum Spot {
 }
 
 /// A session in the session list before it becomes a line: where it is,
-/// the hint, its agents by state, and what it says when it does not run.
-type SessionEntry = (Place, String, BTreeMap<String, usize>, Option<String>);
+/// the hint, its agents by state, what it says when it does not run, and
+/// how long its agents are quiet (`App::quiet_for`).
+type SessionEntry = (
+    Place,
+    String,
+    BTreeMap<String, usize>,
+    Option<String>,
+    Option<u64>,
+);
 
 /// An agent in the agent list before it becomes a line: its state, how
 /// long, where it leads, its label, its session and its machine.
@@ -589,6 +596,13 @@ pub struct App {
     /// The machine list (`Mode::NewSessionWhere`) picks where a window
     /// runs, not a session.
     hosting: bool,
+    /// Since when agents were idle before an update or restart, seconds
+    /// since 1970, by pane, until they are idle again here, for at most
+    /// `CARRIED_FOR` (a resumed agent works a little first).
+    carried: HashMap<PaneId, u64>,
+    carried_until: Option<Instant>,
+    /// `Ctrl+B S` leaves out old sessions, see `OLD_AFTER`.
+    hide_old: bool,
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
@@ -743,6 +757,9 @@ impl App {
             active: None,
             taps: HashMap::new(),
             hosting: false,
+            carried: HashMap::new(),
+            carried_until: None,
+            hide_old: false,
             conns: HashMap::new(),
             next_client_id: 0,
             socket,
@@ -888,6 +905,7 @@ impl App {
                 return;
             }
         };
+        self.carry_idle(&saved);
 
         let template = saved.template.clone();
         let resume_commands = self.config.resume_commands();
@@ -974,12 +992,38 @@ impl App {
         true
     }
 
+    /// How long this session's agents have been quiet, in seconds: 0 while
+    /// one works or waits, `None` without agents.
+    fn quiet_for(&self) -> Option<u64> {
+        let mut quiet: Option<u64> = None;
+        for (state, since) in self.agents.values() {
+            let secs = match state {
+                AgentState::Working | AgentState::Blocked => 0,
+                _ => since.elapsed().as_secs(),
+            };
+            quiet = Some(quiet.map_or(secs, |q| q.min(secs)));
+        }
+        quiet
+    }
+
+    /// Keeps since when the agents of `saved` were idle, see `carried`.
+    fn carry_idle(&mut self, saved: &Saved) {
+        self.carried = saved
+            .panes
+            .iter()
+            .filter_map(|(&id, pane)| Some((id, pane.idle_since?)))
+            .collect();
+        self.carried_until = Some(Instant::now() + CARRIED_FOR);
+    }
+
     /// Takes over from the server before `imkr update`: its panes with
     /// their processes and screens, its layout and its attached client.
     fn adopt(&mut self, handover: Handover) {
         self.screen = Rect::new(0, 0, handover.screen.0, handover.screen.1);
         self.focus_mode = handover.focus_mode;
+        self.unseen.extend(handover.unseen.iter().copied());
         let saved = handover.saved;
+        self.carry_idle(&saved);
         let mut handed = handover.panes;
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
@@ -1105,6 +1149,7 @@ impl App {
             popup: self.popup.clone().map(|name| (name, self.popup_shown)),
             popup_full: self.popup_full,
             focus_mode: self.focus_mode,
+            unseen: self.unseen.iter().copied().collect(),
             saved: self.saved(),
             panes,
         };
@@ -1130,6 +1175,11 @@ impl App {
                     session: pane.session.clone(),
                     name: pane.name.clone(),
                     command: hosted_command(&argv),
+                    idle_since: self
+                        .agents
+                        .get(&id)
+                        .filter(|(state, _)| *state == AgentState::Idle)
+                        .map(|(_, since)| unix_now().saturating_sub(since.elapsed().as_secs())),
                 };
                 (id, saved)
             })
@@ -2735,6 +2785,10 @@ impl App {
             pane.refresh_meta();
         }
         let now = Instant::now();
+        if self.carried_until.is_some_and(|until| now > until) {
+            self.carried.clear();
+            self.carried_until = None;
+        }
         let mut seen = HashMap::new();
         for (&id, pane) in &self.panes {
             let Some(state) = pane.agent_state() else {
@@ -2742,6 +2796,13 @@ impl App {
             };
             let since = match self.agents.get(&id) {
                 Some(&(old, since)) if old == state => since,
+                // Idle before an update or restart: since then.
+                _ if state == AgentState::Idle
+                    && let Some(at) = self.carried.remove(&id) =>
+                {
+                    now.checked_sub(Duration::from_secs(unix_now().saturating_sub(at)))
+                        .unwrap_or(now)
+                }
                 _ => now,
             };
             seen.insert(id, (state, since));
@@ -4439,12 +4500,19 @@ impl App {
                 .map(|s| s.agents.clone())
                 .unwrap_or_default()
         };
+        let quiet_of = |infos: &[protocol::SessionInfo], name: &str| {
+            infos
+                .iter()
+                .find(|s| s.name == name)
+                .and_then(protocol::SessionInfo::quiet_for)
+        };
         let mut own = BTreeMap::new();
         for &id in self.panes.keys() {
             if let Some(state) = self.shown_state(id) {
                 *own.entry(state.name().to_owned()).or_insert(0) += 1;
             }
         }
+        let own_quiet = self.quiet_for();
         // This machine's sessions carry its name if the user is not at it.
         let here_label = self.machine_label(None);
         for name in here {
@@ -4460,7 +4528,12 @@ impl App {
                 agents_of(&places.local, &name)
             };
             let dormant = dormant_of(&places.local, &name);
-            entries.push((Place { host: None, name }, hint, agents, dormant));
+            let quiet = if name == current {
+                own_quiet
+            } else {
+                quiet_of(&places.local, &name)
+            };
+            entries.push((Place { host: None, name }, hint, agents, dormant, quiet));
         }
         // The machine the active client sits at, to go back to.
         if let Some(origin) = self.origin.clone() {
@@ -4471,7 +4544,8 @@ impl App {
                 };
                 let agents = agents_of(&origin.infos, &place.name);
                 let dormant = dormant_of(&origin.infos, &place.name);
-                entries.push((place, format!("⌂ {}", origin.host), agents, dormant));
+                let quiet = quiet_of(&origin.infos, &place.name);
+                entries.push((place, format!("⌂ {}", origin.host), agents, dormant, quiet));
             }
         }
         for (host, sessions) in &self.known_hosts() {
@@ -4481,13 +4555,32 @@ impl App {
                     name: session.name.clone(),
                 };
                 let dormant = dormant_of(std::slice::from_ref(session), &session.name);
-                entries.push((place, format!("⇄ {host}"), session.agents.clone(), dormant));
+                entries.push((
+                    place,
+                    format!("⇄ {host}"),
+                    session.agents.clone(),
+                    dormant,
+                    session.quiet_for(),
+                ));
             }
+        }
+        // Old: not running, without agents, or with agents quiet for long.
+        let old: Vec<Place> = entries
+            .iter()
+            .filter(|(place, _, _, dormant, quiet)| {
+                let current = place.host.is_none() && place.name == current;
+                !current && (dormant.is_some() || quiet.is_none_or(|q| q >= OLD_AFTER))
+            })
+            .map(|(place, ..)| place.clone())
+            .collect();
+        let hidden = if self.hide_old { old.len() } else { 0 };
+        if self.hide_old {
+            entries.retain(|(place, ..)| !old.contains(place));
         }
         let (places, items): (Vec<Place>, Vec<menu::MenuItem>) = entries
             .into_iter()
             .enumerate()
-            .map(|(i, (place, hint, agents, dormant))| {
+            .map(|(i, (place, hint, agents, dormant, quiet))| {
                 if let Some(dormant) = dormant {
                     let hint = if hint.is_empty() {
                         format!("{dormant} · Enter brings it back")
@@ -4524,10 +4617,16 @@ impl App {
                     (n > 0).then(|| format!("{}{n}", state.symbol()))
                 })
                 .collect();
+                // How long its agents have been quiet: "✓1 2h ago".
+                let mut counts = counts.join(" ");
+                if let Some(quiet) = quiet.filter(|&q| q >= 60) {
+                    let ago = sidebar::age(Duration::from_secs(quiet));
+                    counts = format!("{counts} {ago} ago");
+                }
                 let hint = match (counts.is_empty(), hint.is_empty()) {
                     (true, _) => hint,
-                    (false, true) => counts.join(" "),
-                    (false, false) => format!("{} · {hint}", counts.join(" ")),
+                    (false, true) => counts,
+                    (false, false) => format!("{counts} · {hint}"),
                 };
                 let item = menu::MenuItem {
                     key: if i < 9 {
@@ -4577,6 +4676,17 @@ impl App {
                 (place, item)
             })
             .unzip();
+        if hidden > 0 {
+            items.push(menu::MenuItem {
+                key: 'o',
+                title: format!("{hidden} old hidden"),
+                hint: "not running, no agents, or quiet for 12h".into(),
+                danger: false,
+                apart: true,
+                color: Some(theme::current().muted),
+                group: None,
+            });
+        }
         items.push(menu::MenuItem {
             key: 'n',
             title: "new session…".into(),
@@ -5870,6 +5980,11 @@ impl App {
             }
             KeyCode::Enter => selected,
             KeyCode::Char('n') => names.len(),
+            KeyCode::Char('o') => {
+                self.hide_old = !self.hide_old;
+                self.mode = Mode::Sessions(0);
+                return;
+            }
             KeyCode::Char('x') => {
                 if let Some(name) = names.get(selected).filter(|n| !n.is_empty()) {
                     let place = Place {
@@ -9041,7 +9156,7 @@ impl App {
             Mode::Sessions(_) => (
                 "SESSIONS",
                 t.magenta,
-                "↑↓ choose · Enter switch · n new · x end · r rename · s save all as hive · h hives · Esc cancel",
+                "↑↓ choose · Enter switch · n new · x end · r rename · o old · s save as hive · h hives · Esc",
             ),
             Mode::Hives(_) => (
                 "HIVES",
@@ -9602,6 +9717,11 @@ fn find_in_rows(
 
 /// Names are cut to this many characters.
 const MAX_NAME: usize = 32;
+/// A session whose agents are quiet this long is old, in seconds.
+const OLD_AFTER: u64 = 12 * 3600;
+/// How long agents may take after an update or restart to be idle again
+/// and keep how long they were before, see `App::carried`.
+const CARRIED_FOR: Duration = Duration::from_secs(120);
 /// The longest directory typed in a prompt.
 const MAX_PATH: usize = 400;
 
