@@ -515,7 +515,7 @@ tailnet or NetBird network, `http://<address>:4657` is all it takes. In the home
 
 ```bash
 imkr web                 # serve; prints the address, and a code if no device is paired yet
-imkr web pair            # a code to pair another device, good for ten minutes and five tries
+imkr web pair            # a QR code and code to pair another device, ten minutes, five tries
 imkr web devices         # the paired devices
 imkr web forget phone    # unpair one (or `all`)
 ```

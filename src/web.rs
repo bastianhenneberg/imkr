@@ -54,8 +54,10 @@ pub fn main(args: &[String]) -> Result<()> {
         ["pair"] => {
             let addr = listen_addr(None)?;
             let code = new_code()?;
+            let url = pair_url(addr, &code);
+            print_qr(&url);
             println!("Pairing code: {code} (good for {} minutes)", PAIR_FOR / 60);
-            println!("Open on the device: {}", pair_url(addr, &code));
+            println!("Open on the device: {url}");
             Ok(())
         }
         ["devices"] => {
@@ -135,6 +137,45 @@ pub fn vpn_address() -> Option<IpAddr> {
     found
 }
 
+/// Shows `text` as a QR code for a phone's camera, if this is a terminal:
+/// two rows of modules per line, in black and white of their own so that
+/// the terminal's colors do not invert it.
+fn print_qr(text: &str) {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() {
+        return;
+    }
+    for line in qr_lines(text).unwrap_or_default() {
+        println!("{line}");
+    }
+}
+
+fn qr_lines(text: &str) -> Option<Vec<String>> {
+    // A quiet zone of two modules all around.
+    const QUIET: usize = 2;
+    let code = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::L).ok()?;
+    let width = code.width();
+    let colors = code.to_colors();
+    let size = width + 2 * QUIET;
+    let dark = |x: usize, y: usize| {
+        (QUIET..QUIET + width).contains(&x)
+            && (QUIET..QUIET + width).contains(&y)
+            && colors[(y - QUIET) * width + (x - QUIET)] == qrcode::Color::Dark
+    };
+    let mut lines = Vec::new();
+    for y in (0..size).step_by(2) {
+        let mut line = String::new();
+        for x in 0..size {
+            let fg = if dark(x, y) { 30 } else { 97 };
+            let bg = if dark(x, y + 1) { 40 } else { 107 };
+            line.push_str(&format!("\x1b[{fg};{bg}m▀"));
+        }
+        line.push_str("\x1b[0m");
+        lines.push(line);
+    }
+    Some(lines)
+}
+
 fn url(addr: SocketAddr) -> String {
     format!("http://{addr}/")
 }
@@ -164,10 +205,9 @@ fn serve(asked: Option<&str>, background: bool) -> Result<()> {
         }
         if load_devices().is_empty() {
             let code = new_code()?;
-            println!(
-                "No device paired yet. Code: {code}, or open {}",
-                pair_url(addr, &code)
-            );
+            let url = pair_url(addr, &code);
+            print_qr(&url);
+            println!("No device paired yet. Code: {code}, or open {url}");
         } else {
             println!("`imkr web pair` pairs another device.");
         }
@@ -863,6 +903,17 @@ mod tests {
         assert_eq!(q["x"], "a b");
         assert_eq!(q["bad"], "%zz");
         assert_eq!(q["end"], "%4");
+    }
+
+    #[test]
+    fn qr_codes_are_square_and_framed() {
+        let lines = qr_lines("http://100.97.56.232:4657/pair?code=ABCD-EFGH").unwrap();
+        let cells = |line: &str| line.matches('▀').count();
+        let width = cells(&lines[0]);
+        // Two rows per line, and a light frame around the code.
+        assert_eq!(lines.len(), width.div_ceil(2));
+        assert!(lines.iter().all(|l| cells(l) == width));
+        assert!(lines[0].starts_with("\x1b[97;107m▀"));
     }
 
     #[test]
