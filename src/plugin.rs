@@ -9,6 +9,15 @@
 //! status = "peppermint-tui status" # lines for the sidebar, optional
 //! interval = 30                    # seconds between them
 //! mode = "popup"                   # or "fullscreen"
+//!
+//! [[actions]]                      # more commands in Ctrl+B p, optional
+//! key = "d"
+//! title = "Deploy"
+//! run = "peppermint-tui deploy"    # in the background, or `popup = true`
+//!
+//! [[hooks]]                        # as in the config, optional
+//! on = "done"
+//! run = "peppermint-tui notify"
 //! ```
 //!
 //! A plugin is a program like any other, so it can be written in any
@@ -59,6 +68,26 @@ pub struct Plugin {
     /// `false` keeps the file but leaves the plugin out.
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// More commands of the plugin, on keys of their own in `Ctrl+B p`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<Action>,
+    /// Commands run when something happens, as `[[hooks]]` in the config.
+    /// Only where the plugin's file is, not where it was brought along to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<crate::config::Hook>,
+}
+
+/// A command of a plugin besides its main one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Action {
+    pub key: char,
+    pub title: String,
+    /// Run with `sh -c`, with `IMKR_PLUGIN` set to the plugin's name.
+    pub run: String,
+    /// In a popup of its own, to watch it, instead of in the background.
+    #[serde(default)]
+    pub popup: bool,
 }
 
 fn default_interval() -> u64 {
@@ -229,6 +258,19 @@ mod tests {
         assert_eq!(broken.len(), 1);
         assert_eq!(broken[0].name, "broken");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plugins_bring_actions_and_hooks() {
+        let plugin: Plugin = toml::from_str(
+            "command = \"tui\"\n\n[[actions]]\nkey = \"d\"\ntitle = \"Deploy\"\nrun = \"tui deploy\"\n\n[[hooks]]\non = \"done\"\nrun = \"tui notify\"\n",
+        )
+        .unwrap();
+        assert_eq!(plugin.actions[0].key, 'd');
+        assert!(!plugin.actions[0].popup);
+        assert_eq!(plugin.hooks[0].on, "done");
+        // A typo is an error, not a plugin that silently does less.
+        assert!(toml::from_str::<Plugin>("command = \"x\"\n[[actions]]\nkey = \"d\"\ntitle = \"D\"\nrun = \"y\"\npopop = true\n").is_err());
     }
 
     #[test]

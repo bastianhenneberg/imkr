@@ -78,6 +78,8 @@ Projekt-Slug: `imkr`
   mit 10 s Zeitlimit laufen lässt), `run_plugin` = Popup mit Namen des Plugins. Menü `Ctrl+B p`
   wie `Ctrl+B c` (Tasten aus den Dateien). Sidebar „Plugins“: `popup_entries`/`popup_rows`
   (alle Plugins, dann Hand-Popups, kaputte zuletzt). Test: Plugins neben `IMKR_CONFIG`.
+  Plugin-`[[actions]]` (`plugin::Action`, Taste in `Ctrl+B p`, `App::run_plugin_action`: Popup oder
+  Hintergrund mit Meldung per `Request::Flash`) und `[[hooks]]` (in `run_hooks`, nur ohne `from`).
   Plugins folgen dem Operator: `Origin::plugins`, `merge_plugins` (eigene gewinnen, fremde mit
   `from`), `Plugin::installed` vor dem Start. Fake-Welt des Servers: Config in `rconf/`, sonst
   teilen sich beide Welten den Plugin-Ordner.

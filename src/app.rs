@@ -1447,7 +1447,13 @@ impl App {
     /// Runs the hooks of what changed since the last look: agent states,
     /// panes opened and closed, the window shown.
     fn check_hooks(&mut self) {
-        if self.config.hooks.is_empty() {
+        let plugin_hooks = self
+            .plugins
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|p| p.from.is_none() && !p.hooks.is_empty());
+        if self.config.hooks.is_empty() && !plugin_hooks {
             self.hook_seen = None;
             return;
         }
@@ -1507,7 +1513,18 @@ impl App {
     /// Starts the hooks `on` `event` in the background, unseen, with `env`.
     fn run_hooks(&self, event: &str, env: Vec<(&str, String)>) {
         use std::os::unix::process::CommandExt;
-        for hook in self.config.hooks.iter().filter(|hook| hook.on == event) {
+        let plugins = self.plugins.lock().unwrap().clone();
+        let from_plugins = plugins
+            .iter()
+            .filter(|p| p.from.is_none())
+            .flat_map(|p| p.hooks.iter());
+        for hook in self
+            .config
+            .hooks
+            .iter()
+            .chain(from_plugins)
+            .filter(|hook| hook.on == event)
+        {
             let mut command = std::process::Command::new("sh");
             command
                 .arg("-c")
@@ -3161,15 +3178,14 @@ impl App {
                 match menu {
                     Menu::Commands => self.run_user_command(c),
                     Menu::Plugins => {
-                        let plugin = self
-                            .plugins
-                            .lock()
-                            .unwrap()
+                        let plugins = self.plugins.lock().unwrap().clone();
+                        if let Some(plugin) = plugins.iter().find(|p| p.key == Some(c)) {
+                            self.run_plugin(plugin);
+                        } else if let Some((plugin, action)) = plugins
                             .iter()
-                            .find(|p| p.key == Some(c))
-                            .cloned();
-                        if let Some(plugin) = plugin {
-                            self.run_plugin(&plugin);
+                            .find_map(|p| p.actions.iter().find(|a| a.key == c).map(|a| (p, a)))
+                        {
+                            self.run_plugin_action(plugin, action);
                         }
                     }
                     _ => {}
@@ -7242,6 +7258,57 @@ impl App {
         }
     }
 
+    /// Runs an action of `plugin`: in a popup of its own, or in the
+    /// background with what it did said in the control bar.
+    fn run_plugin_action(
+        &mut self,
+        plugin: &crate::plugin::Plugin,
+        action: &crate::plugin::Action,
+    ) {
+        let title = format!("{} › {}", plugin.title(), action.title);
+        if action.popup {
+            let name = format!("{}-{}", plugin.name, action.key);
+            let command = vec!["sh".to_owned(), "-c".to_owned(), action.run.clone()];
+            if let Err(e) = self.toggle_popup(&name, Some(title), &command, None) {
+                self.flash = Some(format!("{}: {e:#}", plugin.name));
+            }
+            return;
+        }
+        let spawned = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&action.run)
+            .env("IMKR_PLUGIN", &plugin.name)
+            .env("IMKR_SOCKET", &self.socket)
+            .current_dir(self.focused_cwd().unwrap_or_else(|| PathBuf::from("/")))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+        let events = self.socket.clone();
+        match spawned {
+            Ok(child) => {
+                self.flash = Some(format!("{title} …"));
+                // Says when it is done, or why it failed.
+                thread::spawn(move || {
+                    let Ok(output) = child.wait_with_output() else {
+                        return;
+                    };
+                    let text = if output.status.success() {
+                        format!("{title} done")
+                    } else {
+                        let why = String::from_utf8_lossy(&output.stderr);
+                        format!(
+                            "{title} failed: {}",
+                            why.lines().last().unwrap_or("").trim()
+                        )
+                    };
+                    let _ = crate::client::request_at(&events, Request::Flash { text });
+                });
+            }
+            Err(e) => self.flash = Some(format!("{title}: {e}")),
+        }
+    }
+
     /// What the sidebar lists under plugins: every plugin, running or not,
     /// then the popups opened by hand. Names, with the plugin if it is one.
     fn popup_entries(&self) -> Vec<(String, Option<crate::plugin::Plugin>)> {
@@ -7593,7 +7660,14 @@ impl App {
                         .lock()
                         .unwrap()
                         .iter()
-                        .filter_map(|p| Some((p.key?, p.title().to_owned())))
+                        .flat_map(|p| {
+                            let main = p.key.map(|k| (k, p.title().to_owned()));
+                            let actions = p
+                                .actions
+                                .iter()
+                                .map(|a| (a.key, format!("{} › {}", p.title(), a.title)));
+                            main.into_iter().chain(actions)
+                        })
                         .collect(),
                     _ => self
                         .config
