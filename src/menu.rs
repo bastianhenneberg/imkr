@@ -678,6 +678,16 @@ mod tests {
             crossterm::event::KeyCode::Left,
             crossterm::event::KeyModifiers::NONE
         )));
+        // ←/→ to the column beside at the same height, round, skipping
+        // columns with nothing to pick; a shorter one takes its last entry.
+        use crate::bindings::pick_beside;
+        let columns = [3, 0, 2, 4];
+        assert_eq!(pick_beside(&columns, 1, 1), 4);
+        assert_eq!(pick_beside(&columns, 2, 1), 4);
+        assert_eq!(pick_beside(&columns, 4, 1), 6);
+        assert_eq!(pick_beside(&columns, 6, 1), 1);
+        assert_eq!(pick_beside(&columns, 0, -1), 5);
+        assert_eq!(pick_beside(&[5], 3, 1), 3);
         let none = reversed(120, 40, |f, a| {
             draw_which_key(f, a, Side::Left, Menu::Root, &[], None)
         });

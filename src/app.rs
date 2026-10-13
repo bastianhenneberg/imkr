@@ -3665,15 +3665,22 @@ impl App {
     }
 
     /// A key while the which-key menu is picked from with the arrows: ↑/↓
-    /// choose, Enter or → runs the entry (a submenu opens picked from too),
-    /// ← or Backspace goes back to the main menu, other keys work as ever.
+    /// choose in a column, ←/→ the column beside, Enter or Space runs the
+    /// entry (a submenu opens picked from too), Backspace goes back to the
+    /// main menu, other keys work as ever.
     fn pick_key(&mut self, menu: Menu, at: usize, key: KeyEvent) -> Result<()> {
-        let keys = bindings::pick_keys(menu, &self.which_key_commands(menu));
+        let commands = self.which_key_commands(menu);
+        let keys = bindings::pick_keys(menu, &commands);
         let count = keys.len().max(1);
         match key.code {
             KeyCode::Down => self.mode = Mode::Pick(menu, (at + 1) % count),
             KeyCode::Up => self.mode = Mode::Pick(menu, (at + count - 1) % count),
-            KeyCode::Enter | KeyCode::Right => {
+            KeyCode::Left | KeyCode::Right => {
+                let columns = bindings::pick_columns(menu, &commands);
+                let step = if key.code == KeyCode::Left { -1 } else { 1 };
+                self.mode = Mode::Pick(menu, bindings::pick_beside(&columns, at, step));
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 self.mode = Mode::Normal;
                 if let Some(&chosen) = keys.get(at) {
                     self.command(menu, chosen)?;
@@ -3682,10 +3689,8 @@ impl App {
                     }
                 }
             }
-            KeyCode::Left | KeyCode::Backspace if menu != Menu::Root => {
-                self.mode = Mode::Pick(Menu::Root, 0);
-            }
-            KeyCode::Left => {}
+            KeyCode::Backspace if menu != Menu::Root => self.mode = Mode::Pick(Menu::Root, 0),
+            KeyCode::Backspace => {}
             KeyCode::Esc => self.mode = Mode::Normal,
             _ => {
                 self.mode = Mode::Normal;
@@ -9366,7 +9371,7 @@ impl App {
             Mode::Pick(..) => (
                 "PREFIX",
                 t.accent,
-                "↑↓ choose · Enter or → run · ← back · or the key · Esc cancel",
+                "↑↓←→ choose · Enter or Space run · ⌫ back · or the key · Esc cancel",
             ),
             Mode::Menu(_) => (
                 "QUIT",

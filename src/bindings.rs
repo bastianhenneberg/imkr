@@ -1045,6 +1045,52 @@ pub fn pick_keys(menu: Menu, commands: &[(char, String)]) -> Vec<KeyEvent> {
     keys
 }
 
+/// How many of `pick_keys` each column of the which-key menu holds, in
+/// order: a group each, the user's commands or plugins with their group.
+pub fn pick_columns(menu: Menu, commands: &[(char, String)]) -> Vec<usize> {
+    let mut columns: Vec<usize> = menu
+        .groups()
+        .iter()
+        .map(|g| in_group(*g).filter(|b| pickable(b)).count())
+        .collect();
+    if matches!(menu, Menu::Commands | Menu::Plugins)
+        && let Some(first) = columns.first_mut()
+    {
+        *first += commands.len();
+    }
+    columns
+}
+
+/// Where `at` of `pick_keys` lands one column to the side (`step` -1 or
+/// 1, round), at the same height or the column's last entry.
+pub fn pick_beside(columns: &[usize], at: usize, step: isize) -> usize {
+    let starts: Vec<usize> = columns
+        .iter()
+        .scan(0, |sum, n| {
+            let start = *sum;
+            *sum += n;
+            Some(start)
+        })
+        .collect();
+    let Some(column) = (0..columns.len())
+        .rev()
+        .find(|&c| columns[c] > 0 && starts[c] <= at)
+    else {
+        return at;
+    };
+    let row = at - starts[column];
+    let count = columns.len() as isize;
+    let mut next = column as isize;
+    for _ in 0..columns.len() {
+        next = (next + step).rem_euclid(count);
+        if columns[next as usize] > 0 {
+            break;
+        }
+    }
+    let next = next as usize;
+    starts[next] + row.min(columns[next] - 1)
+}
+
 pub fn in_group(group: Group) -> impl Iterator<Item = &'static Binding> {
     BINDINGS
         .iter()
