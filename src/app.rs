@@ -4186,7 +4186,7 @@ impl App {
             mode,
             encoding,
         ) else {
-            return Ok(mode != vt100::MouseProtocolMode::None);
+            return Ok(mode != crate::term::MouseProtocolMode::None);
         };
         pane.write(&bytes)?;
         Ok(true)

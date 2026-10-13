@@ -13,7 +13,12 @@ Projekt-Slug: `imkr`
   (Events gehen per Socket vom Client zum Server). Version muss zu der von ratatui passen,
   sonst gibt es zwei crossterm-Versionen: `cargo tree -d | grep crossterm` prüft das.
 - PTY: `portable-pty`
-- VT-Emulation: `vt100` (später evtl. `alacritty_terminal`)
+- VT-Emulation: `alacritty_terminal` hinter `src/term.rs` (`term::Parser` mit der Methoden-Oberfläche,
+  die vorher vt100 hatte: `process`, `screen()`, `cell`, `contents_between`, `scrollback`, `abs_row`,
+  `state_formatted` fürs Live-Update). Umbruch beim Verkleinern/Vergrößern macht `set_size`;
+  Antworten an das Programm (Cursor-Position, Farben, Größe) sammelt `answers()`, der Pane-Reader
+  schreibt sie über ein `dup` des Masters zurück. Gemessen 3,7× schneller als vt100 bei vollem
+  Verlauf, Pane-Ausgabe schneller als tmux.
 
 ## Architektur
 
@@ -176,8 +181,8 @@ Projekt-Slug: `imkr`
   Test: Binary zweimal ins Scratchpad kopieren (hm1/hm2), mit hm1 starten, `hm2 update`, PIDs vergleichen.
 - Event-Schleife: Rendern bei reiner Programmausgabe höchstens alle `FRAME` (8 ms), Eingaben
   (`is_input`) sofort; Agents/Hooks/Git/Dateien/Speichern höchstens alle `UPKEEP` (100 ms) oder
-  nach Eingabe/Tick. Vorher ~1000 Frames/s bei Dauerausgabe. Rest liegt im pty-reader (vt100,
-  teuer bei vollem Verlauf); Benchmark: `cargo test --release reading_costs -- --ignored --nocapture`.
+  nach Eingabe/Tick. Vorher ~1000 Frames/s bei Dauerausgabe. Rest liegt im pty-reader (seit
+  alacritty_terminal deutlich weniger); Benchmark: `cargo test --release reading_costs -- --ignored --nocapture`.
   Messen: CPU je Thread aus `/proc/<server>/task/*/stat`.
 - Persistenz: `src/persist.rs`, Datei `~/.local/state/imkr/session.json` (mit `IMKR_SOCKET`
   daneben als `<socket>.state.json`, mit `IMKR_STATE` frei wählbar). Gespeichert höchstens 1×/s
@@ -194,7 +199,7 @@ Projekt-Slug: `imkr`
   aktuell: `~/.local/state/omarchy/current/`), `src/theme.rs`. Test des Live-Folgens mit falschem
   `HOME` samt nachgebautem `.local/state/omarchy/current`.
 - Bilder (kitty graphics): `src/graphics.rs` (Scanner, Command, PaneGraphics), im Pane-Reader
-  vor vt100 abgefangen, `App::image_output` platziert nach jedem Frame. Test ohne Grafik-Terminal:
+  vor dem Terminal abgefangen, `App::image_output` platziert nach jedem Frame. Test ohne Grafik-Terminal:
   Client unter `script -qfc 'env IMKR_GRAPHICS=1 imkr' raw.txt` in tmux starten und die
   APC-Sequenzen in `raw.txt` prüfen; Testprogramm mit echter PNG über Python (zlib/struct).
 - Suche `Ctrl+B /`: der Pane-Picker mit `Picker::global`; `App::found` sammelt `Found` (Art, Text,

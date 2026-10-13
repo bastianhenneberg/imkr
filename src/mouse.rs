@@ -1,8 +1,8 @@
 //! Encodes mouse events for programs in a pane that asked for them, the way
 //! xterm would send them.
 
+use crate::term::{MouseProtocolEncoding, MouseProtocolMode};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
-use vt100::{MouseProtocolEncoding, MouseProtocolMode};
 
 /// The bytes for a mouse event at `col`, `row` (0-based, inside the pane),
 /// or `None` if the program did not ask for this kind of event.
@@ -18,12 +18,7 @@ pub fn encode(
 
     let (mut code, release) = match kind {
         MouseEventKind::Down(button) => (button_code(button), false),
-        MouseEventKind::Up(button) => {
-            if mode == M::Press {
-                return None;
-            }
-            (button_code(button), true)
-        }
+        MouseEventKind::Up(button) => (button_code(button), true),
         MouseEventKind::Drag(button) => {
             if !matches!(mode, M::ButtonMotion | M::AnyMotion) {
                 return None;
@@ -141,17 +136,6 @@ mod tests {
                 0,
                 0,
                 MouseProtocolMode::ButtonMotion,
-                enc
-            ),
-            None
-        );
-        assert_eq!(
-            encode(
-                MouseEventKind::Up(MouseButton::Left),
-                NONE,
-                0,
-                0,
-                MouseProtocolMode::Press,
                 enc
             ),
             None

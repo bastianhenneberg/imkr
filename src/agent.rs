@@ -214,12 +214,12 @@ const QUESTIONS: &[&str] = &[
 
 /// Whether the last lines written show a question: the bottom of the
 /// screen, or above the empty rows of a screen not yet full.
-pub fn asks_question(screen: &vt100::Screen) -> bool {
+pub fn asks_question(screen: &crate::term::Parser) -> bool {
     question_phrase(screen).is_some()
 }
 
 /// The phrase that makes `asks_question` see a question, if one does.
-pub fn question_phrase(screen: &vt100::Screen) -> Option<String> {
+pub fn question_phrase(screen: &crate::term::Parser) -> Option<String> {
     let (_, cols) = screen.size();
     let last = last_row(screen);
     let text = screen.contents_between(last.saturating_sub(14), 0, last, cols);
@@ -235,7 +235,7 @@ pub fn question_phrase(screen: &vt100::Screen) -> Option<String> {
 }
 
 /// The last row of the screen with text on it.
-fn last_row(screen: &vt100::Screen) -> u16 {
+fn last_row(screen: &crate::term::Parser) -> u16 {
     let (rows, cols) = screen.size();
     screen
         .rows(0, cols)
@@ -250,7 +250,7 @@ fn last_row(screen: &vt100::Screen) -> u16 {
 /// The last `max` lines with text at the bottom of the screen, without
 /// the frames agents draw around them: what a waiting agent asks, or what
 /// a finished one said last.
-pub fn tail(screen: &vt100::Screen, max: usize) -> String {
+pub fn tail(screen: &crate::term::Parser, max: usize) -> String {
     let (_, cols) = screen.size();
     let last = last_row(screen);
     let text = screen.contents_between(last.saturating_sub(29), 0, last, cols);
@@ -299,8 +299,8 @@ mod tests {
         args.iter().map(|s| s.to_string()).collect()
     }
 
-    fn screen(text: &str) -> vt100::Parser {
-        let mut parser = vt100::Parser::new(10, 60, 0);
+    fn screen(text: &str) -> crate::term::Parser {
+        let mut parser = crate::term::Parser::new(10, 60, 0);
         parser.process(text.as_bytes());
         parser
     }
@@ -357,7 +357,7 @@ mod tests {
         assert!(asks_question(asking.screen()));
         assert!(!asks_question(screen("Here is the plan.\r\n> ").screen()));
         // A question on a screen not yet full, above its empty rows.
-        let mut tall = vt100::Parser::new(40, 80, 0);
+        let mut tall = crate::term::Parser::new(40, 80, 0);
         tall.process(b"Edit main.rs\r\nDo you want to proceed?\r\n 1. Yes\r\n");
         assert!(asks_question(tall.screen()));
     }

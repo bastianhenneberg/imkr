@@ -3,7 +3,7 @@
 //! client's terminal.
 //!
 //! A command is an APC string: `ESC _ G <key=value,...> ; <base64> ESC \`.
-//! vt100 drops these, so the pane's reader takes them out of the stream
+//! The terminal drops these, so the pane's reader takes them out of the stream
 //! first, noting where the cursor was.
 
 use std::collections::HashMap;
@@ -279,7 +279,7 @@ const KEEP_IMAGES: usize = 32;
 #[derive(Default)]
 pub struct PaneGraphics {
     /// Whether the attached client shows images. Without that, commands
-    /// are dropped, as vt100 would.
+    /// are dropped, as the terminal would.
     pub enabled: bool,
     /// The size of a cell in pixels on the client's terminal.
     pub cell: (u16, u16),

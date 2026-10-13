@@ -1,4 +1,4 @@
-//! Draws a vt100 screen into a ratatui buffer.
+//! Draws a pane's terminal (`term::Parser`) into a ratatui buffer.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -6,14 +6,14 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
 pub struct ScreenView<'a> {
-    screen: &'a vt100::Screen,
+    screen: &'a crate::term::Parser,
     /// Highlighted cells from start to end inclusive, as (row, column) in
     /// view coordinates. Rows may lie outside the view.
     selection: Option<((i64, u16), (i64, u16))>,
 }
 
 impl<'a> ScreenView<'a> {
-    pub fn new(screen: &'a vt100::Screen) -> Self {
+    pub fn new(screen: &'a crate::term::Parser) -> Self {
         Self {
             screen,
             selection: None,
@@ -59,11 +59,11 @@ impl Widget for ScreenView<'_> {
                 }
                 let target = &mut buf[(area.x + col, area.y + row)];
                 if cell.has_contents() {
-                    target.set_symbol(cell.contents());
+                    target.set_symbol(&cell.contents());
                 } else {
                     target.set_symbol(" ");
                 }
-                let mut style = cell_style(cell);
+                let mut style = cell_style(&cell);
                 if self.selected(row, col) {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
@@ -73,7 +73,7 @@ impl Widget for ScreenView<'_> {
     }
 }
 
-fn cell_style(cell: &vt100::Cell) -> Style {
+fn cell_style(cell: &crate::term::Cell<'_>) -> Style {
     let mut fg = convert_color(cell.fgcolor());
     let mut bg = convert_color(cell.bgcolor());
     if cell.inverse() {
@@ -87,7 +87,7 @@ fn cell_style(cell: &vt100::Cell) -> Style {
     Style::new().fg(fg).bg(bg).add_modifier(attrs(cell))
 }
 
-fn attrs(cell: &vt100::Cell) -> Modifier {
+fn attrs(cell: &crate::term::Cell<'_>) -> Modifier {
     let mut m = Modifier::empty();
     if cell.bold() {
         m |= Modifier::BOLD;
@@ -104,11 +104,11 @@ fn attrs(cell: &vt100::Cell) -> Modifier {
     m
 }
 
-fn convert_color(color: vt100::Color) -> Color {
+fn convert_color(color: crate::term::Color) -> Color {
     match color {
-        vt100::Color::Default => Color::Reset,
-        vt100::Color::Idx(i) => Color::Indexed(i),
-        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        crate::term::Color::Default => Color::Reset,
+        crate::term::Color::Idx(i) => Color::Indexed(i),
+        crate::term::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
 }
 
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn renders_text_and_colors() {
-        let mut parser = vt100::Parser::new(2, 10, 0);
+        let mut parser = crate::term::Parser::new(2, 10, 0);
         parser.process(b"hi \x1b[31mred\x1b[0m");
 
         let area = Rect::new(0, 0, 10, 2);
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn selection_is_highlighted() {
-        let mut parser = vt100::Parser::new(2, 10, 0);
+        let mut parser = crate::term::Parser::new(2, 10, 0);
         parser.process(b"abcdef\r\nghijkl");
         let area = Rect::new(0, 0, 10, 2);
         let mut buf = Buffer::empty(area);
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn cursor_follows_the_screen() {
-        let mut parser = vt100::Parser::new(5, 10, 0);
+        let mut parser = crate::term::Parser::new(5, 10, 0);
         parser.process(b"ab\r\ncd");
         let view = ScreenView::new(parser.screen());
         assert_eq!(

@@ -26,6 +26,7 @@ mod server;
 mod shapes;
 mod sidebar;
 mod template;
+mod term;
 mod theme;
 mod tmux;
 mod upgrade;

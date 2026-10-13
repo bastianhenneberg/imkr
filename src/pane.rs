@@ -23,7 +23,7 @@ const SCROLLBACK_LINES: usize = 10_000;
 
 pub struct Pane {
     id: PaneId,
-    parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<crate::term::Parser>>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn Child + Send + Sync>,
@@ -265,7 +265,7 @@ impl Pane {
             )),
             None => master.take_writer()?,
         };
-        let mut parser = vt100::Parser::new(rows, cols, SCROLLBACK_LINES);
+        let mut parser = crate::term::Parser::new(rows, cols, SCROLLBACK_LINES);
         parser.process(before);
         let mut pane = Self {
             id,
@@ -302,6 +302,13 @@ impl Pane {
         let id = self.id;
         let mut reader = self.master.try_clone_reader()?;
         let pty = self.master.as_raw_fd();
+        // Where the terminal's answers to the program go: the cursor
+        // position, colours or size it asked for.
+        let mut answer_to: Option<File> = pty.and_then(|fd| {
+            // SAFETY: the master stays open while the reader runs.
+            let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+            fd.try_clone_to_owned().ok().map(File::from)
+        });
         let (wake, stop) = stop_pipe()?;
         let reader_parser = Arc::clone(&self.parser);
         let reader_last_output = Arc::clone(&self.last_output);
@@ -345,7 +352,7 @@ impl Pane {
                                                 .clear_screen(history, all);
                                         }
                                         for piece in hyperlinks.feed(&text) {
-                                            let cursor = |parser: &mut vt100::Parser| {
+                                            let cursor = |parser: &mut crate::term::Parser| {
                                                 let history = history_len(parser);
                                                 let (row, col) = parser.screen().cursor_position();
                                                 (history + usize::from(row), col)
@@ -400,7 +407,13 @@ impl Pane {
                                     }
                                 }
                             }
+                            let answers = parser.answers();
                             drop(parser);
+                            if !answers.is_empty()
+                                && let Some(out) = &mut answer_to
+                            {
+                                let _ = out.write_all(&answers);
+                            }
                             *reader_last_output.lock().unwrap() = Instant::now();
                             if events.send(AppEvent::PtyOutput).is_err() {
                                 return;
@@ -634,27 +647,17 @@ impl Pane {
 
     /// Every row of history and screen as text, by absolute row, for search.
     pub fn rows_text(&self) -> Vec<String> {
-        let mut parser = self.parser.lock().unwrap();
-        let history = history_len(&mut parser);
-        let screen = parser.screen_mut();
-        let saved = screen.scrollback();
-        let (rows, cols) = screen.size();
-        let total = history + usize::from(rows);
-        let mut out = vec![String::new(); total];
-        let mut top = 0;
-        // Page through the history a screen at a time.
-        while top < total {
-            screen.set_scrollback(history.saturating_sub(top));
-            let view_top = history - screen.scrollback();
-            for (i, row) in screen.rows(0, cols).enumerate() {
-                if let Some(slot) = out.get_mut(view_top + i) {
-                    *slot = row;
-                }
-            }
-            top = view_top + usize::from(rows);
-        }
-        screen.set_scrollback(saved);
-        out
+        let parser = self.parser.lock().unwrap();
+        let (rows, cols) = parser.size();
+        let total = parser.history_len() + usize::from(rows);
+        (0..total)
+            .map(|abs| {
+                parser
+                    .abs_row(abs, 0, cols)
+                    .map(|(text, _)| text.trim_end().to_owned())
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     /// The visible screen as text, or the last `lines` lines of history and
@@ -713,7 +716,7 @@ impl Pane {
         *self.last_output.lock().unwrap()
     }
 
-    pub fn screen(&self) -> MutexGuard<'_, vt100::Parser> {
+    pub fn screen(&self) -> MutexGuard<'_, crate::term::Parser> {
         self.parser.lock().unwrap()
     }
 
@@ -747,45 +750,37 @@ impl Pane {
 }
 
 /// See `Pane::text`.
-fn text_between(parser: &mut vt100::Parser, start: (usize, u16), end: (usize, u16)) -> String {
+fn text_between(
+    parser: &mut crate::term::Parser,
+    start: (usize, u16),
+    end: (usize, u16),
+) -> String {
     let (start, end) = if start <= end {
         (start, end)
     } else {
         (end, start)
     };
-    let history = history_len(parser);
-    let screen = parser.screen_mut();
-    let saved = screen.scrollback();
-    let (rows, cols) = screen.size();
-
+    let (_, cols) = parser.size();
     let mut out = String::new();
     for abs in start.0..=end.0 {
-        // Scroll so that this row is in view, then read it there.
-        let offset = history.saturating_sub(abs);
-        screen.set_scrollback(offset);
-        let offset = screen.scrollback();
-        let Some(view_row) = (abs + offset).checked_sub(history) else {
-            continue;
-        };
-        let Ok(view_row) = u16::try_from(view_row) else {
-            continue;
-        };
-        if view_row >= rows {
-            continue;
-        }
         let from = if abs == start.0 { start.1 } else { 0 };
         let to = if abs == end.0 {
             end.1.saturating_add(1).min(cols)
         } else {
             cols
         };
-        let line = screen.contents_between(view_row, from, view_row, to);
-        out.push_str(line.trim_end());
-        if abs != end.0 && !screen.row_wrapped(view_row) {
-            out.push('\n');
+        let Some((line, wrapped)) = parser.abs_row(abs, from, to) else {
+            continue;
+        };
+        if abs != end.0 && wrapped {
+            out.push_str(&line);
+        } else {
+            out.push_str(line.trim_end());
+            if abs != end.0 {
+                out.push('\n');
+            }
         }
     }
-    screen.set_scrollback(saved);
     out
 }
 
@@ -793,14 +788,9 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// The history length: vt100 clamps a too large offset to it.
-fn history_len(parser: &mut vt100::Parser) -> usize {
-    let screen = parser.screen_mut();
-    let saved = screen.scrollback();
-    screen.set_scrollback(usize::MAX);
-    let len = screen.scrollback();
-    screen.set_scrollback(saved);
-    len
+/// The number of lines in the history above the screen.
+fn history_len(parser: &mut crate::term::Parser) -> usize {
+    parser.history_len()
 }
 
 impl Drop for Pane {
@@ -865,8 +855,8 @@ mod tests {
 
     /// 3 rows of screen, lines "line 0" .. "line 9" written, so 7 lines
     /// went into the history.
-    fn parser_with_history() -> vt100::Parser {
-        let mut parser = vt100::Parser::new(3, 20, 100);
+    fn parser_with_history() -> crate::term::Parser {
+        let mut parser = crate::term::Parser::new(3, 20, 100);
         for i in 0..10 {
             parser.process(format!("line {i}").as_bytes());
             if i < 9 {
@@ -912,11 +902,15 @@ mod bench {
         }
         let chunks: Vec<&[u8]> = data.chunks(8192).collect();
         let t = Instant::now();
-        let mut parser = vt100::Parser::new(50, 200, super::SCROLLBACK_LINES);
+        let mut parser = crate::term::Parser::new(50, 200, super::SCROLLBACK_LINES);
         for c in &chunks {
             parser.process(c);
         }
-        eprintln!("vt100 {:?} for {} MB", t.elapsed(), data.len() / 1_000_000);
+        eprintln!(
+            "terminal {:?} for {} MB",
+            t.elapsed(),
+            data.len() / 1_000_000
+        );
         let t = Instant::now();
         let mut s = crate::clipboard::Osc52Scanner::default();
         for c in &chunks {
@@ -941,12 +935,12 @@ mod bench {
         }
         for scrollback in [super::SCROLLBACK_LINES, 1000] {
             let t = Instant::now();
-            let mut parser = vt100::Parser::new(48, 170, scrollback);
+            let mut parser = crate::term::Parser::new(48, 170, scrollback);
             for c in short.chunks(4096) {
                 parser.process(c);
             }
             eprintln!(
-                "vt100 2M short lines, scrollback {scrollback}: {:?}",
+                "terminal 2M short lines, scrollback {scrollback}: {:?}",
                 t.elapsed()
             );
         }

@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn replay_restores_history_and_screen() {
-        let mut old = vt100::Parser::new(3, 20, 100);
+        let mut old = crate::term::Parser::new(3, 20, 100);
         for i in 0..8 {
             old.process(format!("line {i}\r\n").as_bytes());
         }
@@ -474,7 +474,7 @@ mod tests {
         let history: Vec<String> = (0..history_len).map(|i| format!("line {i}")).collect();
         let screen = old.screen().state_formatted();
 
-        let mut new = vt100::Parser::new(3, 20, 100);
+        let mut new = crate::term::Parser::new(3, 20, 100);
         new.process(&replay(&history.join("\n"), &screen, 3));
         assert_eq!(new.screen().contents(), old.screen().contents());
         assert_eq!(
@@ -483,7 +483,7 @@ mod tests {
         );
         assert_eq!(
             new.screen().cell(2, 0).unwrap().fgcolor(),
-            vt100::Color::Idx(1)
+            crate::term::Color::Idx(1)
         );
         new.screen_mut().set_scrollback(usize::MAX);
         assert_eq!(new.screen().scrollback(), history_len);
