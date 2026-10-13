@@ -14,6 +14,9 @@ pub enum Piece {
     /// command typed, `C` its output starts, `D` it ended, with its exit
     /// code if the shell said.
     Mark(char, Option<i32>),
+    /// The agent in a pane shown from another machine and its state, from
+    /// imkr there (`ESC ] 7377 ; agent=NAME;state=STATE`), empty when none.
+    Remote { agent: String, state: String },
 }
 
 /// Finds hyperlinks, `ESC ] 8 ; params ; URI`, and shell marks,
@@ -27,7 +30,9 @@ pub struct LinkScanner {
 
 const OSC: &[u8] = b"\x1b]";
 /// What follows `OSC` in the sequences taken out.
-const KINDS: [&[u8]; 2] = [b"8;", b"133;"];
+const KINDS: [&[u8]; 3] = [b"8;", b"133;", REMOTE];
+/// imkr's own: what runs in a pane shown elsewhere, see `remote_state`.
+const REMOTE: &[u8] = b"7377;";
 /// Longer is no link but garbage, passed on as text.
 const MAX_SEQUENCE: usize = 8 * 1024;
 
@@ -84,7 +89,18 @@ impl LinkScanner {
                 pieces.push(Piece::Text(std::mem::take(&mut text)));
             }
             let body = String::from_utf8_lossy(&data[body_start..body_start + len]);
-            pieces.push(if *kind == b"8;" {
+            pieces.push(if *kind == REMOTE {
+                let field = |name: &str| {
+                    body.split(';')
+                        .find_map(|part| part.strip_prefix(name)?.strip_prefix('='))
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                Piece::Remote {
+                    agent: field("agent"),
+                    state: field("state"),
+                }
+            } else if *kind == b"8;" {
                 let uri = body.split_once(';').map(|(_, uri)| uri).unwrap_or("");
                 if uri.is_empty() {
                     Piece::End
@@ -103,6 +119,13 @@ impl LinkScanner {
         }
         pieces
     }
+}
+
+/// The sequence that tells the terminal showing a pane elsewhere which
+/// agent runs in it and its state; `None` clears it.
+pub fn remote_state(agent: Option<(&str, &str)>) -> Vec<u8> {
+    let (agent, state) = agent.unwrap_or_default();
+    format!("\x1b]7377;agent={agent};state={state}\x07").into_bytes()
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -189,6 +212,21 @@ pub fn openable(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_agents_are_taken_out() {
+        let mut scanner = LinkScanner::default();
+        let mut bytes = b"hi ".to_vec();
+        bytes.extend(remote_state(Some(("claude", "working"))));
+        bytes.extend(b"there");
+        let pieces = scanner.feed(&bytes);
+        assert!(matches!(&pieces[0], Piece::Text(t) if t == b"hi "));
+        assert!(matches!(&pieces[1], Piece::Remote { agent, state }
+            if agent == "claude" && state == "working"));
+        assert!(matches!(&pieces[2], Piece::Text(t) if t == b"there"));
+        let cleared = scanner.feed(&remote_state(None));
+        assert!(matches!(&cleared[0], Piece::Remote { agent, .. } if agent.is_empty()));
+    }
 
     #[test]
     fn splits_hyperlinks_out_of_the_output() {

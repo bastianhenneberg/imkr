@@ -91,7 +91,12 @@ Projekt-Slug: `imkr`
   (das zeigende Terminal tut es) und `sync_sizes` lässt ihre Größe in Ruhe. `saved()` speichert
   für `imkr hosted` die Zeile als `SavedPane::command` (`hosted_command`), damit es nach
   Neustart wieder anhängt. UI: `Ctrl+B w h` → `Mode::NewSessionWhere` mit `App::hosting`.
+  Agent drüben: `App::tell_taps` (je Tick, nur bei Änderung, `told`) schickt OSC 7377
+  (`links::remote_state`, `agent=…;state=…`) über den Tap; lokal macht `LinkScanner` daraus
+  `Piece::Remote` → `Pane::remote` (auch im Handover), `agent_state`/`program` nehmen es zuerst.
+  `other_agents` lässt Agents weg, die ein lokales Hosted Window zeigt (`hosted_target`).
   Test: Fake-ssh (`env -u IMKR_SOCKET … PATH=<fake-home>/.cargo/bin:…`), Datei `down` → 255.
+  Lokale Testwelt mit eigenem HOME, sonst landen Befehle in der echten zsh-History.
   Direkte `ssh server 'imkr …'` im Test nehmen sonst das installierte imkr!
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,

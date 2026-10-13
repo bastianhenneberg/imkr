@@ -102,6 +102,9 @@ pub struct HandoverPane {
     /// The agent's transcript, see `Pane::transcript`.
     #[serde(default)]
     pub transcript: Option<PathBuf>,
+    /// The agent on another machine the pane shows, see `Pane::remote`.
+    #[serde(default)]
+    pub remote: Option<(String, AgentState)>,
 }
 
 /// The handover left by the server this process was before, if any. The

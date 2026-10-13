@@ -601,6 +601,9 @@ pub struct App {
     /// `CARRIED_FOR` (a resumed agent works a little first).
     carried: HashMap<PaneId, u64>,
     carried_until: Option<Instant>,
+    /// What the terminals showing a pane elsewhere were last told runs in
+    /// it, see `tell_taps`.
+    told: HashMap<PaneId, Option<(String, AgentState)>>,
     /// `Ctrl+B S` leaves out old sessions, see `OLD_AFTER`.
     hide_old: bool,
     next_client_id: ClientId,
@@ -759,6 +762,7 @@ impl App {
             hosting: false,
             carried: HashMap::new(),
             carried_until: None,
+            told: HashMap::new(),
             hide_old: false,
             conns: HashMap::new(),
             next_client_id: 0,
@@ -1495,6 +1499,29 @@ impl App {
         self.follow_active();
     }
 
+    /// Tells the terminals showing a pane elsewhere which agent runs in it
+    /// and its state, when that changed, so the agent shows there as one.
+    fn tell_taps(&mut self, seen: &HashMap<PaneId, (AgentState, Instant)>) {
+        self.told
+            .retain(|id, _| self.panes.get(id).is_some_and(Pane::tapped));
+        for (&id, pane) in &self.panes {
+            if !pane.tapped() {
+                continue;
+            }
+            let now = seen
+                .get(&id)
+                .map(|&(state, _)| (pane.program().unwrap_or_else(|| "agent".into()), state));
+            if self.told.get(&id) == Some(&now) {
+                continue;
+            }
+            let agent = now
+                .as_ref()
+                .map(|(name, state)| (name.as_str(), state.name()));
+            pane.tell_taps(&crate::links::remote_state(agent));
+            self.told.insert(id, now);
+        }
+    }
+
     /// Shows pane `pane` on connection `id`, see `Request::Tap`.
     fn tap(&mut self, id: ClientId, pane: PaneId) -> Result<()> {
         let Some(stream) = self.conns.get_mut(&id) else {
@@ -1509,6 +1536,8 @@ impl App {
         let mut stream = stream.try_clone()?;
         let (screen, output) = shown.tap();
         self.taps.insert(id, pane);
+        // The new terminal learns what runs in it with the next look.
+        self.told.remove(&pane);
         thread::Builder::new()
             .name(format!("tap-{id}"))
             .spawn(move || {
@@ -2843,6 +2872,7 @@ impl App {
             }
         }
         self.unseen.retain(|id| seen.contains_key(id));
+        self.tell_taps(&seen);
         self.deliver_mail();
         if !self.clients.is_empty() {
             self.unseen.remove(&self.ws.focus);
@@ -3207,9 +3237,22 @@ impl App {
                 groups.push((Some(host.clone()), session));
             }
         }
+        // Agents shown here in a window of their own are this session's.
+        let hosted: Vec<(String, String, PaneId)> = self
+            .panes
+            .values()
+            .filter_map(|pane| hosted_target(&pane.foreground_argv()))
+            .collect();
         let mut out = Vec::new();
         for (host, session) in groups {
             let mut agents = session.agent_panes.clone();
+            agents.retain(|agent| {
+                !host.as_ref().is_some_and(|host| {
+                    hosted
+                        .iter()
+                        .any(|(h, s, p)| h == host && *s == session.name && *p == agent.pane)
+                })
+            });
             agents.sort_by_key(|a| AgentState::from_name(&a.state).map_or(9, sidebar::urgency));
             for agent in agents {
                 let place = Place {
@@ -9863,6 +9906,19 @@ fn shell_name() -> String {
         .ok()
         .and_then(|shell| shell.rsplit('/').next().map(str::to_owned))
         .unwrap_or_else(|| "shell".into())
+}
+
+/// The pane a window shows from another machine (`imkr hosted H PANE
+/// [SESSION]`): host, session and pane there.
+fn hosted_target(argv: &[String]) -> Option<(String, String, PaneId)> {
+    hosted_command(argv)?;
+    let host = argv.get(2)?.clone();
+    let pane = argv.get(3)?.parse().ok()?;
+    let session = argv
+        .get(4)
+        .cloned()
+        .unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned());
+    Some((host, session, pane))
 }
 
 /// For a window whose program runs on another machine (`imkr hosted`):

@@ -472,7 +472,8 @@ runs in a new window of the session there (started if needed), and this window s
 size, typing into it. If the connection drops, it connects again on its own; if this machine
 restarts, the window comes back with the session and finds the program still running there.
 It closes when the program there ends; closing it here leaves the program running, in its window
-there. Under the hood it is `imkr hosted server PANE` here and `imkr attach-pane PANE` there.
+there. An agent in it counts as one of this session's: its state shows on the window, in the
+sidebar, the inbox and the agent list, and answering it from the inbox types there. Under the hood it is `imkr hosted server PANE` here and `imkr attach-pane PANE` there.
 
 Agents of the other sessions, here and on other machines, are listed under *Agents* below this
 session's own, grouped by session (`⇄ codingmachine · brain`), those that need you first. A click

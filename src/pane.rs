@@ -57,6 +57,9 @@ pub struct Pane {
     /// Connections showing this pane elsewhere (`imkr attach-pane`): they
     /// get its output as read, unchanged.
     taps: Taps,
+    /// For a pane showing one of another machine: the agent running there
+    /// and its state, as imkr there tells (`links::Piece::Remote`).
+    remote: Arc<Mutex<Option<(String, AgentState)>>>,
 }
 
 /// How much of its history a tapped pane sends first.
@@ -224,6 +227,7 @@ impl Pane {
         let mut pane = Self::start(id, size, Box::new(master), child, &before, events)?;
         pane.reported = from.reported;
         pane.transcript = from.transcript.clone();
+        *pane.remote.lock().unwrap() = from.remote.clone();
         // What it wrote was read before the handover: the pane is not busy
         // just because it was taken over.
         if let Some(long_ago) = Instant::now().checked_sub(Duration::from_secs(60)) {
@@ -258,6 +262,7 @@ impl Pane {
             screen,
             reported: self.reported,
             transcript: self.transcript.clone(),
+            remote: self.remote_agent(),
         })
     }
 
@@ -304,6 +309,7 @@ impl Pane {
             reader: None,
             released: false,
             taps: Arc::default(),
+            remote: Arc::default(),
         };
         pane.read_on()?;
         Ok(pane)
@@ -333,6 +339,7 @@ impl Pane {
         let reader_links = Arc::clone(&self.links);
         let reader_shell = Arc::clone(&self.shell);
         let reader_taps = Arc::clone(&self.taps);
+        let reader_remote = Arc::clone(&self.remote);
         let events = self.events.clone();
         let thread = thread::Builder::new()
             .name("pty-reader".into())
@@ -397,6 +404,12 @@ impl Pane {
                                                         .len()
                                                         .saturating_sub(crate::links::KEPT);
                                                     links.drain(..over);
+                                                }
+                                                crate::links::Piece::Remote { agent, state } => {
+                                                    *reader_remote.lock().unwrap() =
+                                                        AgentState::from_name(&state)
+                                                            .filter(|_| !agent.is_empty())
+                                                            .map(|state| (agent, state));
                                                 }
                                                 crate::links::Piece::Mark(mark, exit) => {
                                                     let at = cursor(&mut parser);
@@ -541,6 +554,9 @@ impl Pane {
 
     /// What the agent in this pane is doing, `None` without an agent.
     pub fn agent_state(&self) -> Option<AgentState> {
+        if let Some((_, state)) = self.remote_agent() {
+            return Some(state);
+        }
         let argv = self.foreground_argv();
         let since = self.last_output.lock().unwrap().elapsed();
         let asking = agent::asks_question(self.screen().screen());
@@ -648,7 +664,25 @@ impl Pane {
     }
 
     /// The name to show for this pane: the agent, else the foreground program.
+    /// The agent running on another machine that this pane shows, see
+    /// `remote`.
+    pub fn remote_agent(&self) -> Option<(String, AgentState)> {
+        self.remote.lock().unwrap().clone()
+    }
+
+    /// Tells the terminals showing this pane elsewhere what runs in it.
+    pub fn tell_taps(&self, bytes: &[u8]) {
+        let _parser = self.parser.lock().unwrap();
+        self.taps
+            .lock()
+            .unwrap()
+            .retain(|tap| tap.try_send(bytes.to_vec()).is_ok());
+    }
+
     pub fn program(&self) -> Option<String> {
+        if let Some((agent, _)) = self.remote_agent() {
+            return Some(agent);
+        }
         let argv = self.foreground_argv();
         if let Some(agent) = agent::agent_name(&argv) {
             return Some(agent);
