@@ -5254,14 +5254,16 @@ impl App {
                 ));
             }
         }
-        // Old: not running, without agents, or with agents quiet for long.
+        // Old: not running, or with agents quiet for long. A running session
+        // without agents stays: hidden by default, it would vanish right
+        // after it started.
         let old: Vec<Place> = entries
             .iter()
             .filter(|(place, _, _, dormant, quiet)| {
                 let current = place.host.is_none() && place.name == current;
                 !current
                     && !empty.contains(place)
-                    && (dormant.is_some() || quiet.is_none_or(|q| q >= OLD_AFTER))
+                    && (dormant.is_some() || quiet.is_some_and(|q| q >= OLD_AFTER))
             })
             .map(|(place, ..)| place.clone())
             .collect();
@@ -5374,7 +5376,7 @@ impl App {
             items.push(menu::MenuItem {
                 key: 'o',
                 title: format!("{hidden} old hidden"),
-                hint: "not running, no agents, or quiet for 12h".into(),
+                hint: "not running, or its agents quiet for 12h".into(),
                 danger: false,
                 apart: true,
                 color: Some(theme::current().muted),
