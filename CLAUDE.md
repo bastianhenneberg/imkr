@@ -348,8 +348,11 @@ Projekt-Slug: `imkr`
   unter `flock` (`locked`). Test: zwei Welten mit eigenem `web_listen` auf der VPN-Adresse,
   andere Ports; laufende Web-Server halten das Binary fest (zweite Kopie nehmen).
   Weg über AI Brain: `Contact::brain` (AI-Brain-Name), imkr meldet sich nicht selbst an, sondern
-  ruft `ai-brain-cli nachricht kontakte|senden|abholen --json` (`brain_cli`, Vertrag mit der
-  ai-brain-cli-Session abgestimmt). `fetch_brain` je `BRAIN_EVERY` in `watch_places`, nur mit
+  ruft `ai-brain-cli nachricht …` (`brain_cli`, Vertrag mit der ai-brain-cli-Session):
+  `kontakte --json` → `{ich, kontakte:[{person,email,rechner}]}` (Name oder E-Mail exakt, an
+  sich selbst abgelehnt), `senden PERSON TEXT --von A --ziel S/P`, `abholen --json` →
+  `{nachrichten:[{id,von_person,von,ziel,text,abholungen}]}` (beim ersten Abholen EINEM Rechner
+  zugeteilt), `bestaetigen ID` (nur der abholende Rechner). `Contact::brain` = `person`. `fetch_brain` je `BRAIN_EVERY` in `watch_places`, nur mit
   so einem Kontakt; Eingang über `take_in` wie beim NetBird-Weg. Zustellung mindestens einmal:
   AI Brain gibt Unbestätigtes nach 5 min erneut aus, `fetch_brain` bestätigt jede id
   (`bestaetigen`) und überspringt schon gesehene (`contact-brain-seen.json`, `BRAIN_SEEN`);

@@ -334,8 +334,7 @@ pub fn send(contact: &Contact, to: &str, text: &str, from: &str) -> Result<Strin
                 text.len().div_ceil(1024)
             );
         }
-        let body = serde_json::json!({ "rechner": null, "ziel": to, "von": from, "text": text });
-        brain_cli(&["senden", "--an", person, "--json"], &body.to_string())
+        brain_cli(&["senden", person, text, "--von", from, "--ziel", to], "")
             .with_context(|| format!("not sent to {} through AI Brain", contact.name))?;
         return Ok(format!(
             "{} gets it through AI Brain once their imkr asks there, within a minute while \
@@ -563,19 +562,25 @@ fn brain_cli(args: &[&str], input: &str) -> Result<String> {
 /// Makes `person` from AI Brain a contact, called `alias` here: only those
 /// AI Brain lets this user write to.
 pub fn add_brain(person: &str, alias: Option<&str>) -> Result<Contact> {
-    let known: Vec<serde_json::Value> =
-        serde_json::from_str(&brain_cli(&["kontakte", "--json"], "")?)
-            .context("ai-brain-cli answered no list of contacts")?;
-    if !known.iter().any(|k| k["name"].as_str() == Some(person)) {
-        let names: Vec<&str> = known.iter().filter_map(|k| k["name"].as_str()).collect();
+    let answer: serde_json::Value = serde_json::from_str(&brain_cli(&["kontakte", "--json"], "")?)
+        .context("ai-brain-cli answered no list of contacts")?;
+    let known = answer["kontakte"].as_array().cloned().unwrap_or_default();
+    // By name or e-mail, exactly; kept under the name AI Brain says they
+    // send as (`von_person`).
+    let Some(found) = known
+        .iter()
+        .find(|k| k["person"].as_str() == Some(person) || k["email"].as_str() == Some(person))
+    else {
+        let names: Vec<&str> = known.iter().filter_map(|k| k["person"].as_str()).collect();
         bail!(
             "AI Brain knows no {person} you may write to; these: {}",
             names.join(", ")
         );
-    }
+    };
+    let person = found["person"].as_str().unwrap_or(person);
     let wanted = alias
         .and_then(clean_name)
-        .or_else(|| clean_name(person))
+        .or_else(|| clean_name(&person.to_lowercase()))
         .context("no usable name")?;
     locked(|| {
         let mut contacts = load();
@@ -596,15 +601,24 @@ pub fn add_brain(person: &str, alias: Option<&str>) -> Result<Contact> {
     })?
 }
 
-/// One message as `ai-brain-cli nachricht abholen` hands it over.
+/// What `ai-brain-cli nachricht abholen --json` answers.
+#[derive(Debug, Deserialize)]
+struct FetchedAll {
+    #[serde(default)]
+    nachrichten: Vec<Fetched>,
+}
+
+/// One message as `ai-brain-cli nachricht abholen` hands it over: given to
+/// this machine at the first fetch, again until it is confirmed.
 #[derive(Debug, Deserialize)]
 struct Fetched {
     id: u64,
     /// Who sent it, as AI Brain verified; `von` is what their imkr said.
     von_person: String,
     #[serde(default)]
-    von: String,
-    ziel: String,
+    von: Option<String>,
+    #[serde(default)]
+    ziel: Option<String>,
     text: String,
 }
 
@@ -617,10 +631,10 @@ pub fn fetch_brain() -> Result<usize> {
     if !contacts.iter().any(|c| c.brain.is_some()) {
         return Ok(0);
     }
-    let here = protocol::machine_name();
-    let out = brain_cli(&["abholen", "--rechner", &here, "--json"], "")?;
-    let fetched: Vec<Fetched> =
-        serde_json::from_str(&out).context("ai-brain-cli answered no list of messages")?;
+    let out = brain_cli(&["abholen", "--json"], "")?;
+    let fetched = serde_json::from_str::<FetchedAll>(&out)
+        .context("ai-brain-cli answered no list of messages")?
+        .nachrichten;
     let count = fetched.len();
     // At least once, not exactly once: what was taken but not confirmed
     // comes again, then only the confirmation is missing.
@@ -635,11 +649,15 @@ pub fn fetch_brain() -> Result<usize> {
             .iter()
             .find(|c| c.brain.as_deref() == Some(m.von_person.as_str()))
             .map(|c| (c.name.clone(), c.trusted))
-            .unwrap_or_else(|| (clean_name(&m.von_person).unwrap_or("someone".into()), false));
+            .unwrap_or_else(|| {
+                let name = clean_name(&m.von_person.to_lowercase());
+                (name.unwrap_or("someone".into()), false)
+            });
+        // Without a pane to go to it cannot be taken; said in the log.
         let message = Message {
-            to: m.ziel,
+            to: m.ziel.unwrap_or_default(),
             text: m.text,
-            from: m.von,
+            from: m.von.unwrap_or_default(),
         };
         // A message that cannot be taken (no such pane address) is
         // confirmed too: it would come again forever.
@@ -746,14 +764,24 @@ mod tests {
     #[test]
     fn what_ai_brain_hands_over() {
         // As `ai-brain-cli nachricht abholen --json` answers (#495).
-        let out = r#"[{"id":123,"von_person":"bastian","von":"claude@omarchy:imkr/0",
-            "ziel":"api/claude","text":"hi","zeit":1760000000}]"#;
-        let fetched: Vec<Fetched> = serde_json::from_str(out).unwrap();
-        assert_eq!(fetched[0].von_person, "bastian");
-        assert_eq!(fetched[0].ziel, "api/claude");
+        let out = r#"{"nachrichten":[{"id":123,"von_person":"Bastian",
+            "von":"claude@omarchy:imkr/0","ziel":"api/claude","text":"hi",
+            "angelegt":"2026-10-14T13:00:00Z","abholungen":2},
+            {"id":124,"von_person":"Martin","von":null,"ziel":null,"text":"x"}]}"#;
+        let fetched = serde_json::from_str::<FetchedAll>(out).unwrap().nachrichten;
+        assert_eq!(fetched[0].von_person, "Bastian");
+        assert_eq!(fetched[0].ziel.as_deref(), Some("api/claude"));
         assert_eq!(
-            answer_address("bastian", &fetched[0].von),
+            answer_address("bastian", fetched[0].von.as_deref().unwrap()),
             "claude@bastian:imkr/0"
+        );
+        assert!(fetched[1].ziel.is_none());
+        // Nothing waiting: an empty list, or the field left out.
+        assert!(
+            serde_json::from_str::<FetchedAll>("{}")
+                .unwrap()
+                .nachrichten
+                .is_empty()
         );
     }
 
