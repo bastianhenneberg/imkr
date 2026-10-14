@@ -144,6 +144,13 @@ fn is_zero(n: &u64) -> bool {
 }
 
 impl SessionInfo {
+    /// The default session `client::remote_sessions` names for a machine
+    /// that runs none: a place to go, started when switched to, but no
+    /// session yet. A running server always has a pane.
+    pub fn is_stand_in(&self) -> bool {
+        self.panes == 0 && self.dormant.is_none()
+    }
+
     /// What a dormant session shows instead of its agents: "stopped 21:57"
     /// or "closed 12.10.".
     pub fn dormant_label(&self) -> Option<String> {

@@ -362,8 +362,11 @@ Projekt-Slug: `imkr`
   Listen gruppieren nach Rechner: `MenuItem::group` (Überschrift über dem ersten Eintrag jeder
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
 - Ruhezeit je Session: `SessionInfo::quiet_for` (aus `AgentInfo::since`, 0 bei working/blocked,
-  `None` ohne Agents), eigene Session `App::quiet_for`; `Ctrl+B S` zeigt „✓1 2h ago“, `o` blendet
-  alte aus (`hide_old`, `OLD_AFTER` 12 h, ruhend oder ohne Agents). Damit die Zeit Updates und
+  `None` ohne Agents), eigene Session `App::quiet_for`; `Ctrl+B S` zeigt „✓1 2h ago“, alte sind
+  standardmäßig ausgeblendet, `o` zeigt sie (`hide_old`, `OLD_AFTER` 12 h, ruhend oder ohne Agents).
+  Falle: `remote_sessions` meldet für einen Rechner ohne Session eine erfundene `default`
+  (`SessionInfo::is_stand_in`: 0 Panes) – die Sidebar zeigt dafür „no session yet“, `Ctrl+B S`
+  einen Eintrag, der sie startet, nie als alt ausgeblendet. Damit die Zeit Updates und
   Neustarts übersteht: `SavedPane::idle_since` → `App::carried` (gilt bis zum ersten Idle, höchstens
   `CARRIED_FOR`), übernommene Panes setzen `last_output` 60 s zurück (sonst kurz „working“), und
   `Handover::unseen` hält ✦ done über ein Update.

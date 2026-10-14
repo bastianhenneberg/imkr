@@ -693,7 +693,7 @@ pub struct App {
     /// What the terminals showing a pane elsewhere were last told runs in
     /// it, see `tell_taps`.
     told: HashMap<PaneId, Option<(String, AgentState)>>,
-    /// `Ctrl+B S` leaves out old sessions, see `OLD_AFTER`.
+    /// `Ctrl+B S` leaves out old sessions, see `OLD_AFTER`; `o` shows them.
     hide_old: bool,
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
@@ -872,7 +872,7 @@ impl App {
             carried: HashMap::new(),
             carried_until: None,
             told: HashMap::new(),
-            hide_old: false,
+            hide_old: true,
             conns: HashMap::new(),
             next_client_id: 0,
             socket,
@@ -3326,6 +3326,19 @@ impl App {
         }
         for (host, sessions) in &self.known_hosts() {
             match sessions {
+                // Nothing runs there: said so, not shown as a session.
+                Ok(sessions) if sessions.iter().all(protocol::SessionInfo::is_stand_in) => {
+                    rows.push(sidebar::SessionRow {
+                        host: Some(host.clone()),
+                        machine: self.machine_label(Some(host)),
+                        name: String::new(),
+                        current: false,
+                        state: None,
+                        problem: Some("no session yet".into()),
+                        offline: false,
+                        dormant: false,
+                    });
+                }
                 Ok(sessions) => {
                     rows.extend(sessions.iter().map(|info| row(Some(host.clone()), info)));
                 }
@@ -5218,6 +5231,8 @@ impl App {
                 entries.push((place, format!("⌂ {}", origin.host), agents, dormant, quiet));
             }
         }
+        // Machines that answer but run nothing yet: going there starts one.
+        let mut empty = Vec::new();
         for (host, sessions) in &self.known_hosts() {
             for session in sessions.iter().flatten() {
                 let place = Place {
@@ -5225,9 +5240,14 @@ impl App {
                     name: session.name.clone(),
                 };
                 let dormant = dormant_of(std::slice::from_ref(session), &session.name);
+                let mut hint = format!("⇄ {host}");
+                if session.is_stand_in() {
+                    empty.push(place.clone());
+                    hint.push_str(" · no session yet, Enter starts one");
+                }
                 entries.push((
                     place,
-                    format!("⇄ {host}"),
+                    hint,
                     session.agents.clone(),
                     dormant,
                     session.quiet_for(),
@@ -5239,7 +5259,9 @@ impl App {
             .iter()
             .filter(|(place, _, _, dormant, quiet)| {
                 let current = place.host.is_none() && place.name == current;
-                !current && (dormant.is_some() || quiet.is_none_or(|q| q >= OLD_AFTER))
+                !current
+                    && !empty.contains(place)
+                    && (dormant.is_some() || quiet.is_none_or(|q| q >= OLD_AFTER))
             })
             .map(|(place, ..)| place.clone())
             .collect();
@@ -5331,7 +5353,9 @@ impl App {
                     item.hint = item
                         .hint
                         .replace(&format!(" · {machine}"), "")
-                        .replace(&machine, "");
+                        .replace(&machine, "")
+                        .trim_start_matches(" · ")
+                        .to_owned();
                     item.group = Some(machine);
                 }
                 (place, item)
