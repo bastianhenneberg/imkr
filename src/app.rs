@@ -3394,6 +3394,9 @@ impl App {
     )> {
         let mut hosts = self.places.lock().unwrap().hosts.clone();
         if let Some(origin) = &self.origin {
+            // The machine the user sits at shows as ⌂ already; listed here
+            // as well (hosts both ways), its sessions came twice.
+            hosts.retain(|(host, _)| *host != origin.host);
             let here = protocol::machine_name();
             for info in &origin.hosts {
                 let known = hosts.iter().any(|(h, _)| *h == info.host);
