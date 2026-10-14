@@ -37,6 +37,7 @@ imkr read server:api/3             # another machine
 ```bash
 imkr msg server:api/3 "The API now returns 409 on duplicates, please update the client."
 imkr msg --wait api/claude "Which port does the dev server use?"   # waits, prints its screen
+imkr msg server:api/3 < handover.md          # a long text: on stdin, no quoting needed
 ```
 
 imkr types the message into the other agent once it is idle, never while it works and

@@ -344,6 +344,7 @@ Agents in imkr can find, read and message each other, on this machine and on the
 imkr agents --all                                  # every agent with its address
 imkr msg server:api/claude "The API returns 409 on duplicates now, please update the client."
 imkr msg --wait api/3 "Which port does the dev server use?"   # waits, prints its screen
+imkr msg server:api/claude < handover.md                       # a long text from stdin
 ```
 
 An address is `machine:session/pane`; in the own session a pane number, name or program is

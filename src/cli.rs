@@ -2,7 +2,7 @@
 //! `notify` and `hooks`. They talk to the running server over its socket.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::Path;
 use std::process::Command;
 
@@ -327,7 +327,7 @@ pub fn cp(args: &[String]) -> Result<()> {
 /// pane's address to answer to. `--stdin` reads the text, `--from` keeps
 /// the sender when the message is passed on over ssh.
 pub fn msg(args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: imkr msg [--wait] <to> <text>...";
+    const USAGE: &str = "usage: imkr msg [--wait] <to> <text>... (or the text on stdin)";
     let mut rest = args.to_vec();
     let wait = take_flag(&mut rest, "--wait");
     let stdin = take_flag(&mut rest, "--stdin");
@@ -338,7 +338,8 @@ pub fn msg(args: &[String]) -> Result<()> {
     let Some((to, words)) = rest.split_first() else {
         bail!(USAGE);
     };
-    let text = if stdin {
+    // Without words a piped text is the message, e.g. a long one from a file.
+    let text = if stdin || (words.is_empty() && !std::io::stdin().is_terminal()) {
         let mut text = String::new();
         std::io::stdin().read_to_string(&mut text)?;
         text
