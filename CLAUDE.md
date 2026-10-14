@@ -264,8 +264,11 @@ Projekt-Slug: `imkr`
   können sie nicht parsen, `while let Ok(Some(msg))` endet und der Client fliegt raus. Neue Felder
   mit `#[serde(default)]` in `Caps` überliest ein alter Server dagegen.
 - Settings-Sync: `src/settings.rs` (`collect`: config + `templates/` + `layouts.json` + eigene
-  `plugins/*.toml`, keine Links; `plan` vergleicht ohne `LOCAL_KEYS`, neuere gewinnt, gleich alt
-  bleibt; `apply` prüft Pfade per `allowed`, sichert nach `.sync-backup/<zeit>/`, behält beim Config
+  `plugins/*.toml`, keine Links; `plan` gegen den Stand nach dem letzten Sync (`base`,
+  `.sync-base/<host>.json`, nur auf dem Rechner, der synct): wer seitdem geändert hat, gewinnt,
+  die Config je Schlüssel (`config_steps`, ohne `LOCAL_KEYS`; beide/erster Sync: dieser Rechner),
+  Dateien bei beiden geändert: die neuere; Falle: mtime allein sagt nichts, imkr speichert die
+  Config auch ohne Änderung durch den User; `apply` prüft Pfade per `allowed`, sichert nach `.sync-backup/<zeit>/`, behält beim Config
   die eigenen `LOCAL_KEYS`, prüft mit `Config::parse`, setzt die mtime der Quelle). CLI
   `settings sync|export|import` (`cli::sync_settings_with`, drüben per `remote_output`), danach
   `Request::ReloadConfig` an alle Sessions. `hosts sync` gleicht nach den Upgrades nacheinander ab.

@@ -1,9 +1,12 @@
 //! Settings shared between machines (`imkr settings sync`): the config
 //! without what belongs to one machine, session templates, saved layouts
-//! and the user's own plugins. Each file goes where it is older or
-//! missing; the one replaced is backed up first.
+//! and the user's own plugins. Against the state both had after the last
+//! sync (the base), what one side changed goes to the other: the config
+//! setting by setting, the other files whole. What both changed: the
+//! config keeps this machine's value, a file the newer one. Without a
+//! base, this machine's config values win and files the newer one. The
+//! file replaced is backed up first.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -36,12 +39,14 @@ pub enum Way {
     Push,
 }
 
-/// A file to copy, and why.
+/// A file to copy, and why. `text` is set for the config: the merged
+/// settings to write instead of either side's file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
     pub path: String,
     pub way: Way,
-    pub why: &'static str,
+    pub why: String,
+    pub text: Option<String>,
 }
 
 /// The settings files here, as `imkr settings export` sends them.
@@ -111,58 +116,126 @@ pub fn allowed(path: &str) -> bool {
         && name != ".toml"
 }
 
-/// What a file says, apart from what belongs to one machine.
-fn shared_text(item: &Item) -> String {
-    if item.path != CONFIG {
-        return item.text.clone();
-    }
-    match item.text.parse::<toml::Table>() {
-        Ok(mut table) => {
-            for key in LOCAL_KEYS {
-                table.remove(*key);
-            }
-            toml::to_string(&table).unwrap_or_else(|_| item.text.clone())
-        }
-        Err(_) => item.text.clone(),
-    }
-}
-
-/// What to copy between here (`local`) and another machine (`remote`):
-/// the newer of two that differ, and whatever only one side has. Files of
-/// the same age that differ are left alone.
-pub fn plan(local: &[Item], remote: &[Item]) -> (Vec<Step>, Vec<String>) {
-    let mut paths: BTreeMap<&str, (Option<&Item>, Option<&Item>)> = BTreeMap::new();
-    for item in local {
-        paths.entry(&item.path).or_default().0 = Some(item);
-    }
-    for item in remote {
-        paths.entry(&item.path).or_default().1 = Some(item);
-    }
+/// What to copy between here (`local`) and another machine (`remote`),
+/// given their state after the last sync (`base`, `None` before the
+/// first). Also returns the files both changed to the same age, left
+/// alone.
+pub fn plan(local: &[Item], remote: &[Item], base: Option<&[Item]>) -> (Vec<Step>, Vec<String>) {
+    let find = |items: &[Item], path: &str| items.iter().find(|i| i.path == path).cloned();
+    let mut paths: Vec<&str> = local
+        .iter()
+        .chain(remote)
+        .map(|i| i.path.as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
     let mut steps = Vec::new();
     let mut undecided = Vec::new();
-    for (path, sides) in paths {
-        let step = |way, why| Step {
+    for path in paths {
+        let (here, there) = (find(local, path), find(remote, path));
+        let was = base.and_then(|b| find(b, path));
+        if path == CONFIG {
+            steps.extend(config_steps(
+                here.as_ref(),
+                there.as_ref(),
+                was.as_ref(),
+                base.is_some(),
+            ));
+            continue;
+        }
+        let step = |way, why: &str| Step {
             path: path.to_owned(),
             way,
-            why,
+            why: why.to_owned(),
+            text: None,
         };
-        match sides {
+        match (here, there) {
             (Some(_), None) => steps.push(step(Way::Push, "only here")),
             (None, Some(_)) => steps.push(step(Way::Pull, "only there")),
             (Some(here), Some(there)) => {
-                if shared_text(here) == shared_text(there) {
+                if here.text == there.text {
                     continue;
                 }
-                match here.modified.cmp(&there.modified) {
-                    std::cmp::Ordering::Greater => steps.push(step(Way::Push, "newer here")),
-                    std::cmp::Ordering::Less => steps.push(step(Way::Pull, "newer there")),
-                    std::cmp::Ordering::Equal => undecided.push(path.to_owned()),
+                match was.map(|w| w.text) {
+                    Some(w) if w == here.text => steps.push(step(Way::Pull, "changed there")),
+                    Some(w) if w == there.text => steps.push(step(Way::Push, "changed here")),
+                    _ => match here.modified.cmp(&there.modified) {
+                        std::cmp::Ordering::Greater => steps.push(step(Way::Push, "newer here")),
+                        std::cmp::Ordering::Less => steps.push(step(Way::Pull, "newer there")),
+                        std::cmp::Ordering::Equal => undecided.push(path.to_owned()),
+                    },
                 }
             }
             (None, None) => {}
         }
     }
     (steps, undecided)
+}
+
+/// The shared settings of a config: without this machine's own keys.
+fn shared_table(item: Option<&Item>) -> toml::Table {
+    let mut table: toml::Table = item.and_then(|i| i.text.parse().ok()).unwrap_or_default();
+    for key in LOCAL_KEYS {
+        table.remove(*key);
+    }
+    table
+}
+
+/// The config, setting by setting: what one side changed since `was`
+/// wins; what both changed, or without a base what differs, keeps this
+/// machine's value. Steps to write the result where it differs.
+fn config_steps(
+    here: Option<&Item>,
+    there: Option<&Item>,
+    was: Option<&Item>,
+    synced: bool,
+) -> Vec<Step> {
+    let (mine, theirs, base) = (shared_table(here), shared_table(there), shared_table(was));
+    let mut merged = mine.clone();
+    let mut taken = Vec::new();
+    let mut kept = Vec::new();
+    let mut keys: Vec<&String> = mine.keys().chain(theirs.keys()).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    for key in keys {
+        let (m, t, b) = (mine.get(key), theirs.get(key), base.get(key));
+        if m == t {
+            continue;
+        }
+        if synced && m == b {
+            match t {
+                Some(value) => merged.insert(key.clone(), value.clone()),
+                None => merged.remove(key),
+            };
+            taken.push(key.clone());
+        } else {
+            kept.push(key.clone());
+        }
+    }
+    let text = toml::to_string(&merged).unwrap_or_default();
+    let mut steps = Vec::new();
+    if here.is_some() && merged != mine {
+        steps.push(Step {
+            path: CONFIG.to_owned(),
+            way: Way::Pull,
+            why: format!("changed there: {}", taken.join(", ")),
+            text: Some(text.clone()),
+        });
+    }
+    if there.is_some() && merged != theirs || there.is_none() && here.is_some() {
+        let why = match (kept.is_empty(), synced) {
+            (true, _) => "only here".to_owned(),
+            (false, true) => format!("changed here: {}", kept.join(", ")),
+            (false, false) => format!("first sync, this machine's: {}", kept.join(", ")),
+        };
+        steps.push(Step {
+            path: CONFIG.to_owned(),
+            way: Way::Push,
+            why,
+            text: Some(text),
+        });
+    }
+    steps
 }
 
 /// Writes `items` here, each after a backup of the file it replaces, and
@@ -234,13 +307,56 @@ fn merge_config(here: &str, there: &str) -> Result<String> {
     Ok(toml::to_string(&table)?)
 }
 
-/// The files of `items` that `steps` move the given way.
-pub fn picked<'a>(items: &'a [Item], steps: &[Step], way: Way) -> Vec<&'a Item> {
+/// The files that `steps` move the given way, from `items`; the config as
+/// merged.
+pub fn picked(items: &[Item], steps: &[Step], way: Way) -> Vec<Item> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     steps
         .iter()
         .filter(|s| s.way == way)
-        .filter_map(|s| items.iter().find(|i| i.path == s.path))
+        .filter_map(|s| match &s.text {
+            Some(text) => Some(Item {
+                path: s.path.clone(),
+                modified: now,
+                text: text.clone(),
+            }),
+            None => items.iter().find(|i| i.path == s.path).cloned(),
+        })
         .collect()
+}
+
+/// The state both had after the last sync with `host`, kept here.
+pub fn base(host: &str) -> Option<Vec<Item>> {
+    let text = fs::read_to_string(base_file(host).ok()?).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Remembers the settings here as the state after a sync with `host`.
+pub fn remember_base(host: &str) -> Result<()> {
+    let file = base_file(host)?;
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&file, serde_json::to_string(&collect()?)?)?;
+    Ok(())
+}
+
+fn base_file(host: &str) -> Result<std::path::PathBuf> {
+    let config = crate::config::path()?;
+    let dir = config.parent().context("the config has no folder")?;
+    let name: String = host
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "-_.@".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Ok(dir.join(".sync-base").join(format!("{name}.json")))
 }
 
 #[cfg(test)]
@@ -255,45 +371,75 @@ mod tests {
         }
     }
 
+    fn paths(steps: &[Step]) -> Vec<(&str, Way)> {
+        steps.iter().map(|s| (s.path.as_str(), s.way)).collect()
+    }
+
     #[test]
-    fn newer_wins_and_missing_ones_spread() {
+    fn files_follow_the_side_that_changed_them() {
+        let base = [
+            item("templates/a.toml", 1, "old"),
+            item("templates/b.toml", 1, "old"),
+        ];
         let here = [
-            item("config.toml", 20, "theme = \"a\"\nname = \"desk\"\n"),
-            item("templates/coding.toml", 5, "x"),
-            item("plugins/mine.toml", 9, "same"),
+            item("templates/a.toml", 1, "old"),
+            item("templates/b.toml", 5, "mine"),
+            item("plugins/p.toml", 9, "p"),
         ];
         let there = [
-            item("config.toml", 10, "theme = \"b\"\nname = \"server\"\n"),
-            item("templates/coding.toml", 8, "y"),
-            item("plugins/mine.toml", 1, "same"),
+            item("templates/a.toml", 3, "theirs"),
+            item("templates/b.toml", 9, "old"),
             item("layouts.json", 3, "{}"),
         ];
-        let (steps, undecided) = plan(&here, &there);
+        let (steps, undecided) = plan(&here, &there, Some(&base));
         assert!(undecided.is_empty());
-        let got: Vec<(&str, Way)> = steps.iter().map(|s| (s.path.as_str(), s.way)).collect();
+        // b is newer there, but only here was it changed.
         assert_eq!(
-            got,
+            paths(&steps),
             [
-                ("config.toml", Way::Push),
                 ("layouts.json", Way::Pull),
-                ("templates/coding.toml", Way::Pull),
+                ("plugins/p.toml", Way::Push),
+                ("templates/a.toml", Way::Pull),
+                ("templates/b.toml", Way::Push),
             ]
         );
     }
 
     #[test]
-    fn machine_keys_alone_are_no_difference() {
+    fn config_merges_setting_by_setting() {
+        let base = [item("config.toml", 1, "a = 1\nb = 1\nc = 1\n")];
         let here = [item(
             "config.toml",
-            20,
-            "theme = \"a\"\nname = \"desk\"\nhosts = [\"s\"]\n",
+            1,
+            "a = 2\nb = 1\nc = 1\nname = \"desk\"\n",
         )];
         let there = [item(
             "config.toml",
-            10,
-            "theme = \"a\"\nname = \"server\"\n",
+            9,
+            "a = 1\nb = 3\nc = 1\nname = \"srv\"\n",
         )];
-        assert!(plan(&here, &there).0.is_empty());
+        let (steps, _) = plan(&here, &there, Some(&base));
+        assert_eq!(
+            paths(&steps),
+            [("config.toml", Way::Pull), ("config.toml", Way::Push)]
+        );
+        let merged: toml::Table = steps[0].text.as_deref().unwrap().parse().unwrap();
+        assert_eq!(merged["a"].as_integer(), Some(2));
+        assert_eq!(merged["b"].as_integer(), Some(3));
+        assert!(merged.get("name").is_none());
+    }
+
+    #[test]
+    fn first_sync_keeps_this_machines_settings() {
+        let here = [item(
+            "config.toml",
+            1,
+            "catalogs = [\"x\"]\nname = \"desk\"\n",
+        )];
+        let there = [item("config.toml", 9, "catalogs = []\nname = \"srv\"\n")];
+        let (steps, _) = plan(&here, &there, None);
+        assert_eq!(paths(&steps), [("config.toml", Way::Push)]);
+        assert!(steps[0].text.as_deref().unwrap().contains("\"x\""));
     }
 
     #[test]

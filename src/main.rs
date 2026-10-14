@@ -96,8 +96,8 @@ Commands:
   hosts tailnet the machines of your Tailscale network, and which imkr uses
   settings sync [--yes] [HOST…]
                 settings with the other machines: config (without name,
-                hosts, web), templates, layouts, own plugins; the newer
-                file wins, the replaced one is backed up (hosts sync too)
+                hosts, web), templates, layouts, own plugins; what one
+                side changed since the last sync wins, backed up first
   web [--listen ADDR[:PORT]]
                 this machine's sessions and agents in a phone's browser,
                 on the VPN address (Tailscale, NetBird) or 127.0.0.1

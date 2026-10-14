@@ -580,10 +580,12 @@ you start a session on another machine (`Ctrl+B s n`), by their MagicDNS name.
 `imkr settings sync` keeps the settings the same on all known machines: the config (without
 what belongs to one machine: `name`, `hosts`, `web`, `web_listen`), session templates, saved
 layouts and your own plugins (not the ones installed with `imkr plugin add`, every machine gets
-those itself). For each file the newer one wins, missing ones are copied, the replaced file is
-kept in `.sync-backup/` next to the config, and running sessions load the result. It lists what
-goes where and asks first (`--yes` does not); `imkr hosts sync` does it too, after the update.
-Files deleted on one machine are not deleted on the others.
+those itself). imkr remembers what both had after each sync, so whatever one side changed since
+goes to the other: the config setting by setting, the other files whole. What both changed keeps
+this machine's setting (a file: the newer one); so does the very first sync. Missing files are
+copied, the replaced file is kept in `.sync-backup/` next to the config, and running sessions
+load the result. It lists what goes where and asks first (`--yes` does not); `imkr hosts sync`
+does it too, after the update. Files deleted on one machine are not deleted on the others.
 
 A single window can run on another machine too, in the session you are in: `Ctrl+B w h` asks
 for the machine, or `imkr --host server new [--dir D] [-- command]` from a pane. The program
@@ -775,7 +777,7 @@ imkr hive restore work --from codingmachine --take laptop # and bring the broken
 imkr hosts                                               # the other machines this one shows
 imkr hosts add desktop                                   # or forget one with `rm`
 imkr hosts sync                                          # the latest release on all of them
-imkr settings sync                                       # settings with all of them, newer file wins
+imkr settings sync                                       # settings with all of them, what changed wins
 imkr hosts tailnet                                       # the machines of your Tailscale network
 ```
 

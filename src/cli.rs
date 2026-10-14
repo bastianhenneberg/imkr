@@ -2667,11 +2667,13 @@ fn sync_settings_with(host: &str, yes: bool) -> Result<String> {
     let remote: Vec<crate::settings::Item> =
         serde_json::from_str(&out).context("its settings did not come as expected")?;
     let local = crate::settings::collect()?;
-    let (steps, undecided) = plan(&local, &remote);
+    let base = crate::settings::base(host);
+    let (steps, undecided) = plan(&local, &remote, base.as_deref());
     for path in &undecided {
         println!("{host:<20} {path}: differs, but both are as old, left alone");
     }
     if steps.is_empty() {
+        crate::settings::remember_base(host)?;
         return Ok("settings: the same".into());
     }
     println!("{host:<20} settings:");
@@ -2685,14 +2687,8 @@ fn sync_settings_with(host: &str, yes: bool) -> Result<String> {
     if !yes && !ask(&format!("Copy these between here and {host}?"))? {
         return Ok("settings: left as they were".into());
     }
-    let pulls: Vec<_> = picked(&remote, &steps, Way::Pull)
-        .into_iter()
-        .cloned()
-        .collect();
-    let pushes: Vec<_> = picked(&local, &steps, Way::Push)
-        .into_iter()
-        .cloned()
-        .collect();
+    let pulls = picked(&remote, &steps, Way::Pull);
+    let pushes = picked(&local, &steps, Way::Push);
     if !pulls.is_empty() {
         crate::settings::apply(&pulls)?;
         reload_settings();
@@ -2703,6 +2699,11 @@ fn sync_settings_with(host: &str, yes: bool) -> Result<String> {
             &["settings", "import"],
             &serde_json::to_string(&pushes)?,
         )?;
+    }
+    // What both have now is the base for next time; files left alone
+    // stay undecided until one side changes them.
+    if undecided.is_empty() {
+        crate::settings::remember_base(host)?;
     }
     Ok(format!(
         "settings: {} came here, {} went there (replaced ones in .sync-backup next to each config)",
