@@ -223,14 +223,14 @@ flowchart LR
     <table>
       <thead><tr><th>Start from</th><th>How</th></tr></thead>
       <tbody>
-        <tr><td>imkr, with the plugin</td><td><kbd>Ctrl+B</kbd> <kbd>p</kbd> <kbd>a</kbd>: lists the runs, then asks for a task number</td></tr>
+        <tr><td>imkr, with the plugin</td><td><kbd>Ctrl+B</kbd> <kbd>p</kbd> <kbd>a</kbd>: pick one of the project's open tasks, or write an order</td></tr>
         <tr><td>a shell, for a task</td><td><code>ai-brain-cli agent --task 7666 --imkr</code></td></tr>
         <tr><td>a shell, without a task</td><td><code>ai-brain-cli agent --projekt imkr "Write the changelog" --imkr</code></td></tr>
         <tr><td>AI Brain hands out orders</td><td><code>ai-brain-cli auftraege</code>, then <code>ai-brain-cli auftrag N</code></td></tr>
       </tbody>
     </table>
   </div>
-  <p class="note">Planned: pick the task from a list of the project's open tasks instead of typing its number.</p>
+  <p class="note">The project comes from the <code>CLAUDE.md</code> in the focused pane's directory, so <kbd>Ctrl+B</kbd> <kbd>p</kbd> <kbd>a</kbd> in a project lists exactly its tasks.</p>
 </section>
 
 <section class="ch" id="lasting">

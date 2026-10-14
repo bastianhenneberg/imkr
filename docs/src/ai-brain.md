@@ -47,7 +47,7 @@ messages. So the agent shows in the sidebar, the inbox and `Ctrl+B a` like any o
 
 | From | How |
 |---|---|
-| imkr, plugin | `Ctrl+B p a`: lists the runs, then asks for a task number |
+| imkr, plugin | `Ctrl+B p a`: the runs, then the open tasks of the project in this directory to pick one, or an order in words |
 | a shell | `ai-brain-cli agent --task 7666 --imkr` |
 | a shell, without a task | `ai-brain-cli agent --projekt imkr "Write the changelog" --imkr` |
 | AI Brain | it lays out orders for a machine: `ai-brain-cli auftraege`, then `auftrag N` |
@@ -67,7 +67,9 @@ imkr plugin add ai-brain
 ```
 
 It shows the runs in the sidebar (`2 working · 1 waiting`), `Ctrl+B p a` starts one,
-`Ctrl+B p l` lists them.
+`Ctrl+B p l` lists them. The project is the AI Brain slug in the `CLAUDE.md` of the focused
+pane's directory or one above it; its tasks come from `ai-brain-cli aufgaben`. With an older
+`ai-brain-cli` without that command, it asks for a task number or an order instead.
 
 ## Messages to people
 
