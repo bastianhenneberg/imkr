@@ -691,6 +691,16 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                         (host, name) = (to_host, to_name);
                         remember_place(host.as_deref(), &name);
                         *SHOWN_SESSION.lock().unwrap() = name.clone();
+                        let mut next = next;
+                        // This machine's setting, wherever the session is.
+                        if crate::config::Config::load().0.session_banner {
+                            let text = match &host {
+                                Some(h) => format!("{h}: {name}"),
+                                None => name.clone(),
+                            };
+                            let _ = ClientMsg::Request(Request::Banner { text })
+                                .write_to(&mut next.writer);
+                        }
                         next
                     }
                     // Back to where it was, which then tells why.

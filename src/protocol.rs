@@ -350,6 +350,9 @@ pub enum Request {
     },
     /// Show `text` in the control bar, e.g. why a switch failed.
     Flash { text: String },
+    /// Show `text` in the middle of the screen for a moment: the session's
+    /// name, sent by a client that just switched here.
+    Banner { text: String },
     /// Read the plugin files again, after `imkr plugin add` and the like.
     ReloadPlugins,
     /// Use account `name` of agent `tool` (see `account`): for the shells

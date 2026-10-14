@@ -227,6 +227,9 @@ pub struct Config {
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
+    /// Shows the session's name in the middle of the screen for a moment
+    /// after switching to it.
+    pub session_banner: bool,
     /// Keeps `imkr web` running, the sessions in a phone's browser.
     pub web: bool,
     /// Where `imkr web` listens, e.g. `100.97.56.232:4657`; without it on
@@ -415,6 +418,7 @@ impl Default for Config {
             revive_sessions: true,
             checkpoints: false,
             sessions_on_start: false,
+            session_banner: true,
             web: false,
             web_listen: None,
             name: None,
@@ -645,6 +649,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Session list on start",
         value: |c| if c.sessions_on_start { "on" } else { "off" }.to_owned(),
         step: |c, _| c.sessions_on_start = !c.sessions_on_start,
+    },
+    Setting {
+        name: "Session name on switch",
+        value: |c| if c.session_banner { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.session_banner = !c.session_banner,
     },
     Setting {
         name: "Images",

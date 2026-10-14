@@ -49,6 +49,8 @@ const REPEAT_TIME: Duration = Duration::from_millis(600);
 
 /// How often the server looks at agent states without other events.
 const TICK: Duration = Duration::from_millis(500);
+/// How long the session's name shows after a switch, see `draw_banner`.
+const BANNER_FOR: Duration = Duration::from_millis(1200);
 /// The shortest time between two frames drawn for program output alone.
 const FRAME: Duration = Duration::from_millis(8);
 /// How often agents, hooks, git and files are looked at while busy.
@@ -784,6 +786,8 @@ pub struct App {
     /// A short message for the control bar, e.g. what was copied. Cleared by
     /// the next key.
     flash: Option<String>,
+    /// What `draw_banner` shows, since when.
+    banner: Option<(String, Instant)>,
     /// The session or hive a confirmed `Action` is about, by name: a list
     /// index could point elsewhere by the time `y` is pressed.
     confirm_target: Option<String>,
@@ -911,6 +915,7 @@ impl App {
             copy: None,
             jump: None,
             flash: None,
+            banner: None,
             confirm_target: None,
             confirm_list: Vec::new(),
             new_session: None,
@@ -2152,6 +2157,10 @@ impl App {
             }
             Request::Flash { text } => {
                 self.flash = Some(text);
+                Ok(serde_json::json!({}))
+            }
+            Request::Banner { text } => {
+                self.banner = Some((text, Instant::now()));
                 Ok(serde_json::json!({}))
             }
             Request::UseAccount { tool, name, pane } => {
@@ -9288,6 +9297,41 @@ impl App {
             }
             Mode::Prefix(_) | Mode::Normal | Mode::Repeat(..) | Mode::Copy | Mode::Sidebar(_) => {}
         }
+        self.draw_banner(frame);
+    }
+
+    /// The session's name in the middle of the screen for a moment after a
+    /// client switched here (`Request::Banner`), over everything else.
+    fn draw_banner(&self, frame: &mut Frame) {
+        let Some((text, since)) = &self.banner else {
+            return;
+        };
+        if since.elapsed() >= BANNER_FOR {
+            return;
+        }
+        let t = theme::current();
+        let width = (text.chars().count() as u16 + 10).min(frame.area().width);
+        let area = frame.area();
+        let height = 3.min(area.height);
+        let rect = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(t.accent));
+        frame.render_widget(Clear, rect);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                format!("⬢ {text}"),
+                Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
+            ))
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(block),
+            rect,
+        );
     }
 
     /// Every account of every agent, grouped by agent, with what uses it:
