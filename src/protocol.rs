@@ -9,7 +9,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use crossterm::event::Event;
 use serde::{Deserialize, Serialize};
 
@@ -610,16 +610,37 @@ pub fn runtime_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// The longest socket path, in bytes: `sun_path` holds 108 on Linux and
+/// 104 on macOS, the closing null byte included.
+#[cfg(target_os = "macos")]
+pub const MAX_SOCKET_PATH: usize = 103;
+#[cfg(not(target_os = "macos"))]
+pub const MAX_SOCKET_PATH: usize = 107;
+
+/// `path` if a socket can live there, else an error that says why and how
+/// to get round it, instead of the system's "shorter than SUN_LEN".
+pub fn fits_socket(path: PathBuf) -> Result<PathBuf> {
+    let len = path.as_os_str().len();
+    if len > MAX_SOCKET_PATH {
+        bail!(
+            "socket path is {len} bytes, the limit is {MAX_SOCKET_PATH}: {}\n\
+             set IMKR_SOCKET (or XDG_RUNTIME_DIR) to something shorter, e.g. /tmp/imkr.sock",
+            path.display()
+        );
+    }
+    Ok(path)
+}
+
 /// The socket of session `name`.
 pub fn session_socket(name: &str) -> Result<PathBuf> {
-    Ok(runtime_dir()?.join(format!("{name}.sock")))
+    fits_socket(runtime_dir()?.join(format!("{name}.sock")))
 }
 
 /// The server socket: `$IMKR_SOCKET` if set, otherwise the socket of this
 /// process's session in the runtime directory.
 pub fn socket_path() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("IMKR_SOCKET") {
-        return Ok(PathBuf::from(path));
+        return fits_socket(PathBuf::from(path));
     }
     session_socket(&session_name())
 }
@@ -655,6 +676,21 @@ pub fn sessions() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_socket_paths_say_how_long() {
+        let short = PathBuf::from("/tmp/imkr.sock");
+        assert_eq!(fits_socket(short.clone()).unwrap(), short);
+        let edge = PathBuf::from(format!("/{}", "a".repeat(MAX_SOCKET_PATH - 1)));
+        assert!(fits_socket(edge).is_ok());
+        let long = PathBuf::from(format!("/{}", "a".repeat(MAX_SOCKET_PATH)));
+        let error = fits_socket(long).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!("{} bytes", MAX_SOCKET_PATH + 1)),
+            "{error}"
+        );
+        assert!(error.contains("IMKR_SOCKET"), "{error}");
+    }
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
