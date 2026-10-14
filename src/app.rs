@@ -4456,6 +4456,16 @@ impl App {
                 }
             }
         }
+        // Nearest the cursor first: Enter takes it, and near ones get the
+        // first labels, as in flash.nvim. Other panes after, top down.
+        let at = self.copy.filter(|c| c.pane == self.ws.focus).map(|c| c.pos);
+        targets.sort_by_key(|t| {
+            let here = t.pane == self.ws.focus;
+            let away = at.filter(|_| here).map_or((t.pos.0, 0), |(row, col)| {
+                (t.pos.0.abs_diff(row), usize::from(t.pos.1.abs_diff(col)))
+            });
+            (!here, away)
+        });
         let mut labels = JUMP_LABELS.chars().filter(|c| !next.contains(c));
         for target in &mut targets {
             target.label = labels.next();
@@ -4476,7 +4486,11 @@ impl App {
                 self.mode = Mode::Copy;
                 return;
             }
+            // The marked one, nearest the cursor. Space too, as in the
+            // which-key pick: a leading one would match every gap.
             KeyCode::Enter => jump.targets.first().copied(),
+            KeyCode::Char(' ') if jump.query.is_empty() => None,
+            KeyCode::Char(' ') => jump.targets.first().copied(),
             KeyCode::Backspace => {
                 jump.query.pop();
                 None
@@ -4533,8 +4547,12 @@ impl App {
             .into_iter()
             .map(|(id, rect)| (id, self.inner(rect)))
             .collect();
+        let first = Style::new()
+            .fg(t.on_accent)
+            .bg(t.warning)
+            .add_modifier(Modifier::BOLD);
         let width = jump.query.chars().count() as u16;
-        for target in &jump.targets {
+        for (i, target) in jump.targets.iter().enumerate() {
             let Some(inner) = rects.get(&target.pane) else {
                 continue;
             };
@@ -4547,7 +4565,8 @@ impl App {
             let area = Rect::new(x, y, width.min(room), 1);
             frame.buffer_mut().set_style(area, matched);
             if let Some(c) = target.label {
-                frame.buffer_mut().set_string(x, y, c.to_string(), label);
+                let style = if i == 0 { first } else { label };
+                frame.buffer_mut().set_string(x, y, c.to_string(), style);
             }
         }
     }
@@ -9045,7 +9064,12 @@ impl App {
                 menu::draw_which_key(frame, body, side, menu, &commands, None);
             }
             Mode::Copy if self.config.which_key.copy_mode => {
-                menu::draw_copy_keys(frame, body, self.config.which_key.position);
+                let cursor = self.copy.and_then(|c| {
+                    let inner = self.inner_of(c.pane)?;
+                    let row = u16::try_from(self.to_view(c.pane, c.pos.0)).ok()?;
+                    Some(inner.y + row)
+                });
+                menu::draw_copy_keys(frame, body, self.config.which_key.position, cursor);
             }
             Mode::Pick(menu, at) => {
                 let commands = self.which_key_commands(menu);
@@ -10147,7 +10171,7 @@ impl App {
             Mode::Jump => (
                 "JUMP",
                 t.accent,
-                "type what to jump to · its label jumps · Enter the first · Esc back · then v select, s again ends it, y copy",
+                "type what to jump to · its label jumps · Enter/Space the yellow one · Esc back · then v select, s again ends it, y copy",
             ),
             Mode::Accounts(_) => (
                 "ACCOUNTS",

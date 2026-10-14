@@ -75,7 +75,9 @@ pub fn draw_which_key(
 
 /// The copy-mode keys in the bottom corner of `area` on `side`, as a
 /// which-key board: the groups side by side when they fit, else stacked.
-pub fn draw_copy_keys(frame: &mut Frame, area: Rect, side: Side) {
+/// It goes to the top corner while the cursor row `cursor` would be under
+/// it.
+pub fn draw_copy_keys(frame: &mut Frame, area: Rect, side: Side, cursor: Option<u16>) {
     let area = inset(area);
     let max_width = usize::from(area.width).saturating_sub(4);
     let lines = copy_lines(max_width);
@@ -85,7 +87,11 @@ pub fn draw_copy_keys(frame: &mut Frame, area: Rect, side: Side) {
         Side::Left => area.x,
         Side::Right => area.right() - width,
     };
-    let popup = Rect::new(x, area.bottom() - height, width, height);
+    let mut y = area.bottom() - height;
+    if cursor.is_some_and(|row| row >= y) {
+        y = area.y;
+    }
+    let popup = Rect::new(x, y, width, height);
     draw_box(frame, popup, " ⬢ copy mode ".into(), 1, lines);
 }
 
