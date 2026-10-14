@@ -45,8 +45,8 @@ never into a question it is asking. Every message starts with
 `[imkr message from <address>, answer with: imkr msg <address> <text>]`.
 
 If the other machine cannot be reached from yours (a server answering a laptop), `imkr msg`
-says the message waits in the outbox: that is fine, it is delivered when that machine next
-asks yours, within a minute. Do not try other addresses for it.
+answers `queued for …`: that is a success, even with an ssh error in brackets. It is delivered
+when that machine next asks yours, within a minute. Do not send it again or try other addresses.
 
 ## Messages you receive
 

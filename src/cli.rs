@@ -477,9 +477,11 @@ pub fn msg(args: &[String]) -> Result<()> {
                     from,
                     at: crate::persist::now(),
                 })?;
+                // Said as the success it is: agents read "failed" in an ssh
+                // error first and gave up on a message that did arrive.
                 println!(
-                    "{machine} is out of reach from here ({}); the message waits in the outbox \
-                     until {machine} picks it up, within a minute while its imkr runs",
+                    "queued for {to}: {machine} picks it up from here within a minute while its \
+                     imkr runs, nothing more to do (no direct way there: {})",
                     e.to_string().lines().last().unwrap_or("").trim()
                 );
                 if wait {
