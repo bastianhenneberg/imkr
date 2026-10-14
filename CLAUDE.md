@@ -30,7 +30,7 @@ Projekt-Slug: `imkr`
   nach Cursor bzw. Größe. Bei Resize wird das Terminal neu gebaut.
 - Workspace-Logik (Tiling-Baum + Floats + Fokus) ist reine Geometrie in `src/workspace.rs` und dort
   getestet. `App` hält den aktiven Workspace in `ws`, die übrigen in `hidden`, und tauscht beim Wechsel.
-- Begriffe wie tmux: in der Oberfläche, CLI und README heißt ein Workspace **Window** (Session →
+- Begriffe wie tmux: in der Oberfläche, CLI, README und docs/ heißt ein Workspace **Window** (Session →
   Window → Pane), „Hive“ ist unser eigener Begriff. Intern (Code, Save-Files, Protokoll, JSON der
   CLI-Antworten) bleibt `workspace`, damit Live-Update und alte Saves weiterlaufen. `--workspace`
   bleibt Alias für `--window`.
@@ -439,5 +439,7 @@ cargo test
 
 ## Konventionen
 
+- Doku: README ist die Startseite (kurz, Pitch, Install, erste Schritte, Links), alles
+  Ausführliche steht in `docs/` je Thema. Neue Funktionen dort beschreiben, nicht in der README.
 - Lizenz: MIT OR Apache-2.0
 - Code und Kommentare auf Englisch
