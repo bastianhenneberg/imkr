@@ -535,9 +535,21 @@ enum AgentAt {
     Other(usize),
 }
 
-/// An agent in the inbox, kept across the list's changes: its machine
-/// (`None` for this one), session and pane.
-type InboxId = (Option<String>, String, PaneId);
+/// What the inbox lists: an agent, or a contact's message waiting to be
+/// accepted (`contacts::waiting`).
+#[derive(Clone, Copy)]
+enum InboxAt {
+    Agent(AgentAt),
+    Message(u64),
+}
+
+/// An inbox entry, kept across the list's changes: an agent by its machine
+/// (`None` for this one), session and pane, or a message by its number.
+#[derive(Clone, PartialEq)]
+enum InboxId {
+    Agent(Option<String>, String, PaneId),
+    Message(u64),
+}
 
 /// What the hooks compare: each pane's state (empty without an agent),
 /// program and window.
@@ -6153,7 +6165,35 @@ impl App {
     /// The inbox: the agents everywhere that wait for the user, then those
     /// done, by machine like `agent_choices`, each with the bottom of its
     /// screen.
-    fn inbox_items(&self) -> (Vec<(AgentAt, String, InboxId)>, Vec<menu::MenuItem>) {
+    fn inbox_items(&self) -> (Vec<(InboxAt, String, InboxId)>, Vec<menu::MenuItem>) {
+        // Contacts' messages first: nothing reaches its agent until accepted.
+        let (mut targets, mut items): (Vec<_>, Vec<_>) = crate::contacts::waiting()
+            .into_iter()
+            .map(|m| {
+                let age = std::time::Duration::from_secs(crate::web::now().saturating_sub(m.at));
+                let item = menu::MenuItem {
+                    key: ' ',
+                    title: format!("✉ {}", m.from),
+                    hint: format!("to {} · {}", m.to, sidebar::age(age)),
+                    danger: false,
+                    apart: false,
+                    color: Some(theme::current().accent),
+                    group: Some("Messages from contacts".into()),
+                };
+                (
+                    (InboxAt::Message(m.id), m.text, InboxId::Message(m.id)),
+                    item,
+                )
+            })
+            .unzip();
+        let (agents, agent_items) = self.inbox_agents();
+        targets.extend(agents);
+        items.extend(agent_items);
+        (targets, items)
+    }
+
+    /// The inbox's agents: those waiting for the user, then those done.
+    fn inbox_agents(&self) -> (Vec<(InboxAt, String, InboxId)>, Vec<menu::MenuItem>) {
         let others = self.other_agents();
         let mut entries: Vec<_> = self
             .agent_entries()
@@ -6183,18 +6223,18 @@ impl App {
                             .get(&id)
                             .map(|pane| agent::tail(pane.screen().screen(), INBOX_LINES))
                             .unwrap_or_default(),
-                        (None, protocol::session_name(), id),
+                        InboxId::Agent(None, protocol::session_name(), id),
                     ),
                     AgentAt::Other(i) => match others.get(i) {
                         Some((place, agent)) => (
                             agent.tail.clone(),
-                            (place.host.clone(), place.name.clone(), agent.pane),
+                            InboxId::Agent(place.host.clone(), place.name.clone(), agent.pane),
                         ),
-                        None => (String::new(), (None, String::new(), 0)),
+                        None => (String::new(), InboxId::Agent(None, String::new(), 0)),
                     },
                 };
                 item.key = ' ';
-                ((at, tail, id), item)
+                ((InboxAt::Agent(at), tail, id), item)
             })
             .unzip()
     }
@@ -6203,7 +6243,7 @@ impl App {
     /// the list; the one at `fallback` before anything was selected.
     fn inbox_selected(
         &self,
-        targets: &[(AgentAt, String, InboxId)],
+        targets: &[(InboxAt, String, InboxId)],
         fallback: usize,
     ) -> Option<usize> {
         match &self.inbox_on {
@@ -6221,6 +6261,14 @@ impl App {
         let count = targets.len().max(1);
         let selected = self.inbox_selected(&targets, fallback);
         let at = selected.map(|i| targets[i].0);
+        let message = match at {
+            Some(InboxAt::Message(id)) => Some(id),
+            _ => None,
+        };
+        let agent_at = match at {
+            Some(InboxAt::Agent(at)) => Some(at),
+            _ => None,
+        };
         let waiting = selected.is_some_and(|i| items[i].danger);
         let select = |app: &mut Self, i: usize| {
             app.inbox_answer.clear();
@@ -6233,6 +6281,16 @@ impl App {
             KeyCode::Esc => self.mode = Mode::Normal,
             KeyCode::Up | KeyCode::BackTab => select(self, (here + count - 1) % count),
             KeyCode::Down | KeyCode::Tab => select(self, (here + 1) % count),
+            // A contact's message: only taken or thrown away, never answered
+            // here, the agent it is for answers.
+            KeyCode::Enter if let Some(id) = message => self.accept_message(id),
+            KeyCode::Char('x') | KeyCode::Delete if let Some(id) = message => {
+                self.flash = Some(match crate::contacts::decline(id) {
+                    Ok(()) => "message thrown away".into(),
+                    Err(e) => format!("{e:#}"),
+                });
+            }
+            KeyCode::Char(_) | KeyCode::Backspace if message.is_some() => {}
             KeyCode::Backspace => {
                 self.inbox_answer.pop();
             }
@@ -6243,7 +6301,7 @@ impl App {
             }
             KeyCode::Enter if self.inbox_answer.is_empty() => {
                 self.mode = Mode::Normal;
-                match at {
+                match agent_at {
                     Some(AgentAt::Here(id)) => self.reveal(id),
                     Some(AgentAt::Other(i)) => self.go_to_other_agent(i),
                     None => {}
@@ -6251,12 +6309,12 @@ impl App {
             }
             KeyCode::Enter => {
                 let text = std::mem::take(&mut self.inbox_answer);
-                if let Some(at) = at {
+                if let Some(at) = agent_at {
                     self.answer(at, &text, true);
                 }
             }
             KeyCode::Char(c @ '1'..='9') if waiting && self.inbox_answer.is_empty() => {
-                if let Some(at) = at {
+                if let Some(at) = agent_at {
                     self.answer(at, &c.to_string(), false);
                 }
             }
@@ -6269,6 +6327,20 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Accepts a contact's message: typed into its pane in the background,
+    /// as the session it is for may be this one.
+    fn accept_message(&mut self, id: u64) {
+        self.flash = Some("accepted, typing it in".into());
+        let socket = self.socket.clone();
+        thread::spawn(move || {
+            let text = match crate::contacts::accept(id) {
+                Ok(done) => format!("message {done}"),
+                Err(e) => format!("message kept, not delivered: {e:#}"),
+            };
+            let _ = crate::client::request_at(&socket, Request::Flash { text });
+        });
     }
 
     /// Types `text` into the agent at `at`, then Enter if `enter`: here
@@ -9637,7 +9709,13 @@ impl App {
             .lines()
             .map(|line| Line::from(line.to_owned()))
             .collect();
-        let answer = if self.inbox_answer.is_empty() {
+        let message = matches!(targets.get(selected), Some((InboxAt::Message(_), ..)));
+        let answer = if message {
+            Span::styled(
+                "Enter accept: typed in like your own message · x decline",
+                Style::new().fg(t.subtle),
+            )
+        } else if self.inbox_answer.is_empty() {
             Span::styled(
                 if items[selected].danger {
                     "type the answer, or a digit for that option"

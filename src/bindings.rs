@@ -1010,6 +1010,7 @@ pub const INBOX_KEYS: &[KeyHint] = &[
     ("digit", "choose that option"),
     ("text Enter", "answer"),
     ("Enter", "go there"),
+    ("✉ Enter x", "accept, decline a contact's message"),
     ("Esc", "cancel"),
 ];
 
