@@ -234,7 +234,7 @@ Projekt-Slug: `imkr`
   (die zsh im Pane stellt `~/.cargo/bin` vorn in den PATH → installiertes Binary).
 - Mehrere Rechner in einem imkr: Hosts aus `Config::hosts` + gemerkte (`client::remembered_hosts`,
   `~/.local/state/imkr/hosts`). Thread `watch_places` füllt `App::places` (lokal alle 2 s per
-  `client::local_sessions`, Hosts alle 15 s per `ssh … imkr ls --json`). Sidebar-Abschnitt
+  `client::local_sessions`, Hosts alle 5 s (`HOSTS_EVERY`) per `ssh … imkr ls --json`). Sidebar-Abschnitt
   „Sessions“ und `Ctrl+B S` bauen daraus `Place`s; Wechsel = `ServerMsg::Switch("host:name")`,
   nur an Clients mit `Caps::hosts`. Der Client merkt sich den Rechner in `SHOWN_HOST` und schickt
   auf fremden Servern `Caps::origin` (eigener Hostname + Sessions) für den Rückweg; `draw` liest

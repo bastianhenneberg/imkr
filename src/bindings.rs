@@ -1395,6 +1395,25 @@ mod tests {
         }
     }
 
+    /// docs/keys.md is `imkr keys` as a page; written anew with
+    /// `IMKR_WRITE_DOCS=1 cargo test docs_keys`.
+    #[test]
+    fn docs_keys_are_current() {
+        let want = format!(
+            "# Keys\n\nEvery key, as `imkr keys` prints it. Generated from `src/bindings.rs`.\n\n```text\n{}```\n",
+            reference()
+        );
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/keys.md");
+        if std::env::var_os("IMKR_WRITE_DOCS").is_some() {
+            std::fs::write(path, &want).unwrap();
+        }
+        let have = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(
+            have == want,
+            "docs/keys.md is out of date: IMKR_WRITE_DOCS=1 cargo test docs_keys"
+        );
+    }
+
     #[test]
     fn reference_lists_every_binding() {
         let text = reference();

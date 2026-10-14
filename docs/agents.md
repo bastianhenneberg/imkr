@@ -105,7 +105,7 @@ agent's screen, on any machine.
 
 Answers find their way back without every machine reaching every other: a server needs no ssh
 to your laptop. A message for a machine out of reach waits in the sender's outbox (`imkr
-outbox`), and the machine it is for picks it up when it next asks that one, every 15 seconds
+outbox`), and the machine it is for picks it up when it next asks that one, every 5 seconds
 while its imkr runs, so a laptop that was offline gets it later.
 
 ### Other people's imkrs

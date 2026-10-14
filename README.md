@@ -87,20 +87,22 @@ then on.
 
 ## Documentation
 
+New here: [Getting started](docs/getting-started.md), then [How imkr works](docs/architecture.md).
+
 | | |
 |---|---|
 | [Install and update](docs/install.md) | installer, live updates, building |
-| [Sessions, windows and panes](docs/sessions.md) | every key, worktrees, fleets, checkpoints, restarts |
+| [Sessions, windows and panes](docs/sessions.md) | getting around, worktrees, fleets, checkpoints, restarts |
 | [Sidebar, popups, mouse](docs/screen.md) | sidebar, popups, mouse, clipboard, images |
 | [Agents](docs/agents.md) | states, hooks, accounts, messages, contacts, MCP, tmux shim, events |
+| [imkr and AI Brain](docs/ai-brain.md) | CLI mode (an agent per task), messages to colleagues |
 | [Other machines](docs/machines.md) | the operator, ssh, settings sync, hosted windows |
 | [Hives and templates](docs/hives.md) | saved groups of sessions, session templates |
 | [On the phone](docs/phone.md) | `imkr web`, pairing, firewall |
 | [Plugins](docs/plugins.md) | plugin files, repositories, catalogs |
 | [Settings](docs/settings.md) | config file, themes, own commands, hooks |
+| [Keys](docs/keys.md) · [Commands](docs/commands.md) | generated from the code |
 | [Compared with herdr and TUIOS](docs/comparison.md) | what imkr adds, checked October 2026 |
-
-`imkr keys` lists every key, `imkr --help` every command.
 
 ## Status
 
