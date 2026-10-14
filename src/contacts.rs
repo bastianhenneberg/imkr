@@ -627,8 +627,21 @@ struct Fetched {
 /// always asking first then. Only with a contact through AI Brain, so
 /// machines without one never run the CLI. How many came.
 pub fn fetch_brain() -> Result<usize> {
+    use std::os::fd::AsRawFd;
     let contacts = load();
     if !contacts.iter().any(|c| c.brain.is_some()) {
+        return Ok(0);
+    }
+    // One fetch per machine at a time: every session's server asks, and two
+    // at once both got the same unconfirmed message and both took it in.
+    // Its own lock, not `locked`: `take_in` takes that one inside.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path("contact-brain.lock")?)?;
+    // SAFETY: flock on a descriptor we own; released when `lock` closes.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Ok(0);
     }
     let out = brain_cli(&["abholen", "--json"], "")?;

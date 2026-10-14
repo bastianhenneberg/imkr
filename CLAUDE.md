@@ -356,7 +356,9 @@ Projekt-Slug: `imkr`
   so einem Kontakt; Eingang über `take_in` wie beim NetBird-Weg. Zustellung mindestens einmal:
   AI Brain gibt Unbestätigtes nach 5 min erneut aus, `fetch_brain` bestätigt jede id
   (`bestaetigen`) und überspringt schon gesehene (`contact-brain-seen.json`, `BRAIN_SEEN`);
-  `take_in` nie unter `locked` aufrufen (flock je fd, verschachtelt = Verklemmung). Text max.
+  `take_in` nie unter `locked` aufrufen (flock je fd, verschachtelt = Verklemmung). Je Rechner
+  holt nur ein Server gleichzeitig ab (`contact-brain.lock`, LOCK_NB): zwei Sessions holten
+  dieselbe unbestätigte Nachricht und reihten sie doppelt ein (Echttest 14.10.). Text max.
   8 KB (`MAX_BRAIN_TEXT`). `von_person` ist von AI Brain geprüft, `von` nur Angabe. Test: Attrappe
   `ai-brain-cli` im PATH beider Welten mit gemeinsamem Ordner als Briefkasten.
 - Inbox `Ctrl+B i` (`inbox_items`, `inbox_key`, `draw_inbox`): blocked/done Agents aus
