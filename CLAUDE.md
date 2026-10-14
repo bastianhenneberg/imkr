@@ -347,6 +347,11 @@ Projekt-Slug: `imkr`
   Anfragen mit `Origin` oder ohne `Content-Type: application/json` ab (Browser). Dateizugriffe
   unter `flock` (`locked`). Test: zwei Welten mit eigenem `web_listen` auf der VPN-Adresse,
   andere Ports; laufende Web-Server halten das Binary fest (zweite Kopie nehmen).
+  Weg über AI Brain: `Contact::brain` (AI-Brain-Name), imkr meldet sich nicht selbst an, sondern
+  ruft `ai-brain-cli nachricht kontakte|senden|abholen --json` (`brain_cli`, Vertrag mit der
+  ai-brain-cli-Session abgestimmt). `fetch_brain` je `BRAIN_EVERY` in `watch_places`, nur mit
+  so einem Kontakt; Eingang über `take_in` wie beim NetBird-Weg. Test: Attrappe
+  `ai-brain-cli` im PATH beider Welten mit gemeinsamem Ordner als Briefkasten.
 - Inbox `Ctrl+B i` (`inbox_items`, `inbox_key`, `draw_inbox`): blocked/done Agents aus
   `agent_entries` mit `agent::tail` (Server liefert es in `list()` als `tail`, über
   `AgentInfo::tail` auch für andere Sessions/Rechner). Antwort per `App::answer`: lokal

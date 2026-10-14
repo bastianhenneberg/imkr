@@ -576,6 +576,8 @@ const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(5);
 /// How often hives saved on other machines are fetched.
 const HIVES_EVERY: Duration = Duration::from_secs(60);
+/// How often messages from contacts through AI Brain are fetched.
+const BRAIN_EVERY: Duration = Duration::from_secs(30);
 /// How often a server makes sure `imkr web` runs, if switched on.
 const WEB_EVERY: Duration = Duration::from_secs(60);
 
@@ -10562,6 +10564,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
         let mut states: HashMap<(String, String, PaneId), String> = HashMap::new();
         let mut noted: Vec<String> = Vec::new();
         let mut web_at: Option<Instant> = None;
+        let mut brain_at: Option<Instant> = None;
         loop {
             let own = protocol::session_name();
             let local: Vec<_> = crate::client::local_sessions()
@@ -10578,6 +10581,14 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
             if web_at.is_none_or(|at| at.elapsed() >= WEB_EVERY) {
                 web_at = Some(Instant::now());
                 crate::web::keep_running();
+            }
+            // Contacts' messages through AI Brain (none without such a
+            // contact); test servers leave them to the user's own.
+            if brain_at.is_none_or(|at| at.elapsed() >= BRAIN_EVERY)
+                && std::env::var_os("IMKR_SOCKET").is_none()
+            {
+                brain_at = Some(Instant::now());
+                let _ = crate::contacts::fetch_brain();
             }
             let web = crate::web::connected();
             let mut known = places.lock().unwrap();

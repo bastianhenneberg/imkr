@@ -223,7 +223,8 @@ fn own_address() -> String {
 pub fn connect(args: &[String]) -> Result<()> {
     use crate::contacts;
     const USAGE: &str = "usage: imkr connect [invite | join URL CODE [--as YOU] [--name THEM] \
-                         | inbox | accept ID | decline ID | trust NAME | untrust NAME | rm NAME]";
+                         | brain PERSON [--name THEM] | fetch | inbox | accept ID | decline ID \
+                         | trust NAME | untrust NAME | rm NAME]";
     let mut rest = args.to_vec();
     let own = take_value(&mut rest, "--as")?;
     let alias = take_value(&mut rest, "--name")?;
@@ -242,7 +243,11 @@ pub fn connect(args: &[String]) -> Result<()> {
                 } else {
                     "asks first"
                 };
-                println!("{:<16} {:<28} {trust}", c.name, c.url);
+                let via = match &c.brain {
+                    Some(person) => format!("AI Brain ({person})"),
+                    None => c.url.clone(),
+                };
+                println!("{:<16} {:<28} {trust}", c.name, via);
             }
             let waiting = contacts::waiting().len();
             if waiting > 0 {
@@ -264,6 +269,18 @@ pub fn connect(args: &[String]) -> Result<()> {
                 "{} is a contact now, they know you as {own}: `imkr msg {}:SESSION/PANE TEXT`",
                 contact.name, contact.name
             );
+        }
+        ["brain", person] => {
+            let contact = contacts::add_brain(person, alias.as_deref())?;
+            println!(
+                "{} is a contact through AI Brain: `imkr msg {}:SESSION/PANE TEXT`; \
+                 their messages come here once they add you too",
+                contact.name, contact.name
+            );
+        }
+        ["fetch"] => {
+            let n = contacts::fetch_brain()?;
+            println!("{n} message(s) from AI Brain");
         }
         ["inbox"] => {
             let waiting = contacts::waiting();

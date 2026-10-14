@@ -3,6 +3,10 @@
 //! (`imkr web`) in a VPN such as NetBird; no ssh between people. A message
 //! from a contact waits here until it is accepted, unless the contact is
 //! trusted.
+//!
+//! The other way needs no common network: through AI Brain, which knows the
+//! people and who may write to whom. imkr does not sign in there itself, it
+//! goes through `ai-brain-cli nachricht` (kontakte, senden, abholen).
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -29,12 +33,19 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 pub struct Contact {
     /// What this side calls them, the machine part of an address.
     pub name: String,
-    /// Their imkr web server, `http://100.97.1.2:4657/`.
+    /// Their imkr web server, `http://100.97.1.2:4657/`; empty through AI
+    /// Brain.
+    #[serde(default)]
     pub url: String,
     /// What we show them when sending.
+    #[serde(default)]
     token: String,
     /// What they show us when sending here.
+    #[serde(default)]
     key: String,
+    /// Their name in AI Brain, when messages go through it instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brain: Option<String>,
     /// Their messages are typed right away, without asking.
     #[serde(default)]
     pub trusted: bool,
@@ -226,6 +237,7 @@ pub fn join(url: &str, code: &str, own: &str, alias: Option<&str>) -> Result<Con
             url,
             token: token.to_owned(),
             key,
+            brain: None,
             trusted: false,
             since: web::now(),
         };
@@ -282,6 +294,7 @@ pub fn accept_join(body: &[u8]) -> Result<serde_json::Value, String> {
             url,
             token: join.token.clone(),
             key: key.clone(),
+            brain: None,
             trusted: false,
             since: web::now(),
         });
@@ -307,6 +320,16 @@ struct Message {
 pub fn send(contact: &Contact, to: &str, text: &str, from: &str) -> Result<String> {
     if text.len() > MAX_TEXT {
         bail!("the message is longer than {} KB", MAX_TEXT / 1024);
+    }
+    if let Some(person) = &contact.brain {
+        let body = serde_json::json!({ "rechner": null, "ziel": to, "von": from, "text": text });
+        brain_cli(&["senden", "--an", person, "--json"], &body.to_string())
+            .with_context(|| format!("not sent to {} through AI Brain", contact.name))?;
+        return Ok(format!(
+            "{} gets it through AI Brain once their imkr asks there, within a minute while \
+             it runs; then it waits for them to accept it, unless they trust you",
+            contact.name
+        ));
     }
     let answer = post(
         &contact.url,
@@ -336,6 +359,19 @@ pub fn receive(token: Option<&str>, body: &[u8]) -> Result<serde_json::Value, St
         .find(|c| web::same_secret(&c.key, token))
         .ok_or("not a contact")?;
     let message: Message = serde_json::from_slice(body).map_err(|e| format!("bad request: {e}"))?;
+    take_in(&contact.name, contact.trusted, message, true)
+}
+
+/// A message from `contact` for a pane here: typed in if `trusted`, else
+/// waiting for the user. With `check`, a session that does not run is said
+/// right away; a message fetched from AI Brain waits anyway, it is not
+/// there any more to say it to.
+fn take_in(
+    contact: &str,
+    trusted: bool,
+    message: Message,
+    check: bool,
+) -> Result<serde_json::Value, String> {
     if message.text.trim().is_empty() || message.text.len() > MAX_TEXT {
         return Err("bad request: text".into());
     }
@@ -346,7 +382,8 @@ pub fn receive(token: Option<&str>, body: &[u8]) -> Result<serde_json::Value, St
         _ => return Err(format!("bad address {to}: say session/pane")),
     }
     // Said right away, not once someone accepts it.
-    if !target(to).is_ok_and(|(socket, _)| socket.exists()) {
+    let runs = target(to).is_ok_and(|(socket, _)| socket.exists());
+    if check && !runs {
         return Err(format!(
             "no session {} runs there",
             to.split_once('/').map_or("default", |(s, _)| s)
@@ -354,13 +391,13 @@ pub fn receive(token: Option<&str>, body: &[u8]) -> Result<serde_json::Value, St
     }
     let incoming = Incoming {
         id: 0,
-        contact: contact.name.clone(),
-        from: answer_address(&contact.name, &message.from),
+        contact: contact.to_owned(),
+        from: answer_address(contact, &message.from),
         to: to.to_owned(),
         text: message.text,
         at: web::now(),
     };
-    if contact.trusted {
+    if trusted && runs {
         let pane = deliver(&incoming).map_err(|e| format!("{e:#}"))?;
         return Ok(serde_json::json!({ "pane": pane }));
     }
@@ -377,8 +414,7 @@ pub fn receive(token: Option<&str>, body: &[u8]) -> Result<serde_json::Value, St
     .and_then(|r| r)
     .map_err(|e| format!("{e:#}"))?;
     notify(&format!(
-        "message from {} waits for you: Ctrl+B i, or `imkr connect inbox`",
-        contact.name
+        "message from {contact} waits for you: Ctrl+B i, or `imkr connect inbox`"
     ));
     Ok(serde_json::json!({ "queued": id }))
 }
@@ -486,6 +522,110 @@ pub fn set_trusted(name: &str, trusted: bool) -> Result<()> {
     })?
 }
 
+/// Runs `ai-brain-cli nachricht ARGS` with `input` on stdin; its output.
+/// The CLI holds the sign-in to AI Brain, imkr none.
+fn brain_cli(args: &[&str], input: &str) -> Result<String> {
+    let mut child = std::process::Command::new("timeout")
+        .args(["30", "ai-brain-cli", "nachricht"])
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("cannot run ai-brain-cli")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes())?;
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        let why = String::from_utf8_lossy(&out.stderr);
+        match out.status.code() {
+            Some(127) => bail!("ai-brain-cli is not installed here"),
+            Some(124) => bail!("ai-brain-cli did not answer within 30 s"),
+            _ => bail!("{}", why.trim()),
+        }
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Makes `person` from AI Brain a contact, called `alias` here: only those
+/// AI Brain lets this user write to.
+pub fn add_brain(person: &str, alias: Option<&str>) -> Result<Contact> {
+    let known: Vec<serde_json::Value> =
+        serde_json::from_str(&brain_cli(&["kontakte", "--json"], "")?)
+            .context("ai-brain-cli answered no list of contacts")?;
+    if !known.iter().any(|k| k["name"].as_str() == Some(person)) {
+        let names: Vec<&str> = known.iter().filter_map(|k| k["name"].as_str()).collect();
+        bail!(
+            "AI Brain knows no {person} you may write to; these: {}",
+            names.join(", ")
+        );
+    }
+    let wanted = alias
+        .and_then(clean_name)
+        .or_else(|| clean_name(person))
+        .context("no usable name")?;
+    locked(|| {
+        let mut contacts = load();
+        if let Some(c) = contacts.iter().find(|c| c.brain.as_deref() == Some(person)) {
+            bail!("{person} is a contact already, as {}", c.name);
+        }
+        let contact = Contact {
+            name: free_name(&contacts, &wanted),
+            url: String::new(),
+            token: String::new(),
+            key: String::new(),
+            brain: Some(person.to_owned()),
+            trusted: false,
+            since: web::now(),
+        };
+        contacts.push(contact.clone());
+        save(&contacts).map(|()| contact)
+    })?
+}
+
+/// One message as `ai-brain-cli nachricht abholen` hands it over.
+#[derive(Debug, Deserialize)]
+struct Fetched {
+    von_person: String,
+    #[serde(default)]
+    von: String,
+    ziel: String,
+    text: String,
+}
+
+/// Takes in what waits in AI Brain for this user on this machine: as from
+/// a contact if the sender is one, else under the sender's AI Brain name,
+/// always asking first then. Only with a contact through AI Brain, so
+/// machines without one never run the CLI. How many came.
+pub fn fetch_brain() -> Result<usize> {
+    let contacts = load();
+    if !contacts.iter().any(|c| c.brain.is_some()) {
+        return Ok(0);
+    }
+    let here = protocol::machine_name();
+    let out = brain_cli(&["abholen", "--rechner", &here, "--json"], "")?;
+    let fetched: Vec<Fetched> =
+        serde_json::from_str(&out).context("ai-brain-cli answered no list of messages")?;
+    let count = fetched.len();
+    for m in fetched {
+        let (name, trusted) = contacts
+            .iter()
+            .find(|c| c.brain.as_deref() == Some(m.von_person.as_str()))
+            .map(|c| (c.name.clone(), c.trusted))
+            .unwrap_or_else(|| (clean_name(&m.von_person).unwrap_or("someone".into()), false));
+        let message = Message {
+            to: m.ziel,
+            text: m.text,
+            from: m.von,
+        };
+        if let Err(e) = take_in(&name, trusted, message, false) {
+            eprintln!("message from {name} through AI Brain not taken: {e}");
+        }
+    }
+    Ok(count)
+}
+
 /// Tells every session here, as a flash.
 fn notify(text: &str) {
     for session in crate::client::local_sessions() {
@@ -574,6 +714,33 @@ mod tests {
     }
 
     #[test]
+    fn what_ai_brain_hands_over() {
+        // As `ai-brain-cli nachricht abholen --json` answers (#495).
+        let out = r#"[{"id":123,"von_person":"bastian","von":"claude@omarchy:imkr/0",
+            "ziel":"api/claude","text":"hi","zeit":1760000000}]"#;
+        let fetched: Vec<Fetched> = serde_json::from_str(out).unwrap();
+        assert_eq!(fetched[0].von_person, "bastian");
+        assert_eq!(fetched[0].ziel, "api/claude");
+        assert_eq!(
+            answer_address("bastian", &fetched[0].von),
+            "claude@bastian:imkr/0"
+        );
+    }
+
+    #[test]
+    fn contacts_of_both_ways_load() {
+        // Saved before contacts through AI Brain, and one through it.
+        let old = r#"[{"name":"martin","url":"http://100.97.1.2:4657/","token":"t",
+            "key":"k","trusted":false,"since":1}]"#;
+        let brain = r#"[{"name":"martin","brain":"martin","since":1}]"#;
+        let old: Vec<Contact> = serde_json::from_str(old).unwrap();
+        let brain: Vec<Contact> = serde_json::from_str(brain).unwrap();
+        assert!(old[0].brain.is_none());
+        assert_eq!(brain[0].brain.as_deref(), Some("martin"));
+        assert!(brain[0].url.is_empty());
+    }
+
+    #[test]
     fn urls_as_typed() {
         assert_eq!(
             normal_url("100.97.1.2:4657").unwrap(),
@@ -599,6 +766,7 @@ mod tests {
             url: String::new(),
             token: String::new(),
             key: String::new(),
+            brain: None,
             trusted: false,
             since: 0,
         };

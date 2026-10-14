@@ -173,10 +173,11 @@ For scripts and agents:
   popup [--name N] [--title T] [-- command args...]
                                         show or hide a popup running the command,
                                         started the first time; Ctrl+B Space too
-  connect [invite | join URL CODE | inbox | accept ID | decline ID
-          | trust NAME | untrust NAME | rm NAME]
-                other people's imkrs: pair once with a code, then `msg NAME:session/pane`
-                both ways over the web view in a VPN; their messages wait for you
+  connect [invite | join URL CODE | brain PERSON | fetch | inbox | accept ID
+          | decline ID | trust NAME | untrust NAME | rm NAME]
+                other people's imkrs: pair once with a code (web view in a VPN) or
+                through AI Brain (`brain`, needs ai-brain-cli), then
+                `msg NAME:session/pane` both ways; their messages wait for you
   outbox        messages waiting here for machines out of reach (they
                 pick them up when they next ask this machine)
   read [ADDRESS|--pane N] [--lines N]   print a pane's screen (here, another session or machine)
