@@ -1337,8 +1337,7 @@ pub fn new_hosted(here: &std::path::Path, remote: &client::Remote, args: &[Strin
         new.push("--".into());
         new.extend(command.iter().cloned());
     }
-    let quoted: Vec<String> = new.iter().map(|w| client::sh_quote(w)).collect();
-    let words: Vec<&str> = quoted.iter().map(String::as_str).collect();
+    let words: Vec<&str> = new.iter().map(String::as_str).collect();
     let pane = client::remote_output(host, &words, "")?;
     // Its sessions and agents show up here from now on.
     client::remember_host(host);

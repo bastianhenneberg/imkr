@@ -253,9 +253,12 @@ const PROXY_READY: u8 = 0x06;
 /// ~/.local/bin added, which are often only on the PATH of interactive
 /// shells. `args` are session names and fixed words, nothing to quote.
 pub fn remote_command(args: &[&str]) -> String {
+    // Each word quoted here: `--from "the user at laptop"` arrived as four
+    // words, and the message for pane "user" failed.
+    let words: Vec<String> = args.iter().map(|w| sh_quote(w)).collect();
     let command = format!(
         "PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH exec imkr {}",
-        args.join(" ")
+        words.join(" ")
     );
     format!("exec \"${{SHELL:-sh}}\" -lc {}", sh_quote(&command))
 }
@@ -1668,9 +1671,19 @@ mod tests {
         assert_eq!(sh_quote("~/a b"), "'~/a b'");
         assert_eq!(sh_quote("it's"), r"'it'\''s'");
         assert_eq!(sh_quote(""), "''");
-        // A quoted word survives the login shell's `-lc` around it.
-        let line = remote_command(&[&sh_quote("echo 'x y'")]);
+        // Each word arrives as one, through the login shell's `-lc` too.
+        let line = remote_command(&["msg", "--from", "the user at x", "it's"]);
         assert!(line.starts_with("exec \"${SHELL:-sh}\" -lc '"), "{line}");
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(line.replace("exec imkr", "printf '[%s]' "))
+            .env("SHELL", "/bin/sh")
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "[msg][--from][the user at x][it's]"
+        );
     }
 
     #[test]
