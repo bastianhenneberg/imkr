@@ -665,6 +665,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
     let mut hello = last.then_some((pick, flash));
     let mut reveal = None;
     let mut window = false;
+    let mut banner = None;
     let outcome = loop {
         match session(
             conn,
@@ -673,6 +674,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
             hello.take(),
             reveal.take(),
             std::mem::take(&mut window),
+            banner.take(),
         ) {
             // Another session, on this machine, the one shown or another.
             Ok(Outcome::Switch(target)) => {
@@ -691,15 +693,12 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                         (host, name) = (to_host, to_name);
                         remember_place(host.as_deref(), &name);
                         *SHOWN_SESSION.lock().unwrap() = name.clone();
-                        let mut next = next;
                         // This machine's setting, wherever the session is.
                         if crate::config::Config::load().0.session_banner {
-                            let text = match &host {
+                            banner = Some(match &host {
                                 Some(h) => format!("{h}: {name}"),
                                 None => name.clone(),
-                            };
-                            let _ = ClientMsg::Request(Request::Banner { text })
-                                .write_to(&mut next.writer);
+                            });
                         }
                         next
                     }
@@ -824,6 +823,7 @@ fn caps() -> Caps {
         windows: true,
         open: true,
         origin,
+        banner: None,
     }
 }
 
@@ -907,6 +907,7 @@ fn connect(host: Option<&str>, name: &str) -> Result<Conn> {
 /// With `hello`, imkr just started: whether the session list should open,
 /// and why it is not where it was last, if that is the case.
 /// With `reveal`, that pane is shown and focused there.
+/// With `banner`, the server shows it in the middle for a moment.
 fn session(
     mut conn: Conn,
     writer: &Writer,
@@ -914,13 +915,14 @@ fn session(
     hello: Option<(bool, Option<String>)>,
     reveal: Option<crate::layout::PaneId>,
     window: bool,
+    banner: Option<String>,
 ) -> Result<Outcome> {
     let mut to_server = std::mem::replace(&mut conn.writer, Box::new(io::sink()));
     let stream = &mut conn.reader;
     let (cols, rows) = terminal::size()?;
     ClientMsg::Attach { alone }.write_to(&mut to_server)?;
     ClientMsg::Event(Event::Resize(cols, rows)).write_to(&mut to_server)?;
-    ClientMsg::Caps(caps()).write_to(&mut to_server)?;
+    ClientMsg::Caps(Caps { banner, ..caps() }).write_to(&mut to_server)?;
     if let Some(pane) = reveal {
         ClientMsg::Request(Request::Reveal { pane }).write_to(&mut to_server)?;
     }

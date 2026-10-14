@@ -1549,6 +1549,9 @@ impl App {
             }
             AppEvent::ClientMsg(id, ClientMsg::Attach { alone }) => self.attach(id, alone),
             AppEvent::ClientMsg(id, ClientMsg::Caps(caps)) => {
+                if let Some(text) = caps.banner.clone() {
+                    self.banner = Some((text, Instant::now()));
+                }
                 if let Some(client) = self.client_mut(id) {
                     // Images the client does not know yet go out again.
                     client.resend_images |= caps.graphics && !client.caps.graphics;
@@ -2157,10 +2160,6 @@ impl App {
             }
             Request::Flash { text } => {
                 self.flash = Some(text);
-                Ok(serde_json::json!({}))
-            }
-            Request::Banner { text } => {
-                self.banner = Some((text, Instant::now()));
                 Ok(serde_json::json!({}))
             }
             Request::UseAccount { tool, name, pane } => {
@@ -9301,7 +9300,7 @@ impl App {
     }
 
     /// The session's name in the middle of the screen for a moment after a
-    /// client switched here (`Request::Banner`), over everything else.
+    /// client switched here (`Caps::banner`), over everything else.
     fn draw_banner(&self, frame: &mut Frame) {
         let Some((text, since)) = &self.banner else {
             return;

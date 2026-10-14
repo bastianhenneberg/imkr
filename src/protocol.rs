@@ -67,6 +67,11 @@ pub struct Caps {
     /// it can switch back to, with the sessions running there.
     #[serde(default)]
     pub origin: Option<Origin>,
+    /// Shown in the middle of the screen for a moment: the session's name,
+    /// in the first caps after a switch. A field rather than a request, so
+    /// older servers skip it instead of dropping the client.
+    #[serde(default)]
+    pub banner: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,9 +355,6 @@ pub enum Request {
     },
     /// Show `text` in the control bar, e.g. why a switch failed.
     Flash { text: String },
-    /// Show `text` in the middle of the screen for a moment: the session's
-    /// name, sent by a client that just switched here.
-    Banner { text: String },
     /// Read the plugin files again, after `imkr plugin add` and the like.
     ReloadPlugins,
     /// Use account `name` of agent `tool` (see `account`): for the shells
@@ -725,6 +727,7 @@ mod tests {
                     plugins: Vec::new(),
                     templates: Vec::new(),
                 }),
+                banner: Some("work".into()),
             }),
             ClientMsg::Request(Request::Status {
                 pane: 3,
