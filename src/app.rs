@@ -5668,7 +5668,8 @@ impl App {
 
     /// Tab and the arrows in the directory prompt: the arrows choose from
     /// the directories under it, Tab takes the chosen one, else completes
-    /// like a shell. False for other keys.
+    /// like a shell; Enter takes the chosen one and then starts. False for
+    /// keys the prompt handles itself.
     fn dir_key(&mut self, key: KeyEvent) -> bool {
         let Some(Prompt {
             purpose: PromptFor::SessionDir(..),
@@ -5706,6 +5707,18 @@ impl App {
                 }
                 self.dir_pick = None;
                 true
+            }
+            KeyCode::Enter => {
+                // A chosen directory is the one meant, then Enter starts as usual.
+                let picked = self
+                    .dir_pick
+                    .and_then(|i| self.dir_choices()?.into_iter().nth(i));
+                if let (Some(name), Some(prompt)) = (picked, &mut self.prompt) {
+                    let parent = crate::template::split_dir(&prompt.text).0.to_owned();
+                    prompt.text = format!("{parent}{name}");
+                }
+                self.dir_pick = None;
+                false
             }
             _ => {
                 // Typing changes what is listed.
