@@ -257,6 +257,11 @@ Projekt-Slug: `imkr`
   Session endet (`ServerMsg::Exited`): Client geht per `other_running_session` in eine andere
   laufende Session hier (Session-Liste offen, Flash), sonst Ende und `forget_place` (sonst
   startet `imkr` die beendete leer neu). Testwelten immer mit `unset IMKR_SOCKET`!
+  Nach einem Wechsel zeigt der neue Server den Namen 1,2 s mittig (`draw_banner`, `BANNER_FOR`),
+  übermittelt als `Caps::banner` in den ersten Caps, Einstellung `session_banner` des Client-Rechners.
+  Falle: neue `Request`-Varianten nie ungefragt auf Attach-Verbindungen schicken – ältere Server
+  können sie nicht parsen, `while let Ok(Some(msg))` endet und der Client fliegt raus. Neue Felder
+  mit `#[serde(default)]` in `Caps` überliest ein alter Server dagegen.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe
   „Tailscale“), `imkr hosts tailnet`. Test: Fake-`tailscale` im Scratchpad-bin.
