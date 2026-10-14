@@ -10171,7 +10171,17 @@ impl App {
             Mode::Jump => (
                 "JUMP",
                 t.accent,
-                "type what to jump to · its label jumps · Enter/Space the yellow one · Esc back · then v select, s again ends it, y copy",
+                match &self.jump {
+                    Some(jump) if jump.query.is_empty() => {
+                        "type a few letters of where to jump · Esc back"
+                    }
+                    Some(jump) if jump.targets.is_empty() => {
+                        "no match · ⌫ fewer letters · Esc back"
+                    }
+                    _ => {
+                        "press a label to jump there · Enter/Space the yellow one · more letters narrow it · Esc back"
+                    }
+                },
             ),
             Mode::Accounts(_) => (
                 "ACCOUNTS",
