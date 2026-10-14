@@ -25,6 +25,11 @@ const INVITE_FOR: u64 = 600;
 const INVITE_TRIES: u32 = 5;
 /// The longest message taken, in bytes.
 pub const MAX_TEXT: usize = 64 * 1024;
+/// The longest message AI Brain carries, in bytes.
+const MAX_BRAIN_TEXT: usize = 8 * 1024;
+/// How many message ids from AI Brain are remembered against doubles: it
+/// hands a message out again until it is confirmed.
+const BRAIN_SEEN: usize = 500;
 /// Messages kept waiting at most, the oldest go first.
 const MAX_WAITING: usize = 200;
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -322,6 +327,13 @@ pub fn send(contact: &Contact, to: &str, text: &str, from: &str) -> Result<Strin
         bail!("the message is longer than {} KB", MAX_TEXT / 1024);
     }
     if let Some(person) = &contact.brain {
+        if text.len() > MAX_BRAIN_TEXT {
+            bail!(
+                "AI Brain carries at most {} KB, this is {} KB",
+                MAX_BRAIN_TEXT / 1024,
+                text.len().div_ceil(1024)
+            );
+        }
         let body = serde_json::json!({ "rechner": null, "ziel": to, "von": from, "text": text });
         brain_cli(&["senden", "--an", person, "--json"], &body.to_string())
             .with_context(|| format!("not sent to {} through AI Brain", contact.name))?;
@@ -587,6 +599,8 @@ pub fn add_brain(person: &str, alias: Option<&str>) -> Result<Contact> {
 /// One message as `ai-brain-cli nachricht abholen` hands it over.
 #[derive(Debug, Deserialize)]
 struct Fetched {
+    id: u64,
+    /// Who sent it, as AI Brain verified; `von` is what their imkr said.
     von_person: String,
     #[serde(default)]
     von: String,
@@ -608,7 +622,15 @@ pub fn fetch_brain() -> Result<usize> {
     let fetched: Vec<Fetched> =
         serde_json::from_str(&out).context("ai-brain-cli answered no list of messages")?;
     let count = fetched.len();
+    // At least once, not exactly once: what was taken but not confirmed
+    // comes again, then only the confirmation is missing.
+    let mut seen: Vec<u64> = read("contact-brain-seen.json");
     for m in fetched {
+        let id = m.id;
+        if seen.contains(&id) {
+            let _ = brain_cli(&["bestaetigen", &id.to_string()], "");
+            continue;
+        }
         let (name, trusted) = contacts
             .iter()
             .find(|c| c.brain.as_deref() == Some(m.von_person.as_str()))
@@ -619,9 +641,17 @@ pub fn fetch_brain() -> Result<usize> {
             text: m.text,
             from: m.von,
         };
+        // A message that cannot be taken (no such pane address) is
+        // confirmed too: it would come again forever.
         if let Err(e) = take_in(&name, trusted, message, false) {
             eprintln!("message from {name} through AI Brain not taken: {e}");
         }
+        seen.push(id);
+        if seen.len() > BRAIN_SEEN {
+            seen.remove(0);
+        }
+        let _ = write("contact-brain-seen.json", &seen);
+        let _ = brain_cli(&["bestaetigen", &id.to_string()], "");
     }
     Ok(count)
 }

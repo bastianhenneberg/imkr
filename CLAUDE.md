@@ -350,7 +350,11 @@ Projekt-Slug: `imkr`
   Weg über AI Brain: `Contact::brain` (AI-Brain-Name), imkr meldet sich nicht selbst an, sondern
   ruft `ai-brain-cli nachricht kontakte|senden|abholen --json` (`brain_cli`, Vertrag mit der
   ai-brain-cli-Session abgestimmt). `fetch_brain` je `BRAIN_EVERY` in `watch_places`, nur mit
-  so einem Kontakt; Eingang über `take_in` wie beim NetBird-Weg. Test: Attrappe
+  so einem Kontakt; Eingang über `take_in` wie beim NetBird-Weg. Zustellung mindestens einmal:
+  AI Brain gibt Unbestätigtes nach 5 min erneut aus, `fetch_brain` bestätigt jede id
+  (`bestaetigen`) und überspringt schon gesehene (`contact-brain-seen.json`, `BRAIN_SEEN`);
+  `take_in` nie unter `locked` aufrufen (flock je fd, verschachtelt = Verklemmung). Text max.
+  8 KB (`MAX_BRAIN_TEXT`). `von_person` ist von AI Brain geprüft, `von` nur Angabe. Test: Attrappe
   `ai-brain-cli` im PATH beider Welten mit gemeinsamem Ordner als Briefkasten.
 - Inbox `Ctrl+B i` (`inbox_items`, `inbox_key`, `draw_inbox`): blocked/done Agents aus
   `agent_entries` mit `agent::tail` (Server liefert es in `list()` als `tail`, über
