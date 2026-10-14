@@ -359,6 +359,24 @@ to your laptop. A message for a machine out of reach waits in the sender's outbo
 outbox`), and the machine it is for picks it up when it next asks that one, every 15 seconds
 while its imkr runs, so a laptop that was offline gets it later.
 
+### Other people's imkrs
+
+Colleagues with their own imkr (their machine, their Claude account) can message your agents,
+and you theirs, without ssh to each other's machines. Pair once, both sides turn on the web view
+(`web = true`) in a VPN such as NetBird or Tailscale:
+
+```bash
+imkr connect invite                                 # you: prints a code, good for 10 minutes
+imkr connect join http://100.97.1.2:4657/ ABCD-EFGH # they: what invite printed
+imkr msg martin:api/claude "Can you look at the login bug?"
+```
+
+A contact's name is the machine part of an address. Their messages wait until you accept them:
+`imkr connect inbox`, `accept ID`, `decline ID`, or `Ctrl+B i`. `imkr connect trust NAME` types
+them in right away like your own, `untrust` asks again, `rm NAME` ends it. A contact can only
+send messages: no screens, no keys, no shell. Answers go back the same way, the message says
+how.
+
 ### MCP
 
 `imkr mcp` serves the same as tools over MCP on stdin/stdout: `imkr_agents`, `imkr_panes`,

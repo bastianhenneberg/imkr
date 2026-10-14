@@ -7,6 +7,7 @@ mod cli;
 mod client;
 mod clipboard;
 mod config;
+mod contacts;
 mod fdpass;
 mod filetree;
 mod graphics;
@@ -172,6 +173,10 @@ For scripts and agents:
   popup [--name N] [--title T] [-- command args...]
                                         show or hide a popup running the command,
                                         started the first time; Ctrl+B Space too
+  connect [invite | join URL CODE | inbox | accept ID | decline ID
+          | trust NAME | untrust NAME | rm NAME]
+                other people's imkrs: pair once with a code, then `msg NAME:session/pane`
+                both ways over the web view in a VPN; their messages wait for you
   outbox        messages waiting here for machines out of reach (they
                 pick them up when they next ask this machine)
   read [ADDRESS|--pane N] [--lines N]   print a pane's screen (here, another session or machine)
@@ -269,6 +274,7 @@ fn main() -> Result<()> {
         ["list", ..] => cli::list(&args[1..]),
         ["send", ..] => cli::send(&args[1..]),
         ["msg", ..] => cli::msg(&args[1..]),
+        ["connect", ..] => cli::connect(&args[1..]),
         ["agents", ..] => cli::agents(&args[1..]),
         ["subscribe", ..] => cli::subscribe(&args[1..], chosen),
         ["worktree", ..] => cli::worktree(&args[1..]),

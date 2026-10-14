@@ -34,7 +34,7 @@ const PAIR_TRIES: u32 = 5;
 const COOKIE: &str = "imkr_device";
 /// The longest request taken: headers, and a body of text to type.
 const MAX_HEAD: usize = 16 * 1024;
-const MAX_BODY: usize = 256 * 1024;
+pub(crate) const MAX_BODY: usize = 256 * 1024;
 /// How often a terminal's socket looks for output while it waits for input.
 const POLL: Duration = Duration::from_millis(15);
 
@@ -227,7 +227,7 @@ fn qr_lines(text: &str) -> Option<Vec<String>> {
     Some(lines)
 }
 
-fn url(addr: SocketAddr) -> String {
+pub(crate) fn url(addr: SocketAddr) -> String {
     format!("http://{addr}/")
 }
 
@@ -466,7 +466,7 @@ fn save_devices(devices: &[Device]) -> Result<()> {
 }
 
 /// Writes a file only this user reads: tokens let anyone type into panes.
-fn write_private(path: &PathBuf, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_private(path: &PathBuf, bytes: &[u8]) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -483,13 +483,13 @@ fn write_private(path: &PathBuf, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
 }
 
-fn random_bytes<const N: usize>() -> Result<[u8; N]> {
+pub(crate) fn random_bytes<const N: usize>() -> Result<[u8; N]> {
     let mut bytes = [0u8; N];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
     Ok(bytes)
@@ -498,13 +498,7 @@ fn random_bytes<const N: usize>() -> Result<[u8; N]> {
 /// A new pairing code, replacing any earlier one: `ABCD-EFGH`, without
 /// letters that look alike.
 fn new_code() -> Result<String> {
-    const LETTERS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let bytes = random_bytes::<8>()?;
-    let mut code: String = bytes
-        .iter()
-        .map(|b| char::from(LETTERS[usize::from(*b) % LETTERS.len()]))
-        .collect();
-    code.insert(4, '-');
+    let code = random_code()?;
     let pairing = Pairing {
         code: code.clone(),
         until: now() + PAIR_FOR,
@@ -514,7 +508,37 @@ fn new_code() -> Result<String> {
     Ok(code)
 }
 
-fn same_code(a: &str, b: &str) -> bool {
+/// A code to type over: `ABCD-EFGH`, without letters that look alike.
+pub(crate) fn random_code() -> Result<String> {
+    const LETTERS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let bytes = random_bytes::<8>()?;
+    let mut code: String = bytes
+        .iter()
+        .map(|b| char::from(LETTERS[usize::from(*b) % LETTERS.len()]))
+        .collect();
+    code.insert(4, '-');
+    Ok(code)
+}
+
+/// A secret for a device or a contact, as 64 hex digits.
+pub(crate) fn random_token() -> Result<String> {
+    Ok(random_bytes::<32>()?
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// Whether two secrets are the same, in a time that does not tell how much
+/// of one was right.
+pub(crate) fn same_secret(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
+pub(crate) fn same_code(a: &str, b: &str) -> bool {
     let clean = |s: &str| -> String {
         s.chars()
             .filter(char::is_ascii_alphanumeric)
@@ -544,11 +568,7 @@ fn pair(code: &str, name: &str) -> Result<(String, String), &'static str> {
         return Err("Wrong code.");
     }
     let _ = std::fs::remove_file(&path);
-    let token: String = random_bytes::<32>()
-        .map_err(|_| "no randomness")?
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect();
+    let token = random_token().map_err(|_| "no randomness")?;
     let mut devices = load_devices();
     let mut name: String = name
         .chars()
@@ -775,7 +795,7 @@ impl Response {
 
 /// A line for the log (stderr, `<state>/web.log` when in the background),
 /// with the time and who asked.
-fn log(peer: &str, text: &str) {
+pub(crate) fn log(peer: &str, text: &str) {
     eprintln!("{} {peer} {text}", stamp());
 }
 
@@ -850,6 +870,30 @@ fn route(request: &HttpRequest) -> Response {
         ("GET", "/manifest.json") => cached("application/manifest+json", MANIFEST.as_bytes()),
         ("GET", "/icon.svg") => cached("image/svg+xml", ICON.as_bytes()),
         ("GET", "/symbols.woff2") => cached("font/woff2", SYMBOLS_FONT),
+        // Other people's imkrs, not browsers: those send `Origin`, and
+        // `Content-Type: application/json` takes a preflight we never allow.
+        ("POST", "/contact/join" | "/contact/message")
+            if request.header("origin").is_some()
+                || request.header("content-type") != Some("application/json") =>
+        {
+            Response::error("403 Forbidden", "only for imkr")
+        }
+        ("POST", "/contact/join") => match crate::contacts::accept_join(&request.body) {
+            Ok(value) => Response::json(&value).noted(format!(
+                "new contact {}",
+                value["as"].as_str().unwrap_or("?")
+            )),
+            Err(e) => Response::error("403 Forbidden", &e),
+        },
+        ("POST", "/contact/message") => {
+            let token = request
+                .header("authorization")
+                .and_then(|h| h.strip_prefix("Bearer "));
+            match crate::contacts::receive(token, &request.body) {
+                Ok(value) => Response::json(&value),
+                Err(e) => Response::error("403 Forbidden", &e),
+            }
+        }
         ("GET", "/pair") => pair_page(request.query.get("code").map_or("", String::as_str), ""),
         ("POST", "/pair") => {
             if !request.same_origin() {

@@ -218,6 +218,101 @@ fn own_address() -> String {
     }
 }
 
+/// `imkr connect`: other people's imkrs, paired once, that may send
+/// messages here and get ours.
+pub fn connect(args: &[String]) -> Result<()> {
+    use crate::contacts;
+    const USAGE: &str = "usage: imkr connect [invite | join URL CODE [--as YOU] [--name THEM] \
+                         | inbox | accept ID | decline ID | trust NAME | untrust NAME | rm NAME]";
+    let mut rest = args.to_vec();
+    let own = take_value(&mut rest, "--as")?;
+    let alias = take_value(&mut rest, "--name")?;
+    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
+    match rest.as_slice() {
+        [] | ["ls" | "list"] => {
+            let contacts = contacts::load();
+            if contacts.is_empty() {
+                println!(
+                    "no contacts yet: `imkr connect invite` here, then `imkr connect join` there"
+                );
+            }
+            for c in &contacts {
+                let trust = if c.trusted {
+                    "trusted, typed right away"
+                } else {
+                    "asks first"
+                };
+                println!("{:<16} {:<28} {trust}", c.name, c.url);
+            }
+            let waiting = contacts::waiting().len();
+            if waiting > 0 {
+                println!("{waiting} message(s) wait: `imkr connect inbox`");
+            }
+        }
+        ["invite"] => {
+            let (code, url) = contacts::invite()?;
+            println!("Code {code}, good for 10 minutes. On the other machine:");
+            println!();
+            println!("  imkr connect join {url} {code}");
+            println!();
+            println!("Both of you are contacts of each other then; messages ask first.");
+        }
+        ["join", url, code] => {
+            let own = own.unwrap_or_else(contacts::own_name);
+            let contact = contacts::join(url, code, &own, alias.as_deref())?;
+            println!(
+                "{} is a contact now, they know you as {own}: `imkr msg {}:SESSION/PANE TEXT`",
+                contact.name, contact.name
+            );
+        }
+        ["inbox"] => {
+            let waiting = contacts::waiting();
+            if waiting.is_empty() {
+                println!("no messages wait");
+            }
+            for m in waiting {
+                println!(
+                    "#{} from {} to {} ({}):",
+                    m.id,
+                    m.from,
+                    m.to,
+                    crate::sidebar::age(std::time::Duration::from_secs(
+                        crate::web::now().saturating_sub(m.at)
+                    ))
+                );
+                for line in m.text.lines() {
+                    println!("    {line}");
+                }
+            }
+        }
+        ["accept", id] => println!("{}", contacts::accept(message_id(id)?)?),
+        ["decline", id] => {
+            contacts::decline(message_id(id)?)?;
+            println!("thrown away");
+        }
+        ["trust", name] => {
+            contacts::set_trusted(name, true)?;
+            println!("messages from {name} are typed right away now");
+        }
+        ["untrust", name] => {
+            contacts::set_trusted(name, false)?;
+            println!("messages from {name} wait for you again");
+        }
+        ["rm" | "forget", name] => {
+            contacts::remove(name)?;
+            println!("{name} can no longer send here");
+        }
+        _ => bail!(USAGE),
+    }
+    Ok(())
+}
+
+fn message_id(id: &str) -> Result<u64> {
+    id.trim_start_matches('#')
+        .parse()
+        .with_context(|| format!("{id}: say the number `imkr connect inbox` shows"))
+}
+
 /// `machine:session/who`, `session/who` or `who`, the machine left out
 /// when it is this one.
 fn parse_address(to: &str) -> Result<(Option<String>, Option<String>, String)> {
@@ -350,6 +445,18 @@ pub fn msg(args: &[String]) -> Result<()> {
         bail!(USAGE);
     }
     let (machine, session, who) = parse_address(to)?;
+    // Another person's imkr: through its web server, never ssh.
+    if let Some(contact) = machine.as_deref().and_then(crate::contacts::find) {
+        let to = match &session {
+            Some(session) => format!("{session}/{who}"),
+            None => who.clone(),
+        };
+        println!("{}", crate::contacts::send(&contact, &to, &text, &from)?);
+        if wait {
+            println!("not waiting for an answer: it comes as a message of its own");
+        }
+        return Ok(());
+    }
     if let Some(machine) = machine {
         let session = session.unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned());
         let mut args = vec!["-s", &session, "msg", "--stdin", "--from", &from];

@@ -336,6 +336,17 @@ Projekt-Slug: `imkr`
   24 h); der Zielrechner holt im Host-Polling (`watch_places`) per `fetch_outbox` → ssh
   `imkr outbox take NAME` (`take_outbox`, Datei erst umbenannt, dann gelesen) ab und stellt per
   `Request::Message` zu. Server brauchen so kein ssh zurück. `read` nimmt Adressen wie `msg`.
+- Kontakte (andere Personen, #495): `src/contacts.rs`, `imkr connect` (`cli::connect`). Kopplung
+  per Code (`invite` → `<state>/contact-invite.json`, 10 min, 5 Versuche) über den Web-Server
+  (`web` muss an sein, Adresse nicht loopback): `join` POSTet `/contact/join` mit eigenem Token,
+  Antwort ist der Token der anderen Seite; `contacts.json` (0600) hält je Kontakt `token` (wir
+  senden) und `key` (sie senden). `msg NAME:session/pane` geht bei einem Kontakt per
+  `/contact/message` (Bearer, HTTP von Hand in `contacts::post`), nie per ssh. Der Empfänger legt
+  sie nach `contact-inbox.json` (`waiting`, Flash an alle Sessions), `trusted` stellt direkt zu;
+  `answer_address` macht aus der Absender-Maschine den Kontaktnamen. Die Endpunkte lehnen
+  Anfragen mit `Origin` oder ohne `Content-Type: application/json` ab (Browser). Dateizugriffe
+  unter `flock` (`locked`). Test: zwei Welten mit eigenem `web_listen` auf der VPN-Adresse,
+  andere Ports; laufende Web-Server halten das Binary fest (zweite Kopie nehmen).
 - Inbox `Ctrl+B i` (`inbox_items`, `inbox_key`, `draw_inbox`): blocked/done Agents aus
   `agent_entries` mit `agent::tail` (Server liefert es in `list()` als `tail`, über
   `AgentInfo::tail` auch für andere Sessions/Rechner). Antwort per `App::answer`: lokal
