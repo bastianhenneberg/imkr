@@ -257,7 +257,8 @@ Projekt-Slug: `imkr`
   Session endet (`ServerMsg::Exited`): Client geht per `other_running_session` in eine andere
   laufende Session hier (Session-Liste offen, Flash), sonst Ende und `forget_place` (sonst
   startet `imkr` die beendete leer neu). Testwelten immer mit `unset IMKR_SOCKET`!
-  Nach einem Wechsel zeigt der neue Server den Namen 1,2 s mittig (`draw_banner`, `BANNER_FOR`),
+  Nach einem Wechsel zeigt der neue Server den Namen 1,2 s (`draw_banner`, `BANNER_FOR`, Ort
+  `Caps::banner_at` = `session_banner_at`; löscht nur den Text darunter, nicht dessen Hintergrund),
   übermittelt als `Caps::banner` in den ersten Caps, Einstellung `session_banner` des Client-Rechners.
   Falle: neue `Request`-Varianten nie ungefragt auf Attach-Verbindungen schicken – ältere Server
   können sie nicht parsen, `while let Ok(Some(msg))` endet und der Client fliegt raus. Neue Felder

@@ -787,7 +787,7 @@ pub struct App {
     /// the next key.
     flash: Option<String>,
     /// What `draw_banner` shows, since when.
-    banner: Option<(String, Instant)>,
+    banner: Option<(String, crate::config::BannerAt, Instant)>,
     /// The session or hive a confirmed `Action` is about, by name: a list
     /// index could point elsewhere by the time `y` is pressed.
     confirm_target: Option<String>,
@@ -1550,7 +1550,7 @@ impl App {
             AppEvent::ClientMsg(id, ClientMsg::Attach { alone }) => self.attach(id, alone),
             AppEvent::ClientMsg(id, ClientMsg::Caps(caps)) => {
                 if let Some(text) = caps.banner.clone() {
-                    self.banner = Some((text, Instant::now()));
+                    self.banner = Some((text, caps.banner_at, Instant::now()));
                 }
                 if let Some(client) = self.client_mut(id) {
                     // Images the client does not know yet go out again.
@@ -9302,29 +9302,48 @@ impl App {
     /// The session's name in the middle of the screen for a moment after a
     /// client switched here (`Caps::banner`), over everything else.
     fn draw_banner(&self, frame: &mut Frame) {
-        let Some((text, since)) = &self.banner else {
+        let Some((text, at, since)) = &self.banner else {
             return;
         };
         if since.elapsed() >= BANNER_FOR {
             return;
         }
         let t = theme::current();
-        let width = (text.chars().count() as u16 + 10).min(frame.area().width);
         let area = frame.area();
+        let label = format!("⬢ {text}");
+        let width = (label.chars().count() as u16 + 8).min(area.width);
         let height = 3.min(area.height);
+        // The middle of the screen, or of its top or bottom third.
+        let third = area.height / 3;
+        let (top, span) = match at {
+            crate::config::BannerAt::Middle => (area.y, area.height),
+            crate::config::BannerAt::Top => (area.y, third),
+            crate::config::BannerAt::Bottom => (area.bottom() - third, third),
+        };
         let rect = Rect::new(
             area.x + (area.width - width) / 2,
-            area.y + (area.height - height) / 2,
+            top + span.saturating_sub(height) / 2,
             width,
             height,
         );
+        // Only the text below goes, its background stays: a cleared
+        // rectangle would show square behind the rounded corners wherever
+        // the program below colours its background.
+        let buf = frame.buffer_mut();
+        for y in rect.top()..rect.bottom() {
+            for x in rect.left()..rect.right() {
+                let cell = &mut buf[(x, y)];
+                cell.set_symbol(" ");
+                cell.fg = Color::Reset;
+                cell.modifier = Modifier::empty();
+            }
+        }
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(t.accent));
-        frame.render_widget(Clear, rect);
         frame.render_widget(
             Paragraph::new(Line::styled(
-                format!("⬢ {text}"),
+                label,
                 Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
             ))
             .alignment(ratatui::layout::Alignment::Center)

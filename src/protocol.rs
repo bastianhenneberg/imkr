@@ -72,6 +72,10 @@ pub struct Caps {
     /// older servers skip it instead of dropping the client.
     #[serde(default)]
     pub banner: Option<String>,
+    /// Where `banner` shows, as the client's machine is set up. A field of
+    /// its own: servers of v0.21.8 read `banner` as a string.
+    #[serde(default)]
+    pub banner_at: crate::config::BannerAt,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -728,6 +732,7 @@ mod tests {
                     templates: Vec::new(),
                 }),
                 banner: Some("work".into()),
+                banner_at: crate::config::BannerAt::Top,
             }),
             ClientMsg::Request(Request::Status {
                 pane: 3,

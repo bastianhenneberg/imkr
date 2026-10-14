@@ -694,11 +694,13 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                         remember_place(host.as_deref(), &name);
                         *SHOWN_SESSION.lock().unwrap() = name.clone();
                         // This machine's setting, wherever the session is.
-                        if crate::config::Config::load().0.session_banner {
-                            banner = Some(match &host {
+                        let config = crate::config::Config::load().0;
+                        if config.session_banner {
+                            let text = match &host {
                                 Some(h) => format!("{h}: {name}"),
                                 None => name.clone(),
-                            });
+                            };
+                            banner = Some((text, config.session_banner_at));
                         }
                         next
                     }
@@ -824,6 +826,7 @@ fn caps() -> Caps {
         open: true,
         origin,
         banner: None,
+        banner_at: crate::config::BannerAt::Middle,
     }
 }
 
@@ -907,7 +910,7 @@ fn connect(host: Option<&str>, name: &str) -> Result<Conn> {
 /// With `hello`, imkr just started: whether the session list should open,
 /// and why it is not where it was last, if that is the case.
 /// With `reveal`, that pane is shown and focused there.
-/// With `banner`, the server shows it in the middle for a moment.
+/// With `banner`, the server shows it for a moment, where it says.
 fn session(
     mut conn: Conn,
     writer: &Writer,
@@ -915,14 +918,22 @@ fn session(
     hello: Option<(bool, Option<String>)>,
     reveal: Option<crate::layout::PaneId>,
     window: bool,
-    banner: Option<String>,
+    banner: Option<(String, crate::config::BannerAt)>,
 ) -> Result<Outcome> {
     let mut to_server = std::mem::replace(&mut conn.writer, Box::new(io::sink()));
     let stream = &mut conn.reader;
     let (cols, rows) = terminal::size()?;
     ClientMsg::Attach { alone }.write_to(&mut to_server)?;
     ClientMsg::Event(Event::Resize(cols, rows)).write_to(&mut to_server)?;
-    ClientMsg::Caps(Caps { banner, ..caps() }).write_to(&mut to_server)?;
+    let caps = match banner {
+        Some((text, at)) => Caps {
+            banner: Some(text),
+            banner_at: at,
+            ..caps()
+        },
+        None => caps(),
+    };
+    ClientMsg::Caps(caps).write_to(&mut to_server)?;
     if let Some(pane) = reveal {
         ClientMsg::Request(Request::Reveal { pane }).write_to(&mut to_server)?;
     }

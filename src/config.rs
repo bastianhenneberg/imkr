@@ -20,6 +20,27 @@ pub enum Side {
     Right,
 }
 
+/// Where the session's name shows after a switch: the middle of the
+/// screen, or the middle of its top or bottom third.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BannerAt {
+    #[default]
+    Middle,
+    Top,
+    Bottom,
+}
+
+impl BannerAt {
+    pub fn name(self) -> &'static str {
+        match self {
+            BannerAt::Middle => "middle",
+            BannerAt::Top => "top third",
+            BannerAt::Bottom => "bottom third",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WhichKey {
@@ -230,6 +251,8 @@ pub struct Config {
     /// Shows the session's name in the middle of the screen for a moment
     /// after switching to it.
     pub session_banner: bool,
+    /// Where it shows: middle, top or bottom (third).
+    pub session_banner_at: BannerAt,
     /// Keeps `imkr web` running, the sessions in a phone's browser.
     pub web: bool,
     /// Where `imkr web` listens, e.g. `100.97.56.232:4657`; without it on
@@ -419,6 +442,7 @@ impl Default for Config {
             checkpoints: false,
             sessions_on_start: false,
             session_banner: true,
+            session_banner_at: BannerAt::Middle,
             web: false,
             web_listen: None,
             name: None,
@@ -654,6 +678,19 @@ pub const SETTINGS: &[Setting] = &[
         name: "Session name on switch",
         value: |c| if c.session_banner { "on" } else { "off" }.to_owned(),
         step: |c, _| c.session_banner = !c.session_banner,
+    },
+    Setting {
+        name: "Session name position",
+        value: |c| c.session_banner_at.name().to_owned(),
+        step: |c, forward| {
+            const ALL: [BannerAt; 3] = [BannerAt::Top, BannerAt::Middle, BannerAt::Bottom];
+            let i = ALL
+                .iter()
+                .position(|a| *a == c.session_banner_at)
+                .unwrap_or(1);
+            let next = if forward { i + 1 } else { i + ALL.len() - 1 };
+            c.session_banner_at = ALL[next % ALL.len()];
+        },
     },
     Setting {
         name: "Images",
