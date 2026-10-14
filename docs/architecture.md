@@ -128,7 +128,7 @@ flowchart LR
     R -->|every 20 s| H[(scrollback/<br/>3000 lines per pane)]
     J --> B[next imkr after a reboot]
     H --> B
-    B --> W[windows and splits back<br/>shells in their directories<br/>claude --resume id]
+    B --> W["windows and splits back<br/>shells in their directories<br/>claude --resume id"]
 ```
 
 Processes cannot survive a reboot, but the layout can: imkr saves it while it runs. The next

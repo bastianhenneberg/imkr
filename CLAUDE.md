@@ -441,5 +441,8 @@ cargo test
 
 - Doku: README ist die Startseite (kurz, Pitch, Install, erste Schritte, Links), alles
   Ausführliche steht in `docs/` je Thema. Neue Funktionen dort beschreiben, nicht in der README.
+  `docs/keys.md` und `docs/commands.md` werden aus `BINDINGS`/`USAGE` erzeugt (Test schlägt bei
+  Abweichung an): `IMKR_WRITE_DOCS=1 cargo test docs_`. Diagramme als Mermaid; Labels mit `--`
+  in Anführungszeichen setzen.
 - Lizenz: MIT OR Apache-2.0
 - Code und Kommentare auf Englisch
