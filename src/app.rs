@@ -2180,6 +2180,10 @@ impl App {
                     Some(id) => self.switch_account(id, &account),
                 }
             }
+            Request::ReloadConfig => {
+                self.reload_config();
+                Ok(serde_json::json!({}))
+            }
             Request::ReloadPlugins => {
                 self.load_plugins();
                 Ok(serde_json::json!({ "plugins": self.own_plugins.len() }))
@@ -4088,17 +4092,7 @@ impl App {
                 });
                 self.mode = Mode::Picker;
             }
-            Command::ReloadConfig => {
-                let (config, error) = Config::load();
-                self.config = config;
-                self.apply_theme();
-                self.load_plugins();
-                self.flash = Some(match (error, self.config.hook_problems()) {
-                    (Some(e), _) => format!("config has an error, using defaults: {e}"),
-                    (None, Some(problem)) => problem,
-                    (None, None) => "config reloaded".into(),
-                });
-            }
+            Command::ReloadConfig => self.reload_config(),
             Command::ScrollbackEditor => self.scrollback_in_editor(),
             Command::Swap(forward) => self.ws.swap(forward),
             Command::Equalize => self.ws.layout.equalize(),
@@ -9326,18 +9320,7 @@ impl App {
             width,
             height,
         );
-        // Only the text below goes, its background stays: a cleared
-        // rectangle would show square behind the rounded corners wherever
-        // the program below colours its background.
-        let buf = frame.buffer_mut();
-        for y in rect.top()..rect.bottom() {
-            for x in rect.left()..rect.right() {
-                let cell = &mut buf[(x, y)];
-                cell.set_symbol(" ");
-                cell.fg = Color::Reset;
-                cell.modifier = Modifier::empty();
-            }
-        }
+        frame.render_widget(Clear, rect);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(t.accent));
@@ -9350,6 +9333,20 @@ impl App {
             .block(block),
             rect,
         );
+    }
+
+    /// Reads the config and the plugins again; the control bar says how
+    /// that went.
+    fn reload_config(&mut self) {
+        let (config, error) = Config::load();
+        self.config = config;
+        self.apply_theme();
+        self.load_plugins();
+        self.flash = Some(match (error, self.config.hook_problems()) {
+            (Some(e), _) => format!("config has an error, using defaults: {e}"),
+            (None, Some(problem)) => problem,
+            (None, None) => "config reloaded".into(),
+        });
     }
 
     /// Every account of every agent, grouped by agent, with what uses it:

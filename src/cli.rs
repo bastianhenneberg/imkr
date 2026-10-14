@@ -2538,15 +2538,7 @@ pub fn hosts(args: &[String]) -> Result<()> {
 /// once: installed where imkr is missing, upgraded with its sessions
 /// elsewhere.
 fn hosts_sync() -> Result<()> {
-    let mut hosts = crate::config::Config::load().0.hosts;
-    for host in client::remembered_hosts() {
-        if !hosts.contains(&host) {
-            hosts.push(host);
-        }
-    }
-    if hosts.is_empty() {
-        bail!("no other machines known: `imkr hosts add NAME` or `imkr --host NAME`");
-    }
+    let hosts = known_hosts()?;
     let threads: Vec<_> = hosts
         .into_iter()
         .map(|host| {
@@ -2571,15 +2563,30 @@ fn hosts_sync() -> Result<()> {
         })
         .collect();
     let mut failed = false;
+    let mut current = Vec::new();
     for thread in threads {
         let Ok((host, result)) = thread.join() else {
             continue;
         };
         match result {
-            Ok(done) => println!("{host:<20} {done}"),
+            Ok(done) => {
+                println!("{host:<20} {done}");
+                current.push(host);
+            }
             Err(e) => {
                 failed = true;
                 println!("{host:<20} {e:#}");
+            }
+        }
+    }
+    // Then the settings, one machine after the other: two at once would
+    // write the same files here.
+    for host in current {
+        match sync_settings_with(&host, true) {
+            Ok(done) => println!("{host:<20} {done}"),
+            Err(e) => {
+                failed = true;
+                println!("{host:<20} settings: {e:#}");
             }
         }
     }
@@ -2587,6 +2594,130 @@ fn hosts_sync() -> Result<()> {
         bail!("not every machine is up to date");
     }
     Ok(())
+}
+
+/// The other machines: from the config, then the remembered ones.
+fn known_hosts() -> Result<Vec<String>> {
+    let mut hosts = crate::config::Config::load().0.hosts;
+    for host in client::remembered_hosts() {
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    if hosts.is_empty() {
+        bail!("no other machines known: `imkr hosts add NAME` or `imkr --host NAME`");
+    }
+    Ok(hosts)
+}
+
+/// `imkr settings <sync [--yes] [HOST…] | export | import>`: the settings
+/// shared with the other machines, see `settings`. `export` and `import`
+/// are what `sync` runs there.
+pub fn settings(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr settings sync [--yes] [HOST…]";
+    match args {
+        [cmd] if cmd == "export" => {
+            println!("{}", serde_json::to_string(&crate::settings::collect()?)?);
+            Ok(())
+        }
+        [cmd] if cmd == "import" => {
+            let items: Vec<crate::settings::Item> = serde_json::from_reader(std::io::stdin())?;
+            let written = crate::settings::apply(&items)?;
+            reload_settings();
+            println!("{}", written.join(", "));
+            Ok(())
+        }
+        [cmd, rest @ ..] if cmd == "sync" => {
+            let yes = rest.iter().any(|a| a == "--yes" || a == "-y");
+            let named: Vec<String> = rest
+                .iter()
+                .filter(|a| !a.starts_with('-'))
+                .cloned()
+                .collect();
+            let hosts = if named.is_empty() {
+                known_hosts()?
+            } else {
+                named
+            };
+            let mut failed = false;
+            for host in hosts {
+                match sync_settings_with(&host, yes) {
+                    Ok(done) => println!("{host:<20} {done}"),
+                    Err(e) => {
+                        failed = true;
+                        println!("{host:<20} {e:#}");
+                    }
+                }
+            }
+            if failed {
+                bail!("not every machine was synced");
+            }
+            Ok(())
+        }
+        _ => bail!(USAGE),
+    }
+}
+
+/// The settings with `host`: what goes which way, listed, then copied,
+/// after asking unless `yes`. Says in one line what happened.
+fn sync_settings_with(host: &str, yes: bool) -> Result<String> {
+    use crate::settings::{Way, picked, plan};
+    let out = client::remote_output(host, &["settings", "export"], "")
+        .context("could not read its settings (is imkr there up to date? `imkr hosts sync`)")?;
+    let remote: Vec<crate::settings::Item> =
+        serde_json::from_str(&out).context("its settings did not come as expected")?;
+    let local = crate::settings::collect()?;
+    let (steps, undecided) = plan(&local, &remote);
+    for path in &undecided {
+        println!("{host:<20} {path}: differs, but both are as old, left alone");
+    }
+    if steps.is_empty() {
+        return Ok("settings: the same".into());
+    }
+    println!("{host:<20} settings:");
+    for step in &steps {
+        let arrow = match step.way {
+            Way::Pull => "← here ",
+            Way::Push => "→ there",
+        };
+        println!("  {arrow}  {} ({})", step.path, step.why);
+    }
+    if !yes && !ask(&format!("Copy these between here and {host}?"))? {
+        return Ok("settings: left as they were".into());
+    }
+    let pulls: Vec<_> = picked(&remote, &steps, Way::Pull)
+        .into_iter()
+        .cloned()
+        .collect();
+    let pushes: Vec<_> = picked(&local, &steps, Way::Push)
+        .into_iter()
+        .cloned()
+        .collect();
+    if !pulls.is_empty() {
+        crate::settings::apply(&pulls)?;
+        reload_settings();
+    }
+    if !pushes.is_empty() {
+        client::remote_output(
+            host,
+            &["settings", "import"],
+            &serde_json::to_string(&pushes)?,
+        )?;
+    }
+    Ok(format!(
+        "settings: {} came here, {} went there (replaced ones in .sync-backup next to each config)",
+        pulls.len(),
+        pushes.len()
+    ))
+}
+
+/// Tells every session here to read its config and plugins again.
+fn reload_settings() {
+    for name in protocol::sessions() {
+        if let Ok(path) = protocol::session_socket(&name) {
+            let _ = client::request_at(&path, Request::ReloadConfig);
+        }
+    }
 }
 
 /// `imkr update`: the running servers become this binary, keeping every

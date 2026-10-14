@@ -258,11 +258,18 @@ Projekt-Slug: `imkr`
   laufende Session hier (Session-Liste offen, Flash), sonst Ende und `forget_place` (sonst
   startet `imkr` die beendete leer neu). Testwelten immer mit `unset IMKR_SOCKET`!
   Nach einem Wechsel zeigt der neue Server den Namen 1,2 s (`draw_banner`, `BANNER_FOR`, Ort
-  `Caps::banner_at` = `session_banner_at`; löscht nur den Text darunter, nicht dessen Hintergrund),
+  `Caps::banner_at` = `session_banner_at`),
   übermittelt als `Caps::banner` in den ersten Caps, Einstellung `session_banner` des Client-Rechners.
   Falle: neue `Request`-Varianten nie ungefragt auf Attach-Verbindungen schicken – ältere Server
   können sie nicht parsen, `while let Ok(Some(msg))` endet und der Client fliegt raus. Neue Felder
   mit `#[serde(default)]` in `Caps` überliest ein alter Server dagegen.
+- Settings-Sync: `src/settings.rs` (`collect`: config + `templates/` + `layouts.json` + eigene
+  `plugins/*.toml`, keine Links; `plan` vergleicht ohne `LOCAL_KEYS`, neuere gewinnt, gleich alt
+  bleibt; `apply` prüft Pfade per `allowed`, sichert nach `.sync-backup/<zeit>/`, behält beim Config
+  die eigenen `LOCAL_KEYS`, prüft mit `Config::parse`, setzt die mtime der Quelle). CLI
+  `settings sync|export|import` (`cli::sync_settings_with`, drüben per `remote_output`), danach
+  `Request::ReloadConfig` an alle Sessions. `hosts sync` gleicht nach den Upgrades nacheinander ab.
+  Test: Fake-ssh, das nach `--` den Befehl mit HOME/IMKR_CONFIG der zweiten Welt ausführt.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe
   „Tailscale“), `imkr hosts tailnet`. Test: Fake-`tailscale` im Scratchpad-bin.

@@ -361,6 +361,8 @@ pub enum Request {
     Flash { text: String },
     /// Read the plugin files again, after `imkr plugin add` and the like.
     ReloadPlugins,
+    /// Read the config and plugins again, after `imkr settings sync`.
+    ReloadConfig,
     /// Use account `name` of agent `tool` (see `account`): for the shells
     /// this session starts from now on, or, with `pane`, for the agent in
     /// that pane right away, picking its conversation up again there.
