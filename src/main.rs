@@ -332,7 +332,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    /// docs/commands.md is `imkr --help` as a page; written anew with
+    /// docs/src/commands.md is `imkr --help` as a page; written anew with
     /// `IMKR_WRITE_DOCS=1 cargo test docs_commands`.
     #[test]
     fn docs_commands_are_current() {
@@ -340,14 +340,14 @@ mod tests {
             "# Commands\n\nEvery command, as `imkr --help` prints it. Generated from `src/main.rs`.\n\n```text\n{}\n```\n",
             super::USAGE.trim_end()
         );
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/commands.md");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/src/commands.md");
         if std::env::var_os("IMKR_WRITE_DOCS").is_some() {
             std::fs::write(path, &want).unwrap();
         }
         let have = std::fs::read_to_string(path).unwrap_or_default();
         assert!(
             have == want,
-            "docs/commands.md is out of date: IMKR_WRITE_DOCS=1 cargo test docs_commands"
+            "docs/src/commands.md is out of date: IMKR_WRITE_DOCS=1 cargo test docs_commands"
         );
     }
 }

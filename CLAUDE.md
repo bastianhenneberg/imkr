@@ -439,10 +439,12 @@ cargo test
 
 ## Konventionen
 
-- Doku: README ist die Startseite (kurz, Pitch, Install, erste Schritte, Links), alles
-  Ausführliche steht in `docs/` je Thema. Neue Funktionen dort beschreiben, nicht in der README.
-  `docs/keys.md` und `docs/commands.md` werden aus `BINDINGS`/`USAGE` erzeugt (Test schlägt bei
-  Abweichung an): `IMKR_WRITE_DOCS=1 cargo test docs_`. Diagramme als Mermaid; Labels mit `--`
-  in Anführungszeichen setzen.
+- Doku: README ist die Startseite (kurz, Pitch, Install, erste Schritte, Links). Quellen in
+  `docs/src/` (Markdown, `index.html` als Übersicht, `style.css`), daraus baut `python3 docs/build.py`
+  die Website `docs/*.html` (Seiten eigenständig, Mermaid als SVG hell/dunkel, Cache in
+  `target/docs-diagrams`). Neue Funktionen in `docs/src/` beschreiben, danach bauen und beides
+  committen. `docs/src/keys.md` und `commands.md` kommen aus `BINDINGS`/`USAGE` (Test schlägt bei
+  Abweichung an): `IMKR_WRITE_DOCS=1 cargo test docs_`. Mermaid-Labels mit `--` quoten.
+  Kopie im Vault von Bastian: `topics/programmierung/projekte/imkr/doku/` (HTML, `markdown/`).
 - Lizenz: MIT OR Apache-2.0
 - Code und Kommentare auf Englisch

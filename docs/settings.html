@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Settings · imkr</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a field guide. A rail of chapters on the left, one column of reading width; wide figures and code scroll in their own frame. */
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --ink: #1d1f24;
+  --muted: #5d616b;
+  --line: #dddad1;
+  --honey: #c9861a;
+  --honey-soft: #f6e6c7;
+  --term-bg: #16181d;
+  --term-fg: #d7d9de;
+  --term-dim: #7c818c;
+  --work: #3a8fd6;
+  --block: #d9534f;
+  --done: #c9861a;
+  --idle: #4f9d69;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121317; --surface: #1a1c21; --ink: #ecebe6; --muted: #a2a6af; --line: #2c2f36;
+    --honey: #e9a83a; --honey-soft: #3a2d15; --term-bg: #0b0c0f; --term-fg: #d7d9de; --term-dim: #737884;
+    --work: #5aa9ec; --block: #ef6b66; --done: #e9a83a; --idle: #6dbb86;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121317; --surface: #1a1c21; --ink: #ecebe6; --muted: #a2a6af; --line: #2c2f36;
+  --honey: #e9a83a; --honey-soft: #3a2d15; --term-bg: #0b0c0f; --term-fg: #d7d9de; --term-dim: #737884;
+  --work: #5aa9ec; --block: #ef6b66; --done: #e9a83a; --idle: #6dbb86;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--body); }
+.page { max-width: 1080px; padding-block: 8px 40px; }
+.read { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.1; margin: 0; }
+h1 { font-size: clamp(2.6rem, 7vw, 4.6rem); font-weight: 800; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.7rem, 3.6vw, 2.3rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; }
+a { color: var(--honey); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--honey); outline-offset: 2px; }
+code, kbd { font-family: var(--mono); font-size: 0.86em; }
+code { background: var(--honey-soft); padding: 0.1em 0.35em; border-radius: 4px; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; background: var(--surface); padding: 0.05em 0.4em; border-radius: 5px; white-space: nowrap; }
+.eyebrow { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; padding-block: 24px 40px; }
+.hero .lede { font-size: 1.2rem; color: var(--muted); max-width: 52ch; }
+.hero .say { font-family: var(--mono); font-size: 0.9rem; color: var(--muted); }
+.hero .say b { color: var(--honey); font-weight: 600; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.install { font-family: var(--mono); font-size: 0.85rem; background: var(--term-bg); color: var(--term-fg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; white-space: nowrap; max-width: 100%; }
+.install span { color: var(--term-dim); }
+
+/* the fake imkr screen */
+.screen-wrap { overflow-x: auto; border-radius: 12px; }
+.screen { min-width: 720px; background: var(--term-bg); color: var(--term-fg); font: 400 12.5px/1.5 var(--mono); border-radius: 12px; padding: 10px; display: grid; grid-template-columns: 1fr 1fr 230px; grid-template-rows: auto 1fr auto; gap: 8px; height: 360px; }
+.pane { border: 1px solid #343842; border-radius: 6px; padding: 8px 10px; overflow: hidden; position: relative; }
+.pane.focus { border-color: #e9a83a; }
+.pane .ttl { display: block; margin-bottom: 4px; color: #9aa0ab; font-size: 11px; border-bottom: 1px solid #2b2e36; padding-bottom: 2px; }
+.pane.focus .ttl { color: #e9a83a; }
+.tabs { grid-column: 1 / -1; display: flex; gap: 6px; font-size: 11.5px; }
+.tab { padding: 2px 10px; border-radius: 4px; background: #23262e; color: #9aa0ab; }
+.tab.on { background: #e9a83a; color: #16181d; font-weight: 600; }
+.tab.alert { background: #5a2524; color: #ffb3b0; }
+.side { grid-row: 2 / 3; grid-column: 3; border-left: 1px solid #2b2e36; padding-left: 10px; font-size: 11.5px; display: flex; flex-direction: column; gap: 3px; }
+.side .h { color: #e9a83a; margin-top: 6px; }
+.bar { grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: 11px; color: #9aa0ab; }
+.bar .badge { background: #e9a83a; color: #16181d; padding: 0 8px; border-radius: 3px; font-weight: 600; }
+.c-work { color: #5aa9ec; } .c-block { color: #ef6b66; } .c-done { color: #e9a83a; } .c-idle { color: #6dbb86; } .c-dim { color: #737884; }
+.q { background: #2a1d1d; border-left: 2px solid #ef6b66; padding: 4px 8px; margin-top: 6px; }
+
+/* chapters */
+section.ch { padding-block: 56px 8px; border-top: 1px solid var(--line); display: grid; gap: 22px; }
+.ch-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.hex { width: 30px; height: 34px; flex: none; background: var(--honey); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); align-self: center; }
+.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; overflow-x: auto; }
+.figure .cap { font-size: 0.88rem; color: var(--muted); margin-top: 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; }
+.grid2 > * { min-width: 0; }
+
+/* hierarchy */
+.nest { font-family: var(--mono); font-size: 0.85rem; display: grid; gap: 10px; }
+.box { border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; display: grid; gap: 8px; min-width: 0; }
+.box > .k { font: 600 0.7rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.box.hive { border-color: var(--honey); border-style: dashed; }
+.box.machine { background: color-mix(in srgb, var(--honey-soft) 45%, transparent); }
+.box.session { background: var(--surface); }
+.row { display: flex; flex-wrap: wrap; gap: 10px; }
+.row > .box { flex: 1 1 200px; }
+.pn { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; flex: 1 1 80px; background: var(--bg); }
+
+/* states */
+.states { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.state { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--surface); display: grid; gap: 6px; border-top: 4px solid var(--c); }
+.state .sym { font: 600 1.05rem var(--mono); color: var(--c); }
+.state p { font-size: 0.92rem; color: var(--muted); }
+
+/* steps */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: s; }
+.steps li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; align-items: start; }
+.steps li::before { counter-increment: s; content: counter(s); font: 800 1.3rem/44px var(--display); text-align: center; width: 44px; height: 50px; background: var(--honey); color: var(--bg); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.steps h3 { margin-bottom: 4px; }
+.cmd { font-family: var(--mono); font-size: 0.82rem; background: var(--term-bg); color: var(--term-fg); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin-top: 8px; white-space: pre; }
+.cmd .cm { color: var(--term-dim); }
+
+/* tables */
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px 22px; }
+.keys div { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.keys div span:first-child { flex: none; min-width: 96px; }
+
+.note { border-left: 3px solid var(--honey); padding: 10px 14px; background: var(--surface); border-radius: 0 8px 8px 0; font-size: 0.95rem; }
+.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 10px; }
+.docs a { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); background: var(--surface); }
+.docs a:hover { border-color: var(--honey); }
+.docs a span { color: var(--muted); font-size: 0.85rem; }
+footer { margin-top: 64px; color: var(--muted); font-size: 0.85rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .pane.blink .c-block { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.45; } }
+}
+.figure .diagram { border: 0; padding: 0; background: none; }
+
+.shell { display: grid; grid-template-columns: minmax(0, 230px) minmax(0, 1fr); gap: 40px;
+  max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 80px; }
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 20px); align-self: start;
+  max-height: calc(100vh - 40px); overflow-y: auto; display: grid; gap: 18px; font-size: 0.92rem; }
+.toc .brand { font: 800 1.3rem var(--display); color: var(--ink); text-decoration: none; }
+.toc .grp { display: grid; gap: 2px; }
+.toc .grp > span { margin-bottom: 4px; }
+.toc a.item { color: var(--ink); text-decoration: none; padding: 3px 10px; border-radius: 6px;
+  border-left: 2px solid transparent; }
+.toc a.item:hover { background: var(--surface); }
+.toc a.item[aria-current] { border-left-color: var(--honey); background: var(--surface); font-weight: 600; }
+.toc .groups { display: grid; gap: 18px; }
+.toc details > summary { display: none; }
+main { min-width: 0; }
+.doc { max-width: 78ch; display: grid; gap: 16px; }
+.doc h1 { margin-bottom: 8px; }
+.doc h2 { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.doc h3 { margin-top: 12px; }
+.doc ul, .doc ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+.doc pre { margin: 0; background: var(--term-bg); color: var(--term-fg); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; font: 400 0.84rem/1.55 var(--mono); }
+.doc pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+.doc blockquote { margin: 0; border-left: 3px solid var(--honey); padding: 8px 14px;
+  background: var(--surface); border-radius: 0 8px 8px 0; }
+.doc table { display: block; overflow-x: auto; }
+.doc td code, .doc th code { white-space: nowrap; }
+.diagram { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px; overflow-x: auto; text-align: center; }
+.diagram svg { max-width: 100%; height: auto; }
+.d-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .d-light { display: none; }
+  :root:not([data-theme="light"]) .d-dark { display: block; }
+}
+:root[data-theme="dark"] .d-light { display: none; }
+:root[data-theme="dark"] .d-dark { display: block; }
+.pager { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); }
+.pager a { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: 10px; text-decoration: none; color: var(--ink); background: var(--surface); min-width: 0; }
+.pager a span { font-size: 0.8rem; color: var(--muted); }
+.pager a:hover { border-color: var(--honey); }
+.edit { font-size: 0.85rem; color: var(--muted); margin-top: 16px; }
+@media (max-width: 860px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .toc { position: static; max-height: none; }
+  .toc details > summary { display: block; cursor: pointer; font-weight: 600; padding: 8px 0; }
+  .toc details:not([open]) .groups { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="Chapters"><a class="brand" href="index.html">imkr 🐝</a><details open><summary>Chapters</summary><div class="groups"><div class="grp"><span class="eyebrow">Start</span><a class="item" href="index.html">Overview</a><a class="item" href="getting-started.html">Getting started</a><a class="item" href="architecture.html">How imkr works</a></div><div class="grp"><span class="eyebrow">Guides</span><a class="item" href="install.html">Install and update</a><a class="item" href="sessions.html">Sessions, windows and panes</a><a class="item" href="screen.html">Sidebar, popups, mouse and clipboard</a><a class="item" href="agents.html">Agents</a><a class="item" href="ai-brain.html">imkr and AI Brain</a><a class="item" href="machines.html">Other machines</a><a class="item" href="hives.html">Hives and templates</a><a class="item" href="phone.html">On the phone</a><a class="item" href="plugins.html">Plugins</a><a class="item" href="settings.html" aria-current="page">Settings</a></div><div class="grp"><span class="eyebrow">Reference</span><a class="item" href="keys.html">Keys</a><a class="item" href="commands.html">Commands</a><a class="item" href="comparison.html">Compared with herdr and TUIOS</a></div></div></details></nav>
+<main class="">
+<article class="doc"><h1 id="settings">Settings</h1>
+<p><code>Ctrl+B</code> <code>,</code> opens the settings. Changes apply right away and are saved to
+<code>~/.config/imkr/config.toml</code> (or <code>$XDG_CONFIG_HOME/imkr/</code>, or <code>$IMKR_CONFIG</code>).
+The file can also be edited by hand, imkr reads it when the server starts:</p>
+<pre><code class="language-toml">theme = &quot;omarchy&quot;   # &quot;imkr&quot;, &quot;omarchy&quot; to follow the desktop, or an Omarchy theme name
+renumber_windows = false   # true: windows move up to fill gaps, always 1, 2, 3 …
+sessions_on_start = false  # true: plain `imkr` opens the session list first
+session_banner = true     # the session's name on screen for a moment after a switch
+session_banner_at = &quot;middle&quot;  # or &quot;top&quot;, &quot;bottom&quot;: the middle of that third
+hosts = []          # other machines whose sessions to show, see docs/machines.md
+name = &quot;laptop&quot;     # this machine's name for the others, e.g. its ssh alias; default: hostname
+
+[which_key]
+enabled = true      # show the key menu after Ctrl+B
+position = &quot;left&quot;   # &quot;left&quot; or &quot;right&quot; bottom corner
+
+[sidebar]
+enabled = true
+side = &quot;right&quot;      # &quot;left&quot; or &quot;right&quot;
+
+[bars]
+control = &quot;bottom&quot;  # imkr badge, mode and hints: &quot;top&quot; or &quot;bottom&quot;
+tabs = &quot;bottom&quot;     # window tabs: &quot;top&quot;, &quot;bottom&quot; or &quot;off&quot;
+path = &quot;bottom&quot;     # directory of the focused pane: &quot;top&quot;, &quot;bottom&quot; or &quot;off&quot;
+
+[spacing]           # in cells, all 0 by default; a cell is about twice as tall as wide
+outer_x = 0         # columns left and right of the panes
+outer_y = 0         # rows above and below the panes
+gap_x = 0           # columns between panes side by side, and before the sidebar
+gap_y = 0           # rows between panes one above the other
+top_bar = &quot;edge&quot;    # &quot;edge&quot;: the outermost line, full width; &quot;inset&quot;: inside the margin
+bottom_bar = &quot;edge&quot;
+</code></pre>
+<p>Two columns look about as wide as one row is tall, so <code>outer_x = 2, outer_y = 1, gap_x = 2,
+gap_y = 1</code> gives even spacing all round. imkr spaces in whole cells, the terminal's own
+padding (e.g. Ghostty's <code>window-padding-x/y</code>) comes on top: a bar on the <code>edge</code> only touches the
+window's edge when that padding is 0.</p>
+<p>Themes: <code>imkr</code> is honey on your terminal's colours. <code>omarchy</code> follows the current Omarchy theme
+and changes with it. Any installed Omarchy theme (<code>catppuccin</code>, <code>gruvbox</code>, <code>tokyo-night</code>, …) can be
+picked by name, its <code>colors.toml</code> provides the colours. In the settings, ←/→ step through them.
+Themes colour more than the accent: every window has its own colour in tabs and sidebar,
+every mode its own badge, floating panes their own border, and the bars a surface of their
+own. The settings show the chosen theme's colours.</p>
+<p>Your own commands go in the <code>Ctrl+B c</code> menu, run with <code>sh -c</code> in the focused pane's directory,
+in a floating pane unless <code>float = false</code>:</p>
+<pre><code class="language-toml">[[commands]]
+key = &quot;g&quot;
+name = &quot;lazygit&quot;
+command = &quot;lazygit&quot;
+
+[[commands]]
+key = &quot;t&quot;
+name = &quot;tests&quot;
+command = &quot;cargo test&quot;
+float = false
+</code></pre>
+<p><em>Shared pane borders</em> in the settings draws one border between panes side by side instead of
+two, with junctions where borders meet (<code>┬ ├ ┤ ┴ ┼</code>), when there is no gap between panes.</p>
+<p>Elements on the same side share one line. New panes start in the directory of the focused
+pane.</p>
+<p>Hooks run a shell command in the background when something happens: an agent becomes <code>blocked</code>,
+<code>done</code>, <code>working</code> or <code>idle</code>, a pane opens or closes (<code>pane-opened</code>, <code>pane-closed</code>), another
+window is shown (<code>window</code>), a terminal attaches or detaches (<code>attach</code>, <code>detach</code>). They get
+<code>IMKR_EVENT</code>, <code>IMKR_SESSION</code> and, for a pane, <code>IMKR_HOOK_PANE</code>, <code>IMKR_HOOK_PROGRAM</code>,
+<code>IMKR_HOOK_STATE</code> and <code>IMKR_HOOK_WINDOW</code>; a misspelt event is reported when the config loads:</p>
+<pre><code class="language-toml">[[hooks]]
+on = &quot;blocked&quot;
+run = 'paplay /usr/share/sounds/freedesktop/stereo/bell.oga'
+
+[[hooks]]
+on = &quot;done&quot;
+run = 'imkr msg &quot;$IMKR_SESSION/reviewer&quot; &quot;Pane $IMKR_HOOK_PANE is done, please review.&quot;'
+</code></pre>
+<p>For scripts outside imkr, <code>imkr subscribe</code> gives the same as JSON lines.</p></article>
+<div class="pager"><a href="plugins.html"><span>← Back</span>Plugins</a><a href="keys.html" style="text-align:right"><span>Next →</span>Keys</a></div><p class="edit">Source: <a href="https://github.com/bastianhenneberg/imkr/blob/main/docs/src/settings.md">docs/src/settings.md</a></p>
+</main>
+</div>
+</body>
+</html>

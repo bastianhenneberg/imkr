@@ -1,25 +1,16 @@
 # imkr documentation
 
-| Start here | |
-|---|---|
-| [Getting started](getting-started.md) | from install to agents on two machines, in five steps |
-| [How imkr works](architecture.md) | server and client, machines, agent states, updates, restarts, with diagrams |
+The documentation as a website: open [index.html](index.html) in a browser (or the GitHub Pages
+site, once it serves this folder). Every page stands alone, diagrams included.
 
-| Guides | |
-|---|---|
-| [Install and update](install.md) | installer, live updates, building |
-| [Sessions, windows and panes](sessions.md) | getting around, worktrees, fleets, checkpoints, restarts |
-| [Sidebar, popups, mouse](screen.md) | sidebar, popups, mouse, clipboard, images |
-| [Agents](agents.md) | states, hooks, accounts, messages, contacts, MCP, tmux shim, events |
-| [imkr and AI Brain](ai-brain.md) | CLI mode (an agent per task), messages to colleagues |
-| [Other machines](machines.md) | the operator, ssh, settings sync, hosted windows |
-| [Hives and templates](hives.md) | saved groups of sessions, session templates |
-| [On the phone](phone.md) | `imkr web`, pairing, firewall |
-| [Plugins](plugins.md) | plugin files, repositories, catalogs |
-| [Settings](settings.md) | config file, themes, own commands, hooks |
+The sources are Markdown in [src/](src/), readable right here on GitHub; start with
+[Getting started](src/getting-started.md).
 
-| Reference | |
-|---|---|
-| [Keys](keys.md) | every key, generated from the code |
-| [Commands](commands.md) | every command, generated from the code |
-| [Compared with herdr and TUIOS](comparison.md) | what imkr adds, checked October 2026 |
+Rebuild the HTML after changing a source:
+
+```bash
+python3 docs/build.py
+```
+
+It needs python-markdown and the mermaid CLI (`npx @mermaid-js/mermaid-cli`) with Chromium.
+`src/keys.md` and `src/commands.md` come from the code: `IMKR_WRITE_DOCS=1 cargo test docs_`.

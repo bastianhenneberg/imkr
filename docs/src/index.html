@@ -1,0 +1,318 @@
+<header class="hero">
+  <p class="eyebrow">imkr · field guide · v0.21</p>
+  <h1>imkr 🐝</h1>
+  <p class="lede">A terminal multiplexer for you and your coding agents. tmux's keys and sessions, tiling and floating panes, and an eye on every agent: working, waiting for you, or done. On this machine and on all your others.</p>
+  <p class="say">Say it like <b>Imker</b>, German for beekeeper: it tends the hives your agents work in.</p>
+
+  <div class="screen-wrap" aria-label="An imkr screen with two panes and the sidebar">
+    <div class="screen">
+      <div class="tabs"><span class="tab on">1 api</span><span class="tab alert">2 web ◆</span><span class="tab">3 notes</span><span class="tab">+</span></div>
+      <div class="pane focus"><span class="ttl">claude · opus 5.5 · 182k</span>
+        <div class="c-dim">&gt; add rate limiting to /login</div>
+        <div>Reading src/auth/login.rs</div>
+        <div>Writing src/auth/limit.rs</div>
+        <div>Running cargo test …</div>
+        <div class="c-idle">  test result: ok. 48 passed</div>
+        <div class="c-work">● working 2m</div>
+      </div>
+      <div class="pane blink"><span class="ttl">claude · web</span>
+        <div>The migration drops the column</div>
+        <div>`legacy_token`. Go ahead?</div>
+        <div class="q">
+          <div>1. Yes</div>
+          <div>2. Yes, and don't ask again</div>
+          <div>3. No, tell it what to do</div>
+        </div>
+        <div class="c-block">◆ waiting for you</div>
+      </div>
+      <div class="side">
+        <div class="h">Agents</div>
+        <div><span class="c-block">◆</span> web · claude <span class="c-dim">40s</span></div>
+        <div><span class="c-work">●</span> api · claude <span class="c-dim">2m</span></div>
+        <div><span class="c-done">✦</span> docs · codex <span class="c-dim">5m</span></div>
+        <div class="h">Sessions</div>
+        <div>⌂ laptop · imkr</div>
+        <div>⇄ server · api</div>
+        <div>⇄ desktop · render</div>
+        <div class="h">Git · main</div>
+        <div class="c-dim">M src/auth/login.rs</div>
+        <div class="c-dim">A src/auth/limit.rs</div>
+      </div>
+      <div class="bar"><span><span class="badge">imkr</span> &nbsp;session imkr · 2 attached</span><span>Ctrl+B a → agent waiting</span></div>
+    </div>
+  </div>
+
+  <div class="cta">
+    <div class="install"><span>$</span> curl -fsSL https://raw.githubusercontent.com/bastianhenneberg/imkr/main/install.sh | sh</div>
+  </div>
+</header>
+
+<section class="ch" id="anatomy">
+  <div class="ch-head"><span class="hex"></span><h2>What lives where</h2></div>
+  <p class="read">The names follow tmux: a <b>session</b> holds <b>windows</b>, a window holds <b>panes</b>. Each session is its own server and keeps running when you close the terminal. A <b>hive</b> is imkr's own: a saved map of sessions on all your machines, brought back with one command.</p>
+  <div class="figure">
+    <div class="nest">
+      <div class="box hive"><span class="k">Hive "work" · saved, not running</span>
+        <div class="row">
+          <div class="box machine"><span class="k">⌂ laptop · where you sit</span>
+            <div class="box session"><span class="k">Session imkr</span>
+              <div class="row">
+                <div class="box"><span class="k">Window 1 claude</span><div class="row"><span class="pn">Pane</span><span class="pn">Pane</span></div></div>
+                <div class="box"><span class="k">Window 2 shell</span><div class="row"><span class="pn">Pane</span></div></div>
+              </div>
+            </div>
+            <div class="box session"><span class="k">Popups · outside windows</span><div class="row"><span class="pn">plugin</span></div></div>
+          </div>
+          <div class="box machine"><span class="k">⇄ server · over ssh</span>
+            <div class="box session"><span class="k">Session api</span>
+              <div class="box"><span class="k">Window 1</span><div class="row"><span class="pn">Pane</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cap">Sessions, windows and panes run. A hive only remembers them: restoring it starts what is missing, on the machine it belongs to.</p>
+  </div>
+</section>
+
+<section class="ch" id="agents">
+  <div class="ch-head"><span class="hex"></span><h2>Four states, one glance</h2></div>
+  <p class="read">Every pane running a coding agent (Claude Code, Codex, opencode, aider, gemini, pi and more) shows what it is doing. Hooks report the exact state; without them imkr reads the screen.</p>
+  <div class="states">
+    <div class="state" style="--c: var(--work)"><span class="sym">● working</span><p>Busy with your prompt. Leave it.</p></div>
+    <div class="state" style="--c: var(--block)"><span class="sym">◆ blocked</span><p>Asks you something. The tab turns red, the bell rings, a notification goes out.</p></div>
+    <div class="state" style="--c: var(--done)"><span class="sym">✦ done</span><p>Finished while you looked elsewhere. Clears once you look.</p></div>
+    <div class="state" style="--c: var(--idle)"><span class="sym">✓ idle</span><p>Waiting for the next prompt.</p></div>
+  </div>
+  <div class="grid2">
+    <div class="figure">
+<pre class="mermaid">
+stateDiagram-v2
+    direction LR
+    [*] --> working: prompt
+    working --> blocked: asks you
+    blocked --> working: you answer
+    working --> done: finished, unseen
+    done --> idle: you look
+    working --> idle: finished, seen
+    idle --> working: next prompt
+</pre>
+    </div>
+    <div class="figure">
+<pre class="mermaid">
+flowchart TB
+    H[hooks: exact] --> D{state}
+    P["/proc: which program"] --> D
+    O[screen: questions] --> D
+    D --> X[bell · red tab ·<br/>notification · inbox]
+</pre>
+    </div>
+  </div>
+  <div class="keys">
+    <div><span><kbd>Ctrl+B</kbd> <kbd>a</kbd></span><span>to the agent that waited longest</span></div>
+    <div><span><kbd>Ctrl+B</kbd> <kbd>i</kbd></span><span>inbox: answer without going there</span></div>
+    <div><span><kbd>Ctrl+B</kbd> <kbd>A</kbd></span><span>every agent, on every machine</span></div>
+    <div><span><kbd>Ctrl+B</kbd> <kbd>s</kbd> <kbd>l</kbd></span><span>what happened while you were away</span></div>
+  </div>
+</section>
+
+<section class="ch" id="architecture">
+  <div class="ch-head"><span class="hex"></span><h2>Server and client</h2></div>
+  <p class="read">The server owns every terminal and draws the screen. Your terminal runs a thin client that sends keys and shows the picture. Detach, and only the client goes; the shells and agents keep working.</p>
+  <div class="figure">
+<pre class="mermaid">
+flowchart LR
+    subgraph term [your terminal]
+        C[imkr client]
+    end
+    subgraph srv [imkr server · one per session]
+        R[layout + renderer]
+        P1[pane · pty + emulator]
+        P2[pane · pty + emulator]
+        A[agent watcher]
+    end
+    C <-->|unix socket| R
+    P1 --> R
+    P2 --> R
+    P1 --> A
+    P2 --> A
+    S1[claude] <--> P1
+    S2[nvim] <--> P2
+    CLI[imkr send / msg / mcp] -->|same socket| R
+</pre>
+    <p class="cap">Scripts, agents and the MCP server use the same socket as the client: one request, one answer.</p>
+  </div>
+</section>
+
+<section class="ch" id="machines">
+  <div class="ch-head"><span class="hex"></span><h2>Every machine, one screen</h2></div>
+  <p class="read">The machine you sit at is the <b>operator</b> (⌂). Every connection starts there, with your ssh keys, so a server never needs ssh back to your laptop. Switching to a session elsewhere keeps keys, clipboard and links local.</p>
+  <div class="figure">
+<pre class="mermaid">
+flowchart LR
+    subgraph laptop [⌂ laptop]
+        C[imkr client]
+        L[imkr server]
+    end
+    subgraph server [⇄ server]
+        PX[imkr proxy] <--> S[imkr server · api]
+    end
+    subgraph desktop [⇄ desktop]
+        PY[imkr proxy] <--> D[imkr server · render]
+    end
+    C -->|ssh| PX
+    C -.->|ssh| PY
+    L -->|"every 5 s: imkr ls --json"| server
+    L -->|every 5 s| desktop
+</pre>
+    <p class="cap">The sidebar, <kbd>Ctrl+B</kbd> <kbd>S</kbd> and the search <kbd>Ctrl+B</kbd> <kbd>/</kbd> list all of them together.</p>
+  </div>
+</section>
+
+<section class="ch" id="messages">
+  <div class="ch-head"><span class="hex"></span><h2>Agents talk to each other</h2></div>
+  <p class="read"><code>imkr msg server:api/claude "…"</code> types a message into another agent once it is idle, never into a question it asks. When the other machine is out of reach, the message waits in an outbox and is picked up later.</p>
+  <div class="figure">
+<pre class="mermaid">
+sequenceDiagram
+    participant A as agent · laptop
+    participant L as imkr · laptop
+    participant S as imkr · server
+    participant B as agent · server
+    A->>L: imkr msg server:api/claude
+    L->>S: over ssh
+    Note over S: waits until idle
+    S->>B: typed in, with sender
+    B->>S: imkr msg laptop:imkr/0 "done"
+    Note over S: laptop out of reach:<br/>kept in the outbox
+    L->>S: next poll: outbox take
+    L->>A: typed in
+</pre>
+  </div>
+  <h3>And to colleagues</h3>
+  <p class="read">A colleague with their own imkr becomes a contact. Messages go over a VPN when you share one, otherwise through AI Brain. Either way they wait in the inbox until accepted, and a contact can only send text: no screens, no keys, no shell.</p>
+  <div class="figure">
+<pre class="mermaid">
+flowchart LR
+    A["imkr msg martin:api/claude"] --> Q{contact}
+    Q -->|shared VPN| N[HTTP to martin's imkr web]
+    Q -->|no shared network| B[AI Brain]
+    B -->|fetched every 30 s| F[martin's imkr]
+    N --> I[inbox · Ctrl+B i]
+    F --> I
+    I -->|Enter| P[typed in once idle]
+    I -->|x| X[declined]
+</pre>
+  </div>
+</section>
+
+<section class="ch" id="cli-mode">
+  <div class="ch-head"><span class="hex"></span><h2>CLI mode: an agent per task</h2></div>
+  <p class="read"><code>ai-brain-cli agent</code> takes an AI Brain task, writes what the agent needs to know and starts Claude Code or Codex on it. With <code>--imkr</code> it opens a window in imkr for it. The CLI owns context, task and sign-in; imkr owns the window, the state and the messages.</p>
+  <div class="figure">
+<pre class="mermaid">
+flowchart LR
+    T[("AI Brain task")] --> C["ai-brain-cli agent<br/>context · run register"]
+    C -->|imkr new| W[imkr window<br/>claude on the task]
+    W --> S["● ◆ ✦ in sidebar, inbox"]
+    S -->|status hooks| C
+    M[imkr msg] --> W
+</pre>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Start from</th><th>How</th></tr></thead>
+      <tbody>
+        <tr><td>imkr, with the plugin</td><td><kbd>Ctrl+B</kbd> <kbd>p</kbd> <kbd>a</kbd>: lists the runs, then asks for a task number</td></tr>
+        <tr><td>a shell, for a task</td><td><code>ai-brain-cli agent --task 7666 --imkr</code></td></tr>
+        <tr><td>a shell, without a task</td><td><code>ai-brain-cli agent --projekt imkr "Write the changelog" --imkr</code></td></tr>
+        <tr><td>AI Brain hands out orders</td><td><code>ai-brain-cli auftraege</code>, then <code>ai-brain-cli auftrag N</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Planned: pick the task from a list of the project's open tasks instead of typing its number.</p>
+</section>
+
+<section class="ch" id="lasting">
+  <div class="ch-head"><span class="hex"></span><h2>Nothing has to restart</h2></div>
+  <div class="grid2">
+    <div class="figure">
+      <h3>Updating</h3>
+<pre class="mermaid">
+sequenceDiagram
+    participant U as you
+    participant O as server (old)
+    participant N as server (new)
+    U->>O: imkr update
+    O->>O: layout, screens,<br/>history to a file
+    O->>N: exec, same process:<br/>ptys, socket, clients stay
+    N->>N: read it back
+</pre>
+      <p class="cap">Shells and agents never notice. <code>imkr hosts sync</code> does it on every machine.</p>
+    </div>
+    <div class="figure">
+      <h3>Rebooting</h3>
+<pre class="mermaid">
+flowchart TB
+    R[server runs] -->|every second| J[(layout · dirs ·<br/>agent session ids)]
+    R -->|every 20 s| H[(3000 lines<br/>per pane)]
+    J --> B[next imkr]
+    H --> B
+    B --> W["windows back ·<br/>claude --resume"]
+</pre>
+      <p class="cap">Processes die with the machine; the layout, history and conversations come back.</p>
+    </div>
+  </div>
+</section>
+
+<section class="ch" id="start">
+  <div class="ch-head"><span class="hex"></span><h2>Getting started</h2></div>
+  <ol class="steps">
+    <li><div><h3>Install</h3><p>Linux, x86_64 or aarch64. The binary lands in <code>~/.local/bin</code>.</p>
+      <div class="cmd">curl -fsSL https://raw.githubusercontent.com/bastianhenneberg/imkr/main/install.sh | sh</div></div></li>
+    <li><div><h3>Open a session</h3><p>Press <kbd>Ctrl+B</kbd> and wait: a menu lists every key. <kbd>Enter</kbd> picks with the arrows.</p>
+      <div class="cmd">imkr</div></div></li>
+    <li><div><h3>Let agents report</h3><p>Exact states from Claude Code, and agents that know how to message each other.</p>
+      <div class="cmd">imkr hooks --install
+imkr skill --install</div></div></li>
+    <li><div><h3>Add a machine</h3><p>ssh without a password, then it stays in the sidebar.</p>
+      <div class="cmd">imkr --host server   <span class="cm"># offers to install imkr there</span></div></div></li>
+    <li><div><h3>Take it along</h3><p>In a VPN, every machine's agents on your phone, paired with a QR code.</p>
+      <div class="cmd">imkr web pair</div></div></li>
+  </ol>
+</section>
+
+<section class="ch" id="keys">
+  <div class="ch-head"><span class="hex"></span><h2>The keys you use daily</h2></div>
+  <div class="keys">
+    <div><span><kbd>%</kbd> <kbd>#</kbd></span><span>split side by side</span></div>
+    <div><span><kbd>"</kbd> <kbd>-</kbd></span><span>split top and bottom</span></div>
+    <div><span><kbd>←↑↓→</kbd></span><span>pane in that direction</span></div>
+    <div><span><kbd>n</kbd></span><span>new window</span></div>
+    <div><span><kbd>1</kbd>–<kbd>9</kbd></span><span>go to a window</span></div>
+    <div><span><kbd>z</kbd></span><span>zoom the pane</span></div>
+    <div><span><kbd>f</kbd> <kbd>f</kbd></span><span>float the pane, and back</span></div>
+    <div><span><kbd>/</kbd></span><span>search everything, everywhere</span></div>
+    <div><span><kbd>S</kbd></span><span>sessions on every machine</span></div>
+    <div><span><kbd>H</kbd></span><span>hives</span></div>
+    <div><span><kbd>y</kbd></span><span>copy mode, vim keys</span></div>
+    <div><span><kbd>d</kbd></span><span>detach, all keeps running</span></div>
+  </div>
+  <p class="cap" style="color:var(--muted)">All after <kbd>Ctrl+B</kbd>. <code>imkr keys</code> lists every one.</p>
+</section>
+
+<section class="ch" id="docs">
+  <div class="ch-head"><span class="hex"></span><h2>Read on</h2></div>
+  <div class="docs">
+    <a href="getting-started.md">Getting started<span>five steps, two machines</span></a>
+    <a href="architecture.md">How imkr works<span>the diagrams, in more detail</span></a>
+    <a href="agents.md">Agents<span>hooks, accounts, messages, MCP</span></a>
+    <a href="ai-brain.md">imkr and AI Brain<span>CLI mode, contacts</span></a>
+    <a href="machines.md">Other machines<span>operator, ssh, settings sync</span></a>
+    <a href="hives.md">Hives and templates<span>sessions saved across machines</span></a>
+    <a href="phone.md">On the phone<span>imkr web</span></a>
+    <a href="keys.md">Keys<span>every one, from the code</span></a>
+  </div>
+</section>
+
+<footer>imkr is MIT or Apache-2.0, Linux only for now, below 1.0 and changing fast. Inspired by TUIOS and herdr, with code of its own.</footer>

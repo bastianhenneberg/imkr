@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sessions, windows and panes · imkr</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a field guide. A rail of chapters on the left, one column of reading width; wide figures and code scroll in their own frame. */
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --ink: #1d1f24;
+  --muted: #5d616b;
+  --line: #dddad1;
+  --honey: #c9861a;
+  --honey-soft: #f6e6c7;
+  --term-bg: #16181d;
+  --term-fg: #d7d9de;
+  --term-dim: #7c818c;
+  --work: #3a8fd6;
+  --block: #d9534f;
+  --done: #c9861a;
+  --idle: #4f9d69;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121317; --surface: #1a1c21; --ink: #ecebe6; --muted: #a2a6af; --line: #2c2f36;
+    --honey: #e9a83a; --honey-soft: #3a2d15; --term-bg: #0b0c0f; --term-fg: #d7d9de; --term-dim: #737884;
+    --work: #5aa9ec; --block: #ef6b66; --done: #e9a83a; --idle: #6dbb86;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121317; --surface: #1a1c21; --ink: #ecebe6; --muted: #a2a6af; --line: #2c2f36;
+  --honey: #e9a83a; --honey-soft: #3a2d15; --term-bg: #0b0c0f; --term-fg: #d7d9de; --term-dim: #737884;
+  --work: #5aa9ec; --block: #ef6b66; --done: #e9a83a; --idle: #6dbb86;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--body); }
+.page { max-width: 1080px; padding-block: 8px 40px; }
+.read { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.1; margin: 0; }
+h1 { font-size: clamp(2.6rem, 7vw, 4.6rem); font-weight: 800; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.7rem, 3.6vw, 2.3rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; }
+a { color: var(--honey); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--honey); outline-offset: 2px; }
+code, kbd { font-family: var(--mono); font-size: 0.86em; }
+code { background: var(--honey-soft); padding: 0.1em 0.35em; border-radius: 4px; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; background: var(--surface); padding: 0.05em 0.4em; border-radius: 5px; white-space: nowrap; }
+.eyebrow { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; padding-block: 24px 40px; }
+.hero .lede { font-size: 1.2rem; color: var(--muted); max-width: 52ch; }
+.hero .say { font-family: var(--mono); font-size: 0.9rem; color: var(--muted); }
+.hero .say b { color: var(--honey); font-weight: 600; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.install { font-family: var(--mono); font-size: 0.85rem; background: var(--term-bg); color: var(--term-fg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; white-space: nowrap; max-width: 100%; }
+.install span { color: var(--term-dim); }
+
+/* the fake imkr screen */
+.screen-wrap { overflow-x: auto; border-radius: 12px; }
+.screen { min-width: 720px; background: var(--term-bg); color: var(--term-fg); font: 400 12.5px/1.5 var(--mono); border-radius: 12px; padding: 10px; display: grid; grid-template-columns: 1fr 1fr 230px; grid-template-rows: auto 1fr auto; gap: 8px; height: 360px; }
+.pane { border: 1px solid #343842; border-radius: 6px; padding: 8px 10px; overflow: hidden; position: relative; }
+.pane.focus { border-color: #e9a83a; }
+.pane .ttl { display: block; margin-bottom: 4px; color: #9aa0ab; font-size: 11px; border-bottom: 1px solid #2b2e36; padding-bottom: 2px; }
+.pane.focus .ttl { color: #e9a83a; }
+.tabs { grid-column: 1 / -1; display: flex; gap: 6px; font-size: 11.5px; }
+.tab { padding: 2px 10px; border-radius: 4px; background: #23262e; color: #9aa0ab; }
+.tab.on { background: #e9a83a; color: #16181d; font-weight: 600; }
+.tab.alert { background: #5a2524; color: #ffb3b0; }
+.side { grid-row: 2 / 3; grid-column: 3; border-left: 1px solid #2b2e36; padding-left: 10px; font-size: 11.5px; display: flex; flex-direction: column; gap: 3px; }
+.side .h { color: #e9a83a; margin-top: 6px; }
+.bar { grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: 11px; color: #9aa0ab; }
+.bar .badge { background: #e9a83a; color: #16181d; padding: 0 8px; border-radius: 3px; font-weight: 600; }
+.c-work { color: #5aa9ec; } .c-block { color: #ef6b66; } .c-done { color: #e9a83a; } .c-idle { color: #6dbb86; } .c-dim { color: #737884; }
+.q { background: #2a1d1d; border-left: 2px solid #ef6b66; padding: 4px 8px; margin-top: 6px; }
+
+/* chapters */
+section.ch { padding-block: 56px 8px; border-top: 1px solid var(--line); display: grid; gap: 22px; }
+.ch-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.hex { width: 30px; height: 34px; flex: none; background: var(--honey); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); align-self: center; }
+.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; overflow-x: auto; }
+.figure .cap { font-size: 0.88rem; color: var(--muted); margin-top: 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; }
+.grid2 > * { min-width: 0; }
+
+/* hierarchy */
+.nest { font-family: var(--mono); font-size: 0.85rem; display: grid; gap: 10px; }
+.box { border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; display: grid; gap: 8px; min-width: 0; }
+.box > .k { font: 600 0.7rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.box.hive { border-color: var(--honey); border-style: dashed; }
+.box.machine { background: color-mix(in srgb, var(--honey-soft) 45%, transparent); }
+.box.session { background: var(--surface); }
+.row { display: flex; flex-wrap: wrap; gap: 10px; }
+.row > .box { flex: 1 1 200px; }
+.pn { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; flex: 1 1 80px; background: var(--bg); }
+
+/* states */
+.states { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.state { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--surface); display: grid; gap: 6px; border-top: 4px solid var(--c); }
+.state .sym { font: 600 1.05rem var(--mono); color: var(--c); }
+.state p { font-size: 0.92rem; color: var(--muted); }
+
+/* steps */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: s; }
+.steps li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; align-items: start; }
+.steps li::before { counter-increment: s; content: counter(s); font: 800 1.3rem/44px var(--display); text-align: center; width: 44px; height: 50px; background: var(--honey); color: var(--bg); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.steps h3 { margin-bottom: 4px; }
+.cmd { font-family: var(--mono); font-size: 0.82rem; background: var(--term-bg); color: var(--term-fg); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin-top: 8px; white-space: pre; }
+.cmd .cm { color: var(--term-dim); }
+
+/* tables */
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px 22px; }
+.keys div { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.keys div span:first-child { flex: none; min-width: 96px; }
+
+.note { border-left: 3px solid var(--honey); padding: 10px 14px; background: var(--surface); border-radius: 0 8px 8px 0; font-size: 0.95rem; }
+.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 10px; }
+.docs a { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); background: var(--surface); }
+.docs a:hover { border-color: var(--honey); }
+.docs a span { color: var(--muted); font-size: 0.85rem; }
+footer { margin-top: 64px; color: var(--muted); font-size: 0.85rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .pane.blink .c-block { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.45; } }
+}
+.figure .diagram { border: 0; padding: 0; background: none; }
+
+.shell { display: grid; grid-template-columns: minmax(0, 230px) minmax(0, 1fr); gap: 40px;
+  max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 80px; }
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 20px); align-self: start;
+  max-height: calc(100vh - 40px); overflow-y: auto; display: grid; gap: 18px; font-size: 0.92rem; }
+.toc .brand { font: 800 1.3rem var(--display); color: var(--ink); text-decoration: none; }
+.toc .grp { display: grid; gap: 2px; }
+.toc .grp > span { margin-bottom: 4px; }
+.toc a.item { color: var(--ink); text-decoration: none; padding: 3px 10px; border-radius: 6px;
+  border-left: 2px solid transparent; }
+.toc a.item:hover { background: var(--surface); }
+.toc a.item[aria-current] { border-left-color: var(--honey); background: var(--surface); font-weight: 600; }
+.toc .groups { display: grid; gap: 18px; }
+.toc details > summary { display: none; }
+main { min-width: 0; }
+.doc { max-width: 78ch; display: grid; gap: 16px; }
+.doc h1 { margin-bottom: 8px; }
+.doc h2 { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.doc h3 { margin-top: 12px; }
+.doc ul, .doc ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+.doc pre { margin: 0; background: var(--term-bg); color: var(--term-fg); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; font: 400 0.84rem/1.55 var(--mono); }
+.doc pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+.doc blockquote { margin: 0; border-left: 3px solid var(--honey); padding: 8px 14px;
+  background: var(--surface); border-radius: 0 8px 8px 0; }
+.doc table { display: block; overflow-x: auto; }
+.doc td code, .doc th code { white-space: nowrap; }
+.diagram { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px; overflow-x: auto; text-align: center; }
+.diagram svg { max-width: 100%; height: auto; }
+.d-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .d-light { display: none; }
+  :root:not([data-theme="light"]) .d-dark { display: block; }
+}
+:root[data-theme="dark"] .d-light { display: none; }
+:root[data-theme="dark"] .d-dark { display: block; }
+.pager { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); }
+.pager a { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: 10px; text-decoration: none; color: var(--ink); background: var(--surface); min-width: 0; }
+.pager a span { font-size: 0.8rem; color: var(--muted); }
+.pager a:hover { border-color: var(--honey); }
+.edit { font-size: 0.85rem; color: var(--muted); margin-top: 16px; }
+@media (max-width: 860px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .toc { position: static; max-height: none; }
+  .toc details > summary { display: block; cursor: pointer; font-weight: 600; padding: 8px 0; }
+  .toc details:not([open]) .groups { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="Chapters"><a class="brand" href="index.html">imkr 🐝</a><details open><summary>Chapters</summary><div class="groups"><div class="grp"><span class="eyebrow">Start</span><a class="item" href="index.html">Overview</a><a class="item" href="getting-started.html">Getting started</a><a class="item" href="architecture.html">How imkr works</a></div><div class="grp"><span class="eyebrow">Guides</span><a class="item" href="install.html">Install and update</a><a class="item" href="sessions.html" aria-current="page">Sessions, windows and panes</a><a class="item" href="screen.html">Sidebar, popups, mouse and clipboard</a><a class="item" href="agents.html">Agents</a><a class="item" href="ai-brain.html">imkr and AI Brain</a><a class="item" href="machines.html">Other machines</a><a class="item" href="hives.html">Hives and templates</a><a class="item" href="phone.html">On the phone</a><a class="item" href="plugins.html">Plugins</a><a class="item" href="settings.html">Settings</a></div><div class="grp"><span class="eyebrow">Reference</span><a class="item" href="keys.html">Keys</a><a class="item" href="commands.html">Commands</a><a class="item" href="comparison.html">Compared with herdr and TUIOS</a></div></div></details></nav>
+<main class="">
+<article class="doc"><h1 id="sessions-windows-and-panes">Sessions, windows and panes</h1>
+<h2 id="getting-around">Getting around</h2>
+<pre><code class="language-bash">imkr              # attach to the session, or start one
+imkr attach       # attach, fail if there is no session
+imkr kill-server  # stop the server and every shell in it
+imkr keys         # list the key bindings
+imkr version      # what is installed
+imkr upgrade      # fetch the latest release and become it
+imkr -s work      # the session `work`, started if needed
+imkr ls           # the running sessions with panes and agents
+</code></pre>
+<p>The first <code>imkr</code> starts a server in the background. It owns the shells and keeps them
+running after you detach or close the terminal. The socket lives in
+<code>$XDG_RUNTIME_DIR/imkr/</code>, set <code>IMKR_SOCKET</code> to use another one. Several terminals can attach
+to the same session, as in tmux: they all show it and type into it, at the size of the smallest
+one (the rest of a larger terminal is filled with dots), and the control bar says how many are
+attached. Each terminal shows its own window: switching windows in one leaves the others where
+they are (setting <em>Own window per attached terminal</em>, off for tmux's behaviour, where all show
+the same). <code>Ctrl+B d</code> detaches only the terminal it was pressed in, <code>imkr attach -d</code> detaches all
+others.</p>
+<p>Sessions are separate servers with their own panes, socket and saved layout. <code>imkr -s NAME</code>
+(or <code>attach -t NAME</code>) picks one, <code>Ctrl+B S</code> switches between them without leaving the terminal,
+and named sessions show their name in the control bar. In that menu <code>n</code> starts a new session (on
+which machine, if others are known, is asked first),
+<code>x</code> ends the selected one, <code>r</code> renames it (like <code>imkr rename-session NAME</code>, <code>-s OLD</code> for
+another one), <code>s</code> saves all running sessions as a hive and <code>h</code> opens the hives.
+Every list (sessions, agents, hives, marks, machines) takes <code>/</code> to search: typing narrows it to
+what matches every word, in name, machine, session or directory, Esc clears the search.</p>
+<p><code>Ctrl+B w m</code> moves the active window to another session: pick a running one, or <code>n</code> for a new
+one, started for it. E.g. to gather the windows of one project in a session of their own
+(<code>imkr move-window --window N NAME</code> from a script). Its programs keep running, nothing restarts: the ptys are passed to the other
+server over its socket. The window keeps its name and, if free, its number. Agents in it keep
+reporting to the session they came from, which passes it on while it runs; after that their
+state comes from what imkr sees on the screen.</p>
+<p><code>Ctrl+B w t</code> asks for a branch and opens a window of that name in a git worktree of the focused
+pane's repository: <code>&lt;repo&gt;--&lt;branch&gt;</code> next to it, a new branch from the current commit or the
+existing one, or the worktree made before. So agents work side by side without touching each
+other's files. From a shell, also with what to run in it:</p>
+<pre><code class="language-bash">imkr worktree fix-login -- claude     # window &quot;fix-login&quot; in ../api--fix-login, running claude
+</code></pre>
+<p>Worktrees stay when the window closes; <code>git worktree remove</code> deletes one once its work is merged.</p>
+<p>A fleet puts several agents on the same task, each in a worktree of its own, to pick the best
+result:</p>
+<pre><code class="language-bash">imkr fleet speed -n 3 &quot;make the start-up faster&quot;   # windows speed-1 … speed-3 running claude
+imkr fleet speed --diff                            # what each one committed and changed since
+</code></pre>
+<p><code>--agent codex</code> (or any agent that takes the prompt as its argument) runs another one.</p>
+<p>With <em>Git checkpoint after each agent turn</em> on in the settings, imkr keeps the state of an
+agent's repository each time it finishes a turn: a commit of every file, new ones too, on
+<code>refs/imkr/checkpoints/&lt;session&gt;-&lt;pane&gt;</code>, only when something changed. Your branch, index and
+files stay as they are. <code>imkr checkpoints</code> lists them; <code>git diff &lt;id&gt;</code> shows what changed since
+one and <code>git restore --source=&lt;id&gt; -- &lt;path&gt;</code> brings a file back as it was.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+B</code> <code>%</code> (or <code>#</code>, <code>\|</code>)</td>
+<td>Split the pane side by side</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>"</code> (or <code>-</code>)</td>
+<td>Split the pane top and bottom; <code>#</code> and <code>-</code> need no Shift on a German keyboard</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>x</code></td>
+<td>Close the pane (asks first)</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>r</code></td>
+<td>Name the pane (<code>Ctrl+B</code> <code>w</code> <code>r</code> names the window)</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>z</code></td>
+<td>Zoom: the pane alone over the whole window, again to go back</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>{</code> / <code>}</code></td>
+<td>Swap the pane with the previous / next one</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>&gt;</code> <code>1</code>–<code>9</code> / <code>n</code></td>
+<td>Move the pane into that window (made if needed) / a new one; it keeps running, a window left empty goes</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>=</code></td>
+<td>Give all panes equal sizes</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>w</code> <code>l</code></td>
+<td>Layout for this window: <code>even-horizontal</code>, <code>even-vertical</code>, <code>main-vertical</code>, <code>main-horizontal</code>, <code>tiled</code> as in tmux, or one saved with <code>s</code>. Its panes take the places in order and keep running, places left get a shell; <code>imkr layout NAME</code>, <code>imkr layout save NAME</code>, <code>imkr layout ls</code> from a shell</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>f</code> …</td>
+<td>Floating panes menu: <code>f</code> float/tile, <code>n</code> new, <code>o</code> next, arrows move</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>Shift+←↑↓→</code></td>
+<td>Move a floating pane</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>n</code></td>
+<td>New window, asks for its name right away (Esc closes it again)</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>N</code></td>
+<td>New window in another session, on any machine: pick it, go there, name the window</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>Space</code></td>
+<td>Show or hide the popup used last</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>z</code></td>
+<td>Over a popup: fill everything but the bars, and back</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>!</code></td>
+<td>Popup ⇄ pane: the shown popup becomes a window of its own, else the focused pane a popup</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>w</code> …</td>
+<td>Windows menu: <code>1</code>–<code>9</code>, <code>c</code> new, <code>n</code>/<code>p</code> next/previous, <code>m</code> move to another session, <code>=</code> renumber 1, 2, 3 …</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>1</code>–<code>9</code></td>
+<td>Go to window, an empty one starts a shell</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>←↑↓→</code></td>
+<td>Focus the pane in that direction</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>o</code></td>
+<td>Focus the next pane</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>;</code></td>
+<td>Back to the pane focused before, across windows</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>g</code></td>
+<td>Go to any pane: type to filter by window, name, program, state or directory</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>/</code></td>
+<td>Search everything: panes, windows, sessions and agents on every machine, plugins, marks, hives and every command with its keys. Words in any order, Enter goes there or does it</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>a</code></td>
+<td>Jump to the agent that has waited longest for you, then to finished ones</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>A</code></td>
+<td>Every agent here and on other machines, those waiting first: Enter or digit goes there</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>s</code> <code>l</code></td>
+<td>While you were away: each agent that did something since the last terminal detached, waiting ones first, with when it started (●), asked (◆) and finished (✦). Opens by itself when you come back after a minute or more and something happened</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>v</code></td>
+<td>Review the changes of the focused pane's repository (against the last commit, new files too): <code>j</code> <code>k</code> move, <code>n</code> <code>p</code> next / previous file, <code>c</code> notes the line, <code>x</code> removes the note, <code>s</code> sends all notes to the pane as one prompt, typed in once its agent is idle. Notes not sent stay for the next review</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>i</code></td>
+<td>Inbox: the agents on every machine that wait for you, then those done, each with its question. A digit picks that option, typed text and Enter answer, Enter alone goes there. Answers only ever go to the agent whose question is shown</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>W</code></td>
+<td>Every window everywhere, in every session on every machine, with its agents' state and programs: Enter or digit goes there, <code>/</code> searches</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>P</code></td>
+<td>Every pane everywhere, after its window (<code>1 api › claude</code>): Enter or digit goes there, <code>/</code> searches</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>m</code> / <code>M</code></td>
+<td>Mark the pane for <code>Alt+1</code> … <code>Alt+9</code>, like Harpoon / list the marks: Enter goes there, <code>J</code> <code>K</code> reorder, <code>x</code> removes</td>
+</tr>
+<tr>
+<td><code>Alt+1</code> … <code>Alt+9</code></td>
+<td>Straight to a marked pane, in any session, on any machine (setting <em>Marks on Alt+1-9</em>)</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>[</code> or <code>y</code></td>
+<td>Copy mode: scroll back with vim keys (<code>Ctrl-U</code>/<code>Ctrl-D</code>, <code>Ctrl-B</code>/<code>Ctrl-F</code>, <code>g</code>/<code>G</code>), <code>w</code>/<code>b</code>/<code>e</code> by words, <code>/</code> and <code>?</code> search down and up, <code>n</code>/<code>N</code> next, <code>s</code> jump (Enter or Space takes the yellow, nearest match), <code>v</code> select, <code>V</code> select lines, <code>y</code> copy, <code>q</code> quit. A board in the corner shows all of these keys; <code>i</code> hides it (setting "Copy-mode keys")</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>j</code></td>
+<td>Jump like flash.nvim: type a few characters, every match in every pane on screen gets a label, its key puts the copy cursor there, into the other pane too. To mark: jump, <code>v</code>, jump again (<code>s</code>) to where it ends, <code>y</code></td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>u</code></td>
+<td>Copy mode, one page up right away (<code>PgUp</code> works too)</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>E</code></td>
+<td>The pane's whole history in <code>$EDITOR</code></td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>c</code> …</td>
+<td>Your commands from the config, e.g. <code>g</code> for lazygit</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>Ctrl+←↑↓→</code></td>
+<td>Resize by one cell (<code>Alt</code> for five), floating panes too</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>q</code></td>
+<td>Quit menu: detach, close the pane or end the session</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>d</code></td>
+<td>Detach, the shells keep running</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>Q</code></td>
+<td>Quit: end the session and every shell in it (asks first)</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>b</code></td>
+<td>Show or hide the sidebar</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>e</code></td>
+<td>Into the sidebar: <code>j</code>/<code>k</code> move, <code>Enter</code> go, <code>r</code> name, <code>x</code> close, <code>Esc</code> back</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>F</code></td>
+<td>Focus mode: only the focused pane, no bars, sidebar or borders; again to leave</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>s</code></td>
+<td>Session menu: switch, new, rename or end this session, detach, hives, save all as a hive</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>S</code></td>
+<td>Session list straight away: switch, end, rename, save as a hive</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>H</code></td>
+<td>Hives straight away: bring back, save, update, rename or delete saved groups of sessions</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>,</code></td>
+<td>Settings</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>R</code></td>
+<td>Reload the config file</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>?</code></td>
+<td>Show all keys</td>
+</tr>
+<tr>
+<td><code>Ctrl+B</code> <code>Ctrl+B</code></td>
+<td>Send <code>Ctrl+B</code> to the shell</td>
+</tr>
+</tbody>
+</table>
+<p>Pressing <code>Ctrl+B</code> opens a menu with every key, like which-key in Neovim. <code>f</code> and <code>w</code> open
+submenus, <code>⌫</code> goes back. Without remembering a key: <code>Enter</code> (or <code>↓</code>/<code>↑</code> in submenus, where the
+arrows mean nothing else) picks from the menu with the arrows: <code>↑</code>/<code>↓</code> in a column, <code>←</code>/<code>→</code> to the
+column beside, <code>Enter</code> or <code>Space</code> runs the entry and picks on in a submenu, <code>⌫</code> goes back. After
+<code>Ctrl+B</code> alone the arrows still change the pane.
+Focus, move and resize repeat: for 600 ms after one of them, arrow keys work without the prefix.
+A pane closes when its shell exits, imkr exits with the last pane.</p>
+<h2 id="restarts">Restarts</h2>
+<p>imkr saves the layout to <code>~/.local/state/imkr/session.json</code> while it runs: windows,
+splits, floating panes and each pane's directory. If the server dies with the machine, the next
+<code>imkr</code> brings the layout back, shells start in their old directories, and agents are resumed:
+Claude Code, Codex and pi by the session id their hooks report (<code>claude --resume &lt;id&gt;</code>,
+<code>pi --session &lt;id&gt;</code>), opencode,
+aider, goose and cursor-agent with their last conversation in that directory. <em>Resume agents
+after a restart</em> in the settings starts them, only types the command for you to start with
+Enter, or leaves them off; <code>[resume_commands]</code> in the config sets the command per agent
+(<code>{session}</code> for the id, <code>""</code> turns one off), e.g. <code>gemini = "gemini --resume latest"</code>. Each pane's history
+comes back too, as text above a line <em>restored after a restart</em>: the last 3000 lines are kept
+every 20 seconds in <code>&lt;session&gt;.scrollback/</code> next to the file, readable by you only. Processes
+cannot survive a restart. Ending the session on purpose (<code>Ctrl+B Q</code>, <code>kill-server</code>, or
+exiting the last shell) deletes the file and keeps the layout in the hive <code>last</code>.</p>
+<p><code>Ctrl+B S</code> says how long a session's agents have been quiet, e.g. <code>✓1 2d ago</code>, so an old one
+stands out among many; a session without agents shows neither time nor state. <code>o</code> hides the old
+ones (not running, no agents, or quiet for 12 hours) and shows them again. <code>imkr ls</code> gives the
+time too.</p>
+<p>When the session you are in ends, imkr does not drop you: you land in another session running
+on this machine, with the session list open, to go on from there (<code>Esc</code> stays, <code>Ctrl+B d</code>
+leaves). Only when none runs does imkr end, and plain <code>imkr</code> then starts afresh instead of
+bringing back an empty copy of the ended one.</p>
+<p>Sessions that do not run are listed with <code>◌</code>, in <code>Ctrl+B S</code> as a group of their own after the
+running ones (<code>o</code> hides them and quiet ones) and in <code>imkr ls</code>; the sidebar shows running ones only:
+<em>stopped</em> ones (the machine restarted, or the server crashed) and <em>closed</em> ones (ended on
+purpose). Enter brings one back with its layout and agents, <code>x</code> forgets it. After the machine
+restarted, the first <code>imkr</code> brings back every session that ran when it went down, not just the
+one it goes to (setting <em>Restart all sessions after a reboot</em>); closed ones stay closed. From a
+shell:</p>
+<pre><code class="language-bash">imkr ls              # ◌ deckbox   stopped 21:57, 2 panes in 2 windows
+imkr revive deckbox  # back, without attaching
+imkr forget deckbox  # its saved layout is deleted
+</code></pre></article>
+<div class="pager"><a href="install.html"><span>← Back</span>Install and update</a><a href="screen.html" style="text-align:right"><span>Next →</span>Sidebar, popups, mouse and clipboard</a></div><p class="edit">Source: <a href="https://github.com/bastianhenneberg/imkr/blob/main/docs/src/sessions.md">docs/src/sessions.md</a></p>
+</main>
+</div>
+</body>
+</html>

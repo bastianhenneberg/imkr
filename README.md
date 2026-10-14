@@ -59,7 +59,7 @@ curl -fsSL https://raw.githubusercontent.com/bastianhenneberg/imkr/main/install.
 
 This puts the latest release into `~/.local/bin`. With a Rust toolchain:
 `cargo install --git https://github.com/bastianhenneberg/imkr --locked`.
-More in [docs/install.md](docs/install.md).
+More in [docs/src/install.md](docs/src/install.md).
 
 ## First steps
 
@@ -87,22 +87,25 @@ then on.
 
 ## Documentation
 
-New here: [Getting started](docs/getting-started.md), then [How imkr works](docs/architecture.md).
+New here: [Getting started](docs/src/getting-started.md), then [How imkr works](docs/src/architecture.md).
+
+The same as a website with diagrams: open `docs/index.html` in a browser, or
+<https://bastianhenneberg.github.io/imkr/> once GitHub Pages serves `docs/`.
 
 | | |
 |---|---|
-| [Install and update](docs/install.md) | installer, live updates, building |
-| [Sessions, windows and panes](docs/sessions.md) | getting around, worktrees, fleets, checkpoints, restarts |
-| [Sidebar, popups, mouse](docs/screen.md) | sidebar, popups, mouse, clipboard, images |
-| [Agents](docs/agents.md) | states, hooks, accounts, messages, contacts, MCP, tmux shim, events |
-| [imkr and AI Brain](docs/ai-brain.md) | CLI mode (an agent per task), messages to colleagues |
-| [Other machines](docs/machines.md) | the operator, ssh, settings sync, hosted windows |
-| [Hives and templates](docs/hives.md) | saved groups of sessions, session templates |
-| [On the phone](docs/phone.md) | `imkr web`, pairing, firewall |
-| [Plugins](docs/plugins.md) | plugin files, repositories, catalogs |
-| [Settings](docs/settings.md) | config file, themes, own commands, hooks |
-| [Keys](docs/keys.md) · [Commands](docs/commands.md) | generated from the code |
-| [Compared with herdr and TUIOS](docs/comparison.md) | what imkr adds, checked October 2026 |
+| [Install and update](docs/src/install.md) | installer, live updates, building |
+| [Sessions, windows and panes](docs/src/sessions.md) | getting around, worktrees, fleets, checkpoints, restarts |
+| [Sidebar, popups, mouse](docs/src/screen.md) | sidebar, popups, mouse, clipboard, images |
+| [Agents](docs/src/agents.md) | states, hooks, accounts, messages, contacts, MCP, tmux shim, events |
+| [imkr and AI Brain](docs/src/ai-brain.md) | CLI mode (an agent per task), messages to colleagues |
+| [Other machines](docs/src/machines.md) | the operator, ssh, settings sync, hosted windows |
+| [Hives and templates](docs/src/hives.md) | saved groups of sessions, session templates |
+| [On the phone](docs/src/phone.md) | `imkr web`, pairing, firewall |
+| [Plugins](docs/src/plugins.md) | plugin files, repositories, catalogs |
+| [Settings](docs/src/settings.md) | config file, themes, own commands, hooks |
+| [Keys](docs/src/keys.md) · [Commands](docs/src/commands.md) | generated from the code |
+| [Compared with herdr and TUIOS](docs/src/comparison.md) | what imkr adds, checked October 2026 |
 
 ## Status
 
