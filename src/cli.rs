@@ -1897,7 +1897,7 @@ pub fn hive(args: &[String]) -> Result<()> {
         }
         // Only this hive's sessions: it comes back, the others end.
         [cmd, name, flags @ ..] if cmd == "switch" && flags.iter().all(|f| f == "--yes") => {
-            if std::env::var_os("IMKR_SOCKET").is_some() {
+            if crate::protocol::test_socket().is_some() {
                 bail!("switching hives needs the sessions' names, unset IMKR_SOCKET");
             }
             let outsiders = client::hive_outsiders(name)?;
@@ -2875,9 +2875,7 @@ pub fn update(only: Option<String>) -> Result<()> {
 pub fn update_to(exe: std::path::PathBuf, only: Option<String>) -> Result<()> {
     // A socket of its own outside the runtime directory (tests) is the only
     // one meant; a pane's own `IMKR_SOCKET` lies inside it.
-    let own = std::env::var_os("IMKR_SOCKET")
-        .map(std::path::PathBuf::from)
-        .filter(|path| path.parent() != protocol::runtime_dir().ok().as_deref());
+    let own = protocol::test_socket();
     let sockets: Vec<(String, std::path::PathBuf)> = match (only, own) {
         (None, Some(path)) => vec![(path.display().to_string(), path)],
         (Some(name), _) => vec![(name.clone(), protocol::session_socket(&name)?)],

@@ -581,6 +581,16 @@ fn invalid(msg: String) -> io::Error {
 
 /// The session this process belongs to: `$IMKR_SESSION`, set by
 /// `imkr -s NAME`, or `default`.
+/// `IMKR_SOCKET` when it names a socket of its own outside the runtime
+/// directory: a test world, with its state and saves next to it. Inside an
+/// imkr pane it names the pane's own session in the runtime directory, and
+/// that one keeps its files where every session does.
+pub fn test_socket() -> Option<PathBuf> {
+    std::env::var_os("IMKR_SOCKET")
+        .map(PathBuf::from)
+        .filter(|path| path.parent() != runtime_dir().ok().as_deref())
+}
+
 pub fn session_name() -> String {
     if let Some(name) = RENAMED.lock().unwrap().clone() {
         return name;

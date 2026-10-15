@@ -44,6 +44,9 @@ Press `Ctrl+B` and wait: a menu shows every key. A few to start with:
 `Enter` after `Ctrl+B` lets you pick from the menu with the arrows, for when you forget a key.
 All keys: [keys.md](keys.md).
 
+Tab completion for `imkr …` in the shell, sessions and hosts included:
+`eval "$(imkr completions zsh)"` in `~/.zshrc` ([more](install.md#tab-completion)).
+
 ## 3. Agents that report
 
 Start Claude Code (or codex, opencode, aider, gemini, pi, …) in a pane. imkr marks the pane:

@@ -6,6 +6,7 @@ mod checkpoint;
 mod cli;
 mod client;
 mod clipboard;
+mod completions;
 mod config;
 mod contacts;
 mod fdpass;
@@ -129,6 +130,9 @@ For scripts and agents:
                 pane's shell, print its output and exit with its code
   shell-integration zsh|bash
                 what to eval in ~/.zshrc or ~/.bashrc for run and wait
+  completions zsh|bash
+                Tab completion for imkr: commands, options and the names of
+                sessions, hosts, hives, accounts …; eval in ~/.zshrc or ~/.bashrc
   mcp           serve imkr's commands as MCP tools on stdin/stdout, for
                 agents: claude mcp add imkr -- imkr mcp
   layout ls | save NAME | NAME
@@ -287,6 +291,8 @@ fn main() -> Result<()> {
         ["mcp"] => mcp::serve(),
         ["run", ..] => cli::run(&args[1..]),
         ["shell-integration", ..] => cli::shell_integration(&args[1..]),
+        ["completions", ..] => completions::script(&args[1..]),
+        ["complete", ..] => completions::complete(&args[1..]),
         ["checkpoints"] => {
             print!("{}", checkpoint::list(&std::env::current_dir()?)?);
             Ok(())

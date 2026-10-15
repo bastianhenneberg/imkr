@@ -1148,7 +1148,7 @@ pub fn pull_hives(host: &str) -> Result<Vec<String>> {
 /// has none yet, e.g. one that replaces a broken one. `take` names a
 /// machine of the hive whose sessions come back here instead of there.
 pub fn restore_hive(name: &str, from: Option<&str>, take: Option<&str>) -> Result<Vec<String>> {
-    if std::env::var_os("IMKR_SOCKET").is_some() {
+    if crate::protocol::test_socket().is_some() {
         bail!("restoring sessions needs their names, unset IMKR_SOCKET");
     }
     if let Some(from) = from {
@@ -1297,7 +1297,7 @@ pub fn switch_hive(
 /// (`persist::were_running`) and stopped with it, each from its saved
 /// layout and history, as going there would.
 fn revive_stopped() {
-    if std::env::var_os("IMKR_SOCKET").is_some() {
+    if crate::protocol::test_socket().is_some() {
         return;
     }
     let names = crate::persist::were_running();

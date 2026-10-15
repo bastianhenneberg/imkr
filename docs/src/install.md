@@ -19,6 +19,20 @@ cargo install --git https://github.com/bastianhenneberg/imkr --locked
 imkr is Linux only for now: it reads `/proc` to tell what a pane is running and where.
 Everything else is portable, so a port is mostly a matter of replacing those two reads.
 
+## Tab completion
+
+Tab completes imkr's commands and options, and the names that exist right now: sessions, other
+machines, hives, templates, accounts, plugins, layouts, contacts, and agent addresses for `msg`.
+One line in the shell's rc file:
+
+```bash
+eval "$(imkr completions zsh)"    # ~/.zshrc, after oh-my-zsh or compinit
+eval "$(imkr completions bash)"   # ~/.bashrc
+```
+
+The names are asked for when Tab is pressed (`imkr complete sessions` and so on), so a session
+started a second ago is there.
+
 ## Updates
 
 A new version does not need a restart:

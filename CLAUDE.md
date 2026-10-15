@@ -216,6 +216,14 @@ Projekt-Slug: `imkr`
   Liste, die jetzt stopped sind (beim Herunterfahren enden die Server nacheinander, der letzte
   ließe sonst die früheren fallen). Bewusst beendete fallen raus: State gelöscht bzw. closed.
   Sidebar zeigt keine ruhenden Sessions (`session_rows` → `retain`), nur `Ctrl+B S` (`o`).
+- Tab-Vervollständigung: `src/completions.rs` (`COMMANDS`: Befehl, Optionen, Unterbefehle und welche
+  Namen dort passen, `Words`), `imkr completions zsh|bash` erzeugt das Skript daraus, Namen fragt es
+  beim Tab per `imkr complete KIND` ab. Neuer Befehl → Eintrag in `COMMANDS` (Test
+  `every_command_is_offered` liest die Befehle aus main.rs). Test der Skripte: zsh mit Platzhaltern
+  für `compadd`/`_describe`, bash mit gesetztem `COMP_WORDS`.
+- `protocol::test_socket()`: `IMKR_SOCKET` zählt nur als Testwelt, wenn es außerhalb des
+  Runtime-Verzeichnisses liegt. In einem Pane ist es der Socket der eigenen Session; vorher suchten
+  `hive ls/save/restore/switch` aus einem Pane neben dem Socket und fanden keine Hives.
 - Shell-Integration (OSC 133): `LinkScanner` liefert auch `Piece::Mark` (A/B/C/D;exit), `Pane::shell`
   (`Shell::mark`: C = Ausgabe beginnt, D = fertig), `Pane::last_command` (Ende exklusiv: `text`
   nimmt die Endzelle mit), `Request::LastCommand`; CLI `run`, `wait` ohne `--until`,

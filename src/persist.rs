@@ -104,8 +104,8 @@ pub fn path() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("IMKR_STATE") {
         return Ok(PathBuf::from(path));
     }
-    if let Some(socket) = std::env::var_os("IMKR_SOCKET") {
-        return Ok(PathBuf::from(socket).with_extension("state.json"));
+    if let Some(socket) = crate::protocol::test_socket() {
+        return Ok(socket.with_extension("state.json"));
     }
     path_for(&crate::protocol::session_name())
 }
@@ -320,8 +320,10 @@ pub fn saves_dir() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("IMKR_STATE") {
         return Ok(PathBuf::from(path).with_extension("saves"));
     }
-    if let Some(socket) = std::env::var_os("IMKR_SOCKET") {
-        return Ok(PathBuf::from(socket).with_extension("saves"));
+    // Not a pane's own IMKR_SOCKET: `imkr hive ls` in a pane looked in
+    // `<socket>.saves` and found no hives.
+    if let Some(socket) = crate::protocol::test_socket() {
+        return Ok(socket.with_extension("saves"));
     }
     Ok(state_dir()?.join("saves"))
 }
