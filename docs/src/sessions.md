@@ -146,7 +146,8 @@ exiting the last shell) deletes the file and keeps the layout in the hive `last`
 
 `Ctrl+B S` says how long a session's agents have been quiet, e.g. `✓1 2d ago`, so an old one
 stands out among many; a session without agents shows neither time nor state. `o` hides the old
-ones (not running, no agents, or quiet for 12 hours) and shows them again. `imkr ls` gives the
+ones and shows them again: those not running. A running session always shows, however long its
+agents have been quiet, as in the sidebar. `imkr ls` gives the
 time too.
 
 When the session you are in ends, imkr does not drop you: you land in another session running

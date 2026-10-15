@@ -398,8 +398,8 @@ Projekt-Slug: `imkr`
   Gruppe, Indizes bleiben gleich), Einträge eines Rechners müssen hintereinander stehen.
 - Ruhezeit je Session: `SessionInfo::quiet_for` (aus `AgentInfo::since`, 0 bei working/blocked,
   `None` ohne Agents), eigene Session `App::quiet_for`; `Ctrl+B S` zeigt „✓1 2h ago“, alte sind
-  standardmäßig ausgeblendet, `o` zeigt sie (`hide_old`, `OLD_AFTER` 12 h: ruhend oder Agents so lange ruhig; laufende ohne Agents
-  bleiben sichtbar).
+  standardmäßig ausgeblendet, `o` zeigt sie (`hide_old`, `is_old_session`: nur nicht laufende; laufende bleiben
+  immer sichtbar wie in der Sidebar, egal wie lange ihre Agents ruhen, #7921).
   Falle: `remote_sessions` meldet für einen Rechner ohne Session eine erfundene `default`
   (`SessionInfo::is_stand_in`: 0 Panes) – die Sidebar zeigt dafür „no session yet“, `Ctrl+B S`
   einen Eintrag, der sie startet, nie als alt ausgeblendet. Damit die Zeit Updates und

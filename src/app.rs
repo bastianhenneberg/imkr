@@ -711,7 +711,7 @@ pub struct App {
     /// What the terminals showing a pane elsewhere were last told runs in
     /// it, see `tell_taps`.
     told: HashMap<PaneId, Option<(String, AgentState)>>,
-    /// `Ctrl+B S` leaves out old sessions, see `OLD_AFTER`; `o` shows them.
+    /// `Ctrl+B S` leaves out old sessions, see `is_old_session`; `o` shows them.
     hide_old: bool,
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
@@ -5542,16 +5542,11 @@ impl App {
                 ));
             }
         }
-        // Old: not running, or with agents quiet for long. A running session
-        // without agents stays: hidden by default, it would vanish right
-        // after it started.
         let old: Vec<Place> = entries
             .iter()
-            .filter(|(place, _, _, dormant, quiet)| {
+            .filter(|(place, _, _, dormant, _)| {
                 let current = place.host.is_none() && place.name == current;
-                !current
-                    && !empty.contains(place)
-                    && (dormant.is_some() || quiet.is_some_and(|q| q >= OLD_AFTER))
+                is_old_session(current, empty.contains(place), dormant.is_some())
             })
             .map(|(place, ..)| place.clone())
             .collect();
@@ -5664,7 +5659,7 @@ impl App {
             items.push(menu::MenuItem {
                 key: 'o',
                 title: format!("{hidden} old hidden"),
-                hint: "not running, or its agents quiet for 12h".into(),
+                hint: "not running, Enter on one brings it back".into(),
                 danger: false,
                 apart: true,
                 color: Some(theme::current().muted),
@@ -11323,8 +11318,13 @@ fn find_in_rows(
 
 /// Names are cut to this many characters.
 const MAX_NAME: usize = 32;
-/// A session whose agents are quiet this long is old, in seconds.
-const OLD_AFTER: u64 = 12 * 3600;
+/// Whether `Ctrl+B S` hides a session as old until `o`: only one that is
+/// not running. Every running session stays, however long its agents have
+/// been quiet, as in the sidebar (#7921): one that vanished after 12 quiet
+/// hours looked gone while it ran.
+fn is_old_session(current: bool, stand_in: bool, dormant: bool) -> bool {
+    !current && !stand_in && dormant
+}
 /// How long agents may take after an update or restart to be idle again
 /// and keep how long they were before, see `App::carried`.
 const CARRIED_FOR: Duration = Duration::from_secs(120);
@@ -11574,6 +11574,17 @@ mod tests {
         assert_eq!(word_motion(&rows, (2, 2), Word::Back), Some((0, 11)));
         assert_eq!(word_motion(&rows, (0, 8), Word::Back), Some((0, 6)));
         assert_eq!(word_motion(&rows, (0, 0), Word::Back), None);
+    }
+
+    #[test]
+    fn only_sessions_not_running_are_old() {
+        // Running, its agents quiet for days: stays (#7921).
+        assert!(!is_old_session(false, false, false));
+        // Not running: hidden until `o`.
+        assert!(is_old_session(false, false, true));
+        // The session you are in, and a machine without one yet, never.
+        assert!(!is_old_session(true, false, true));
+        assert!(!is_old_session(false, true, true));
     }
 
     #[test]
