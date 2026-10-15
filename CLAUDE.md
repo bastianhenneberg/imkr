@@ -282,13 +282,16 @@ Projekt-Slug: `imkr`
   mit `#[serde(default)]` in `Caps` überliest ein alter Server dagegen.
 - Settings-Sync: `src/settings.rs` (`collect`: config + `templates/` + `layouts.json` + eigene
   `plugins/*.toml`, keine Links; `plan` gegen den Stand nach dem letzten Sync (`base`,
-  `.sync-base/<host>.json`, nur auf dem Rechner, der synct): wer seitdem geändert hat, gewinnt,
+  `.sync-base/<host>.json` (0600, enthält die Kontoliste), nur auf dem Rechner, der synct): wer seitdem geändert hat, gewinnt,
   die Config je Schlüssel (`config_steps`, ohne `LOCAL_KEYS`; beide/erster Sync: dieser Rechner),
   Dateien bei beiden geändert: die neuere; Falle: mtime allein sagt nichts, imkr speichert die
   Config auch ohne Änderung durch den User; `apply` prüft Pfade per `allowed`, sichert nach `.sync-backup/<zeit>/`, behält beim Config
   die eigenen `LOCAL_KEYS`, prüft mit `Config::parse`, setzt die mtime der Quelle). CLI
   `settings sync|export|import` (`cli::sync_settings_with`, drüben per `remote_output`), danach
   `Request::ReloadConfig` an alle Sessions. `hosts sync` gleicht nach den Upgrades nacheinander ab.
+  Kontoliste (`accounts.toml` aus dem State, `ACCOUNTS`) wird vereinigt statt ersetzt
+  (`plan`: bei Unterschied Push und Pull, `apply` → `Store::merge_in`: fehlende anhängen samt Ordner,
+  Default nur wenn keiner da); nie Logins. `default_of` zählt nur angemeldete Konten.
   Test: Fake-ssh, das nach `--` den Befehl mit HOME/IMKR_CONFIG der zweiten Welt ausführt.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe

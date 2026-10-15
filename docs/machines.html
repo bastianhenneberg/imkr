@@ -225,13 +225,16 @@ Tailscale, the machines of your tailnet that are online and not used yet show as
 you start a session on another machine (<code>Ctrl+B s n</code>), by their MagicDNS name.</p>
 <p><code>imkr settings sync</code> keeps the settings the same on all known machines: the config (without
 what belongs to one machine: <code>name</code>, <code>hosts</code>, <code>web</code>, <code>web_listen</code>), session templates, saved
-layouts and your own plugins (not the ones installed with <code>imkr plugin add</code>, every machine gets
+layouts, the list of accounts (without their logins) and your own plugins (not the ones installed with <code>imkr plugin add</code>, every machine gets
 those itself). imkr remembers what both had after each sync, so whatever one side changed since
 goes to the other: the config setting by setting, the other files whole. What both changed keeps
 this machine's setting (a file: the newer one); so does the very first sync. Missing files are
 copied, the replaced file is kept in <code>.sync-backup/</code> next to the config, and running sessions
 load the result. It lists what goes where and asks first (<code>--yes</code> does not); <code>imkr hosts sync</code>
-does it too, after the update. Files deleted on one machine are not deleted on the others.</p>
+does it too, after the update. Files deleted on one machine are not deleted on the others.
+Accounts are joined: each machine gets the ones it lacks, a subscription shows there as not
+logged in until <code>imkr account login NAME</code>, and its default counts once it is logged in. Logins
+never travel: two machines renewing one login would log each other out.</p>
 <p>A single window can run on another machine too, in the session you are in: <code>Ctrl+B w h</code> asks
 for the machine, or <code>imkr --host server new [--dir D] [-- command]</code> from a pane. The program
 runs in a new window of the session there (started if needed), and this window shows it, at its

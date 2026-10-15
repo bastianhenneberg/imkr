@@ -78,7 +78,8 @@ imkr account default henneberg          # new shells on this machine start in it
 Accounts show by the subscription they are logged in to, `(standard)` marks the one new shells
 start in (`imkr account default`, else `~/.claude`), and commands take either name:
 `imkr account use stelljes` finds `standard` when that is stelljes' login. A pane keeps the account
-it started in, also when the default changes later.
+it started in, also when the default changes later. `imkr settings sync` brings the list of accounts to the other
+machines, without logins: log in there once with `imkr account login NAME`.
 
 Every agent's frame says what it runs on, after its state: `claude ● working · henneberg · opus 5.5`
 (the subscription by its address before the @, then the model), or `· Ollama · qwen3-coder` for a

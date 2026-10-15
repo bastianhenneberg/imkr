@@ -101,14 +101,53 @@ impl Store {
     }
 
     /// The account new shells of `tool` start in: the one set with
-    /// `imkr account default`, else `standard`.
+    /// `imkr account default`, else `standard`. One not logged in here
+    /// (synced from another machine, see `merge_in`) does not count yet.
     pub fn default_of(&self, tool: &str) -> String {
         self.read()
             .default
             .get(tool)
-            .filter(|name| self.find(tool, name).is_some())
+            .filter(|name| self.find(tool, name).is_some_and(|a| self.logged_in(&a)))
             .cloned()
             .unwrap_or_else(|| STANDARD.to_owned())
+    }
+
+    /// The list of accounts as a file, for `imkr settings sync`: names,
+    /// order, default and providers, never a login.
+    pub fn list_file(&self) -> PathBuf {
+        self.file()
+    }
+
+    /// Takes the list of another machine (`text`, its accounts.toml): every
+    /// account it has that is missing here is added at its end, with its
+    /// directory, so a subscription shows as not logged in until
+    /// `imkr account login`. Nothing here is removed or changed; the default
+    /// comes along when this machine has none. Returns the accounts added.
+    pub fn merge_in(&self, text: &str) -> Result<Vec<String>> {
+        let there: File =
+            toml::from_str(text).context("the accounts from there are not readable")?;
+        let mut file = self.read();
+        let mut added = Vec::new();
+        for account in there.accounts {
+            if !TOOLS.contains(&account.tool.as_str()) || !valid_name(&account.name) {
+                continue;
+            }
+            if file
+                .accounts
+                .iter()
+                .any(|a| a.tool == account.tool && a.name == account.name)
+            {
+                continue;
+            }
+            self.link_shared(&account)?;
+            added.push(format!("{}:{}", account.tool, account.name));
+            file.accounts.push(account);
+        }
+        for (tool, name) in there.default {
+            file.default.entry(tool).or_insert(name);
+        }
+        self.write(&file)?;
+        Ok(added)
     }
 
     /// Makes `account` the one new shells of its agent start in.
@@ -794,6 +833,55 @@ mod tests {
         // Gone with its account.
         store.remove("claude", "work").unwrap();
         assert_eq!(store.default_of("claude"), STANDARD);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Another machine's list adds what is missing, logins stay out, and a
+    /// default not logged in here does not count yet.
+    #[test]
+    fn lists_from_another_machine_are_joined() {
+        let base = std::env::temp_dir().join(format!("imkr-merge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        store
+            .add(Account {
+                name: "mine".into(),
+                tool: "claude".into(),
+                ..Account::default()
+            })
+            .unwrap();
+        let there = r#"
+default = { claude = "work" }
+
+[[account]]
+name = "work"
+tool = "claude"
+
+[[account]]
+name = "mine"
+tool = "claude"
+
+[[account]]
+name = "local"
+tool = "claude"
+url = "http://localhost:11434"
+model = "qwen3-coder"
+"#;
+        let added = store.merge_in(there).unwrap();
+        assert_eq!(added, vec!["claude:work", "claude:local"]);
+        let names: Vec<String> = store.load().into_iter().map(|a| a.name).collect();
+        assert_eq!(names, vec!["mine", "work", "local"]);
+        let work = store.find("claude", "work").unwrap();
+        assert!(store.dir_of(&work).unwrap().is_dir());
+        assert!(!store.logged_in(&work));
+        // Not logged in here: new shells stay in standard for now.
+        assert_eq!(store.default_of("claude"), STANDARD);
+        claude_login(&store.root.join("claude/work"), "w@x", "o");
+        assert_eq!(store.default_of("claude"), "work");
         let _ = std::fs::remove_dir_all(&base);
     }
 

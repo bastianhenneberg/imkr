@@ -20,6 +20,10 @@ pub const LOCAL_KEYS: &[&str] = &["name", "hosts", "web", "web_listen"];
 /// The config, as an item's path, whatever the file is called here.
 const CONFIG: &str = "config.toml";
 const LAYOUTS: &str = "layouts.json";
+/// The list of accounts (`account::Store`), kept in the state folder, not
+/// the config's: names, order, default and providers, never a login. Both
+/// sides get the accounts of both (`Store::merge_in`).
+const ACCOUNTS: &str = "accounts.toml";
 
 /// One settings file: its path relative to the config's folder, when it
 /// last changed (seconds since the epoch) and its text.
@@ -53,7 +57,23 @@ pub struct Step {
 pub fn collect() -> Result<Vec<Item>> {
     let config = crate::config::path()?;
     let dir = config.parent().context("the config has no folder")?;
-    Ok(collect_in(dir, &config))
+    let mut items = collect_in(dir, &config);
+    if let Ok(store) = crate::account::Store::here() {
+        let file = store.list_file();
+        if let (Ok(text), Ok(meta)) = (fs::read_to_string(&file), fs::metadata(&file)) {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs());
+            items.push(Item {
+                path: ACCOUNTS.to_owned(),
+                modified,
+                text,
+            });
+        }
+    }
+    Ok(items)
 }
 
 fn collect_in(dir: &Path, config: &Path) -> Vec<Item> {
@@ -103,7 +123,7 @@ fn collect_in(dir: &Path, config: &Path) -> Vec<Item> {
 /// Whether an item may be written here: only the files a sync is about,
 /// never a path out of the config's folder.
 pub fn allowed(path: &str) -> bool {
-    if path == CONFIG || path == LAYOUTS {
+    if path == CONFIG || path == LAYOUTS || path == ACCOUNTS {
         return true;
     }
     let Some((folder, name)) = path.split_once('/') else {
@@ -149,6 +169,16 @@ pub fn plan(local: &[Item], remote: &[Item], base: Option<&[Item]>) -> (Vec<Step
             why: why.to_owned(),
             text: None,
         };
+        // Accounts are joined, not replaced: each side takes what it lacks.
+        if path == ACCOUNTS
+            && let (Some(here), Some(there)) = (&here, &there)
+        {
+            if here.text != there.text {
+                steps.push(step(Way::Push, "accounts joined"));
+                steps.push(step(Way::Pull, "accounts joined"));
+            }
+            continue;
+        }
         match (here, there) {
             (Some(_), None) => steps.push(step(Way::Push, "only here")),
             (None, Some(_)) => steps.push(step(Way::Pull, "only there")),
@@ -244,7 +274,16 @@ fn config_steps(
 pub fn apply(items: &[Item]) -> Result<Vec<String>> {
     let config = crate::config::path()?;
     let dir = config.parent().context("the config has no folder")?;
-    apply_in(dir, &config, items)
+    let (accounts, files): (Vec<Item>, Vec<Item>) =
+        items.iter().cloned().partition(|i| i.path == ACCOUNTS);
+    let mut written = apply_in(dir, &config, &files)?;
+    for item in accounts {
+        let added = crate::account::Store::here()?.merge_in(&item.text)?;
+        if !added.is_empty() {
+            written.push(format!("{ACCOUNTS} (+{})", added.join(", ")));
+        }
+    }
+    Ok(written)
 }
 
 fn apply_in(dir: &Path, config: &Path, items: &[Item]) -> Result<Vec<String>> {
@@ -339,7 +378,18 @@ pub fn remember_base(host: &str) -> Result<()> {
     if let Some(parent) = file.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&file, serde_json::to_string(&collect()?)?)?;
+    // It holds the account list, with providers' keys: the owner's only.
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&file)?
+        .write_all(serde_json::to_string(&collect()?)?.as_bytes())?;
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
@@ -362,6 +412,23 @@ fn base_file(host: &str) -> Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Account lists are joined: differing, they go both ways, and the
+    /// other machine's newer list never replaces this one's.
+    #[test]
+    fn account_lists_go_both_ways() {
+        let item = |text: &str, modified| Item {
+            path: ACCOUNTS.into(),
+            modified,
+            text: text.into(),
+        };
+        let (steps, undecided) = plan(&[item("a", 1)], &[item("b", 9)], None);
+        assert!(undecided.is_empty());
+        let ways: Vec<Way> = steps.iter().map(|s| s.way).collect();
+        assert_eq!(ways, vec![Way::Push, Way::Pull]);
+        assert!(plan(&[item("a", 1)], &[item("a", 9)], None).0.is_empty());
+        assert!(allowed(ACCOUNTS));
+    }
 
     fn item(path: &str, modified: u64, text: &str) -> Item {
         Item {
