@@ -2904,7 +2904,13 @@ impl App {
         let count = pane.notes.len();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match (pad.selected, key.code) {
+            // Closing keeps what was typed: nothing written down is lost.
             (_, KeyCode::Esc) => {
+                let text = pad.input.trim().to_owned();
+                if !text.is_empty() {
+                    pane.notes.push(crate::persist::Note { text, sent: false });
+                    self.flash = Some("the line is kept as a note".into());
+                }
                 self.notepad = None;
                 self.mode = Mode::Normal;
             }

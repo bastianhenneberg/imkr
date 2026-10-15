@@ -31,7 +31,7 @@ the agent notices nothing. The pane's frame shows `✎2` while two notes wait.
 | `y` | copy it |
 | `e` | take it back into the line to change it |
 | `x` | remove it |
-| `Esc` | close the pad; the notes stay |
+| `Esc` | close the pad; the notes stay, and a line still being typed is kept as a note |
 
 The notes belong to the pane and are saved with it: they come back after an update, a reboot,
 moving the window to another session, and when an ended session is brought back. From a shell
