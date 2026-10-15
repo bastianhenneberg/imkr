@@ -139,6 +139,20 @@ impl Store {
             {
                 continue;
             }
+            // Named like the login `standard` has here (henneberg's machine
+            // gets the account `henneberg`): that subscription is there.
+            let standard = Account {
+                name: STANDARD.into(),
+                tool: account.tool.clone(),
+                ..Account::default()
+            };
+            if account.url.is_none()
+                && self
+                    .identity(&standard)
+                    .is_some_and(|_| shown(self, &standard) == account.name)
+            {
+                continue;
+            }
             self.link_shared(&account)?;
             added.push(format!("{}:{}", account.tool, account.name));
             file.accounts.push(account);
@@ -871,7 +885,11 @@ tool = "claude"
 url = "http://localhost:11434"
 model = "qwen3-coder"
 "#;
-        let added = store.merge_in(there).unwrap();
+        // `standard` here is logged in as `me@…`: an account `me` from there
+        // is that same subscription and stays out.
+        claude_login(&store.home, "me@x", "o0");
+        let there = format!("{there}\n[[account]]\nname = \"me\"\ntool = \"claude\"\n");
+        let added = store.merge_in(&there).unwrap();
         assert_eq!(added, vec!["claude:work", "claude:local"]);
         let names: Vec<String> = store.load().into_iter().map(|a| a.name).collect();
         assert_eq!(names, vec!["mine", "work", "local"]);

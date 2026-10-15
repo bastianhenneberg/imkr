@@ -1982,7 +1982,10 @@ pub fn account(args: &[String]) -> Result<()> {
                         note.push_str(&format!("  {}", who.shown));
                     }
                     if !store.logged_in(&account) {
-                        note.push_str("  (not logged in: `imkr account login …`)");
+                        note.push_str(&format!(
+                            "  not logged in: `imkr account login {}:{}`",
+                            account.tool, account.name
+                        ));
                     }
                     if let Some(until) = store.used_up_until(&account) {
                         note.push_str(&format!("  used up until {until}"));
