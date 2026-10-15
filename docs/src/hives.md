@@ -17,6 +17,8 @@ Every session that ends on purpose (`Ctrl+B Q`, `x` in the sessions menu, `kill-
 its layout into the hive `last`, so bringing `last` back reopens everything that was open, each
 session as its own server again. Sessions already running are left alone, and a running
 session is marked with ● in the list.
+`last` keeps the ten sessions ended most recently; for longer, save them as a hive of their own.
+Sessions stopped by a crash or a reboot are not in `last` and always come back.
 
 ```bash
 imkr hive save work       # the running sessions as the hive `work`

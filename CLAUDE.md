@@ -210,7 +210,7 @@ Projekt-Slug: `imkr`
   in `dir_lists` gecacht, `MAX_PATH`);
   der Ordner wird `Template::root`, „leer“ = Vorlage mit einem Window.
 - Ruhende Sessions: `persist::dormant_sessions` (State-Dateien ohne laufenden Server = stopped,
-  Hive `last` = closed), `client::local_sessions` hängt sie mit `SessionInfo::dormant` an (also
+  Hive `last` = closed, nur die `LAST_KEEPS` = 10 neuesten, `keep_newest`), `client::local_sessions` hängt sie mit `SessionInfo::dormant` an (also
   auch in `ls --json` und für andere Rechner). `go_to` holt closed per `persist::revive` (remote
   `imkr revive`) zurück, stopped stellt der startende Server selbst her. `imkr forget`, `x` in
   `Ctrl+B S`. Server erben keine Claude-Sitzungsvariablen (`client::is_agent_session_var`), sonst

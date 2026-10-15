@@ -230,7 +230,9 @@ panes and directories. <code>Ctrl+B H</code> opens the hives, and every key it t
 <p>Every session that ends on purpose (<code>Ctrl+B Q</code>, <code>x</code> in the sessions menu, <code>kill-server</code>) puts
 its layout into the hive <code>last</code>, so bringing <code>last</code> back reopens everything that was open, each
 session as its own server again. Sessions already running are left alone, and a running
-session is marked with ● in the list.</p>
+session is marked with ● in the list.
+<code>last</code> keeps the ten sessions ended most recently; for longer, save them as a hive of their own.
+Sessions stopped by a crash or a reboot are not in <code>last</code> and always come back.</p>
 <pre><code class="language-bash">imkr hive save work       # the running sessions as the hive `work`
 imkr hive ls              # every hive with its sessions and age
 imkr hive restore work    # start what of `work` does not run

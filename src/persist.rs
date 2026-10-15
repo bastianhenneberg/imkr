@@ -365,8 +365,29 @@ pub fn keep_in_last(session: &str, layout: Saved) -> Result<()> {
             layout,
         },
     );
+    keep_newest(&mut hive, LAST_KEEPS);
     write_hive(LAST, &hive)?;
     Ok(())
+}
+
+/// How many ended sessions `last` keeps: the newest. What is to stay longer
+/// goes into a hive of its own (`imkr hive save`); sessions stopped by a
+/// crash or reboot are not in `last` and always stay.
+pub const LAST_KEEPS: usize = 10;
+
+/// Drops the sessions saved longest ago until `keep` are left.
+fn keep_newest(hive: &mut Hive, keep: usize) {
+    while hive.sessions.len() > keep {
+        let Some(oldest) = hive
+            .sessions
+            .iter()
+            .min_by_key(|(_, s)| s.saved_at)
+            .map(|(name, _)| name.clone())
+        else {
+            break;
+        };
+        hive.sessions.remove(&oldest);
+    }
 }
 
 /// A hive as its menu lists it.
@@ -675,6 +696,24 @@ mod tests {
             pi.resume_command(&commands).as_deref(),
             Some("pi --session 0b5c9f2e-1111")
         );
+    }
+
+    #[test]
+    fn last_keeps_the_newest_ten() {
+        let mut hive = Hive::default();
+        for i in 1..=12u64 {
+            hive.sessions.insert(
+                format!("s{i:02}"),
+                HiveSession {
+                    saved_at: i,
+                    layout: sample(),
+                },
+            );
+        }
+        keep_newest(&mut hive, LAST_KEEPS);
+        assert_eq!(hive.sessions.len(), 10);
+        assert!(!hive.sessions.contains_key("s01") && !hive.sessions.contains_key("s02"));
+        assert!(hive.sessions.contains_key("s03") && hive.sessions.contains_key("s12"));
     }
 
     #[test]
