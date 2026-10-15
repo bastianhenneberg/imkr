@@ -252,6 +252,20 @@ fn main() -> Result<()> {
     let last = session.is_none() && host.is_none() && std::env::var_os("IMKR_SOCKET").is_none();
     let chosen = session.clone();
     let remote = host.map(|host| client::Remote { host, session });
+    // Rust ignores SIGPIPE, so `imkr account | head` died with a panic when
+    // head closed the pipe. Commands that print end quietly instead, like
+    // other tools; the ones that live on connections (client, proxy, server,
+    // web, hosted windows) keep handling a closed one themselves.
+    let lives_on_connections = matches!(
+        args.first().map(String::as_str),
+        None | Some("attach" | "a" | "proxy" | "server" | "web" | "hosted" | "attach-pane")
+    );
+    if !lives_on_connections {
+        // SAFETY: no other thread runs yet; restoring the default action.
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
     match args
         .iter()
         .map(String::as_str)
