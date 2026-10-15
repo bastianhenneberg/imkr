@@ -10,6 +10,7 @@ renumber_windows = false   # true: windows move up to fill gaps, always 1, 2, 3 
 sessions_on_start = false  # true: plain `imkr` opens the session list first
 session_banner = true     # the session's name on screen for a moment after a switch
 session_banner_at = "middle"  # or "top", "bottom": the middle of that third
+notes_at = "right"  # the notepad (Ctrl+B t): "right", "middle" or "bottom" of its pane
 hosts = []          # other machines whose sessions to show, see docs/machines.md
 name = "laptop"     # this machine's name for the others, e.g. its ssh alias; default: hostname
 

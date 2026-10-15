@@ -41,6 +41,27 @@ impl BannerAt {
     }
 }
 
+/// Where a pane's notepad (`Ctrl+B t`) shows: along its right side, as
+/// an overlay in its middle, or along its bottom.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotesAt {
+    #[default]
+    Right,
+    Middle,
+    Bottom,
+}
+
+impl NotesAt {
+    pub fn name(self) -> &'static str {
+        match self {
+            NotesAt::Right => "right",
+            NotesAt::Middle => "middle",
+            NotesAt::Bottom => "bottom",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WhichKey {
@@ -253,6 +274,8 @@ pub struct Config {
     pub session_banner: bool,
     /// Where it shows: middle, top or bottom (third).
     pub session_banner_at: BannerAt,
+    /// Where a pane's notepad shows: right, middle or bottom.
+    pub notes_at: NotesAt,
     /// Keeps `imkr web` running, the sessions in a phone's browser.
     pub web: bool,
     /// Where `imkr web` listens, e.g. `100.97.56.232:4657`; without it on
@@ -443,6 +466,7 @@ impl Default for Config {
             sessions_on_start: false,
             session_banner: true,
             session_banner_at: BannerAt::Middle,
+            notes_at: NotesAt::Right,
             web: false,
             web_listen: None,
             name: None,
@@ -690,6 +714,16 @@ pub const SETTINGS: &[Setting] = &[
                 .unwrap_or(1);
             let next = if forward { i + 1 } else { i + ALL.len() - 1 };
             c.session_banner_at = ALL[next % ALL.len()];
+        },
+    },
+    Setting {
+        name: "Notepad at",
+        value: |c| c.notes_at.name().to_owned(),
+        step: |c, forward| {
+            const ALL: [NotesAt; 3] = [NotesAt::Right, NotesAt::Middle, NotesAt::Bottom];
+            let i = ALL.iter().position(|a| *a == c.notes_at).unwrap_or(0);
+            let next = if forward { i + 1 } else { i + ALL.len() - 1 };
+            c.notes_at = ALL[next % ALL.len()];
         },
     },
     Setting {

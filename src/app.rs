@@ -2974,13 +2974,52 @@ impl App {
             .into_iter()
             .find(|(id, _)| *id == pad.pane)
             .map_or(body, |(_, rect)| rect);
-        let wanted = pane.notes.len() as u16 + 3;
-        let height = wanted.clamp(4, (area.height / 2).max(4)).min(area.height);
-        let rect = Rect {
-            x: area.x,
-            y: area.y + area.height - height,
-            width: area.width,
-            height,
+        // Rows the notes take at `width` once long ones wrap, plus the
+        // line to type in and the frame.
+        let wanted = |width: u16| -> u16 {
+            let inner = usize::from(width.saturating_sub(2)).max(1);
+            let rows: usize = pane
+                .notes
+                .iter()
+                .map(|n| (n.text.chars().count() + 2).div_ceil(inner).max(1))
+                .sum();
+            (rows + 3).min(usize::from(u16::MAX)) as u16
+        };
+        let rect = match self.config.notes_at {
+            // Along the right side, full height: the agent's output stays
+            // in view on the left.
+            config::NotesAt::Right => {
+                let width = (area.width * 2 / 5).clamp(30.min(area.width), area.width);
+                Rect {
+                    x: area.x + area.width - width,
+                    y: area.y,
+                    width,
+                    height: area.height,
+                }
+            }
+            config::NotesAt::Middle => {
+                let width = (area.width * 3 / 5).clamp(40.min(area.width), area.width);
+                let height = wanted(width)
+                    .clamp(5, (area.height * 3 / 5).max(5))
+                    .min(area.height);
+                Rect {
+                    x: area.x + (area.width - width) / 2,
+                    y: area.y + (area.height - height) / 2,
+                    width,
+                    height,
+                }
+            }
+            config::NotesAt::Bottom => {
+                let height = wanted(area.width)
+                    .clamp(4, (area.height / 2).max(4))
+                    .min(area.height);
+                Rect {
+                    x: area.x,
+                    y: area.y + area.height - height,
+                    width: area.width,
+                    height,
+                }
+            }
         };
         let open = pane.notes.iter().filter(|n| !n.sent).count();
         let block = Block::bordered()
@@ -3025,7 +3064,10 @@ impl App {
                 Style::new().fg(t.accent),
             ),
         ]));
-        frame.render_widget(Paragraph::new(lines), inner);
+        frame.render_widget(
+            Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }),
+            inner,
+        );
     }
 
     /// The diff over the panes: changed lines in the theme's colours, the

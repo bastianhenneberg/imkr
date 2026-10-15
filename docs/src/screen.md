@@ -17,7 +17,8 @@ off.
 
 ## Notepad
 
-`Ctrl+B t` opens a notepad at the bottom of the focused pane: for the thoughts that come while
+`Ctrl+B t` opens a notepad in the focused pane, along its right side (or in its middle, or
+at its bottom: *Notepad at* in the settings, `notes_at`): for the thoughts that come while
 its agent works and that you do not want to throw at it yet. Type a line and Enter keeps it;
 the agent notices nothing. The pane's frame shows `✎2` while two notes wait.
 
