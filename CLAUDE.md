@@ -369,7 +369,7 @@ Projekt-Slug: `imkr`
   unter `flock` (`locked`). Test: zwei Welten mit eigenem `web_listen` auf der VPN-Adresse,
   andere Ports; laufende Web-Server halten das Binary fest (zweite Kopie nehmen).
   Weg über AI Brain: `Contact::brain` (AI-Brain-Name), imkr meldet sich nicht selbst an, sondern
-  ruft `ai-brain-cli nachricht …` (`brain_cli`, Vertrag mit der ai-brain-cli-Session):
+  ruft `ai-brain-harness nachricht …` (`brain_cli`, `brain_program` fällt auf den alten Namen `ai-brain-cli` zurück; Vertrag mit der Harness-Session):
   `kontakte --json` → `{ich, kontakte:[{person,email,rechner}]}` (Name oder E-Mail exakt, an
   sich selbst abgelehnt), `senden PERSON TEXT --von A --ziel S/P`, `abholen --json` →
   `{nachrichten:[{id,von_person,von,ziel,text,abholungen}]}` (beim ersten Abholen EINEM Rechner
@@ -381,7 +381,7 @@ Projekt-Slug: `imkr`
   holt nur ein Server gleichzeitig ab (`contact-brain.lock`, LOCK_NB): zwei Sessions holten
   dieselbe unbestätigte Nachricht und reihten sie doppelt ein (Echttest 14.10.). Text max.
   8 KB (`MAX_BRAIN_TEXT`). `von_person` ist von AI Brain geprüft, `von` nur Angabe. Test: Attrappe
-  `ai-brain-cli` im PATH beider Welten mit gemeinsamem Ordner als Briefkasten.
+  `ai-brain-harness` im PATH beider Welten mit gemeinsamem Ordner als Briefkasten.
 - Inbox `Ctrl+B i` (`inbox_items`, `inbox_key`, `draw_inbox`): blocked/done Agents aus
   `agent_entries` mit `agent::tail` (Server liefert es in `list()` als `tail`, über
   `AgentInfo::tail` auch für andere Sessions/Rechner). Antwort per `App::answer`: lokal

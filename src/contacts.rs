@@ -6,7 +6,7 @@
 //!
 //! The other way needs no common network: through AI Brain, which knows the
 //! people and who may write to whom. imkr does not sign in there itself, it
-//! goes through `ai-brain-cli nachricht` (kontakte, senden, abholen).
+//! goes through `ai-brain-harness nachricht` (kontakte, senden, abholen).
 
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -533,17 +533,32 @@ pub fn set_trusted(name: &str, trusted: bool) -> Result<()> {
     })?
 }
 
-/// Runs `ai-brain-cli nachricht ARGS` with `input` on stdin; its output.
-/// The CLI holds the sign-in to AI Brain, imkr none.
+/// The AI Brain command: `ai-brain-harness`, or `ai-brain-cli` as it was
+/// called before (October 2026) on machines not updated yet.
+fn brain_program() -> &'static str {
+    let found = |name: &str| {
+        std::env::var_os("PATH")
+            .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+    };
+    if !found("ai-brain-harness") && found("ai-brain-cli") {
+        "ai-brain-cli"
+    } else {
+        "ai-brain-harness"
+    }
+}
+
+/// Runs `ai-brain-harness nachricht ARGS` with `input` on stdin; its output.
+/// The harness holds the sign-in to AI Brain, imkr none.
 fn brain_cli(args: &[&str], input: &str) -> Result<String> {
+    let program = brain_program();
     let mut child = std::process::Command::new("timeout")
-        .args(["30", "ai-brain-cli", "nachricht"])
+        .args(["30", program, "nachricht"])
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .context("cannot run ai-brain-cli")?;
+        .with_context(|| format!("cannot run {program}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(input.as_bytes())?;
     }
@@ -551,8 +566,8 @@ fn brain_cli(args: &[&str], input: &str) -> Result<String> {
     if !out.status.success() {
         let why = String::from_utf8_lossy(&out.stderr);
         match out.status.code() {
-            Some(127) => bail!("ai-brain-cli is not installed here"),
-            Some(124) => bail!("ai-brain-cli did not answer within 30 s"),
+            Some(127) => bail!("ai-brain-harness is not installed here"),
+            Some(124) => bail!("{program} did not answer within 30 s"),
             _ => bail!("{}", why.trim()),
         }
     }
@@ -563,7 +578,7 @@ fn brain_cli(args: &[&str], input: &str) -> Result<String> {
 /// AI Brain lets this user write to.
 pub fn add_brain(person: &str, alias: Option<&str>) -> Result<Contact> {
     let answer: serde_json::Value = serde_json::from_str(&brain_cli(&["kontakte", "--json"], "")?)
-        .context("ai-brain-cli answered no list of contacts")?;
+        .context("ai-brain-harness answered no list of contacts")?;
     let known = answer["kontakte"].as_array().cloned().unwrap_or_default();
     // By name or e-mail, exactly; kept under the name AI Brain says they
     // send as (`von_person`).
@@ -601,14 +616,14 @@ pub fn add_brain(person: &str, alias: Option<&str>) -> Result<Contact> {
     })?
 }
 
-/// What `ai-brain-cli nachricht abholen --json` answers.
+/// What `ai-brain-harness nachricht abholen --json` answers.
 #[derive(Debug, Deserialize)]
 struct FetchedAll {
     #[serde(default)]
     nachrichten: Vec<Fetched>,
 }
 
-/// One message as `ai-brain-cli nachricht abholen` hands it over: given to
+/// One message as `ai-brain-harness nachricht abholen` hands it over: given to
 /// this machine at the first fetch, again until it is confirmed.
 #[derive(Debug, Deserialize)]
 struct Fetched {
@@ -646,7 +661,7 @@ pub fn fetch_brain() -> Result<usize> {
     }
     let out = brain_cli(&["abholen", "--json"], "")?;
     let fetched = serde_json::from_str::<FetchedAll>(&out)
-        .context("ai-brain-cli answered no list of messages")?
+        .context("ai-brain-harness answered no list of messages")?
         .nachrichten;
     let count = fetched.len();
     // At least once, not exactly once: what was taken but not confirmed
@@ -776,7 +791,7 @@ mod tests {
 
     #[test]
     fn what_ai_brain_hands_over() {
-        // As `ai-brain-cli nachricht abholen --json` answers (#495).
+        // As `ai-brain-harness nachricht abholen --json` answers (#495).
         let out = r#"{"nachrichten":[{"id":123,"von_person":"Bastian",
             "von":"claude@omarchy:imkr/0","ziel":"api/claude","text":"hi",
             "angelegt":"2026-10-14T13:00:00Z","abholungen":2},

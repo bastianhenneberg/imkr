@@ -1,8 +1,8 @@
 # imkr and AI Brain
 
 [AI Brain](https://brain.proxy.peppermint-digital.com) keeps tasks, knowledge and people.
-The AI Brain harness (repository `ai-brain-harness`, command `ai-brain-cli`) is its program
-on each machine. imkr works with it in three ways, and needs it for none
+The AI Brain harness (command `ai-brain-harness`, called `ai-brain-cli` until October 2026;
+the old name still works) is its program on each machine. imkr works with it in three ways, and needs it for none
 of its own features:
 
 - **`brain`, a conversation**: like Hermes, with Claude or Codex, the project's knowledge and AI
@@ -11,16 +11,16 @@ of its own features:
 - **Messages to people**: colleagues' agents reach yours through AI Brain, without a shared
   network.
 
-Both need `ai-brain-cli` installed and connected:
+Both need `ai-brain-harness` installed and connected:
 
 ```bash
 curl -fsSL https://brain.proxy.peppermint-digital.com/install.sh | sh
-ai-brain-cli connect
+ai-brain-harness connect
 ```
 
 ## brain: a conversation, like Hermes
 
-`ai-brain-cli chat`, short `brain`, is the harness with an input line: it signs in to AI Brain,
+`ai-brain-harness chat`, short `brain`, is the harness with an input line: it signs in to AI Brain,
 brings the project's knowledge and AI Brain's tools, and then hands you Claude's or Codex' own
 input line. imkr is where these conversations run: each in a window of its own, with its state in
 the sidebar, its questions in the inbox and on the phone, several at once on every machine.
@@ -28,7 +28,7 @@ the sidebar, its questions in the inbox and on the phone, several at once on eve
 ```mermaid
 flowchart LR
     K["Ctrl+B p a"] --> C{"Claude · Codex ·<br/>go on · task"}
-    C --> W["new window 'brain'<br/>ai-brain-cli chat --projekt …"]
+    C --> W["new window 'brain'<br/>ai-brain-harness chat --projekt …"]
     W --> B[("AI Brain<br/>knowledge · tools")]
     W --> S["● ◆ ✦ in sidebar, inbox, phone"]
 ```
@@ -36,7 +36,7 @@ flowchart LR
 | From | How |
 |---|---|
 | imkr, plugin | `Ctrl+B p a`: Claude, Codex, the last conversation again, or a task |
-| a shell | `brain`, or `ai-brain-cli chat --modell codex --projekt imkr` |
+| a shell | `brain`, or `ai-brain-harness chat --modell codex --projekt imkr` |
 
 The project is the AI Brain slug in the `CLAUDE.md` of the focused pane's directory or one above
 it. The conversation runs on where imkr runs, so `Ctrl+B p a` in a session on the server talks
@@ -44,7 +44,7 @@ there.
 
 ## CLI mode: an agent per task
 
-`ai-brain-cli agent` fetches a task, writes what the agent needs to know (the task, the
+`ai-brain-harness agent` fetches a task, writes what the agent needs to know (the task, the
 project's knowledge, the rules) and starts Claude Code or Codex on it. With `--imkr` it does so
 in a new imkr window instead of in your shell. The work is split on purpose:
 
@@ -53,7 +53,7 @@ flowchart LR
     subgraph brain [AI Brain]
         T[("Task 7666")]
     end
-    subgraph cli [ai-brain-cli]
+    subgraph cli [ai-brain-harness]
         C[fetch task<br/>build context<br/>register the run]
     end
     subgraph imkr [imkr]
@@ -67,7 +67,7 @@ flowchart LR
     M -->|you or another agent| W
 ```
 
-`ai-brain-cli` owns context, task and sign-in; imkr owns the window, the state and the
+`ai-brain-harness` owns context, task and sign-in; imkr owns the window, the state and the
 messages. So the agent shows in the sidebar, the inbox and `Ctrl+B a` like any other.
 
 ### Starting a run
@@ -75,11 +75,11 @@ messages. So the agent shows in the sidebar, the inbox and `Ctrl+B a` like any o
 | From | How |
 |---|---|
 | imkr, plugin | `Ctrl+B p t` (or `Ctrl+B p a`, then *Pick a task*): the open tasks of the project in this directory to pick one, or an order in words |
-| a shell | `ai-brain-cli agent --task 7666 --imkr` |
-| a shell, without a task | `ai-brain-cli agent --projekt imkr "Write the changelog" --imkr` |
-| AI Brain | it lays out orders for a machine: `ai-brain-cli auftraege`, then `auftrag N` |
+| a shell | `ai-brain-harness agent --task 7666 --imkr` |
+| a shell, without a task | `ai-brain-harness agent --projekt imkr "Write the changelog" --imkr` |
+| AI Brain | it lays out orders for a machine: `ai-brain-harness auftraege`, then `auftrag N` |
 
-`ai-brain-cli agents` lists the runs on this machine, `logs ID` shows what one wrote,
+`ai-brain-harness agents` lists the runs on this machine, `logs ID` shows what one wrote,
 `stop ID` ends it.
 
 The plugin comes from the catalog `peppermint-digital/imkr-plugins`:
@@ -95,8 +95,8 @@ imkr plugin add ai-brain
 
 It shows the runs in the sidebar (`2 working · 1 waiting`), `Ctrl+B p a` opens a conversation,
 `Ctrl+B p t` starts an agent for a task, `Ctrl+B p l` lists the runs. The project is the AI Brain slug in the `CLAUDE.md` of the focused
-pane's directory or one above it; its tasks come from `ai-brain-cli aufgaben`. With an older
-`ai-brain-cli` without that command, it asks for a task number or an order instead.
+pane's directory or one above it; its tasks come from `ai-brain-harness aufgaben`. With an older
+`ai-brain-harness` without that command, it asks for a task number or an order instead.
 
 ## Messages to people
 
@@ -106,8 +106,8 @@ Colleagues with their own imkr can message your agents, and you theirs. Two ways
 flowchart TB
     A["your agent<br/>imkr msg martin:api/claude …"] --> Q{contact martin}
     Q -->|paired over a VPN| N["HTTP to martin's imkr web<br/>(NetBird, Tailscale)"]
-    Q -->|through AI Brain| B["ai-brain-cli nachricht senden<br/>→ AI Brain"]
-    B -->|every 30 s| F["martin's imkr fetches<br/>ai-brain-cli nachricht abholen"]
+    Q -->|through AI Brain| B["ai-brain-harness nachricht senden<br/>→ AI Brain"]
+    B -->|every 30 s| F["martin's imkr fetches<br/>ai-brain-harness nachricht abholen"]
     N --> I
     F --> I["martin's inbox<br/>Ctrl+B i"]
     I -->|Enter accepts| P[typed into his pane once idle]

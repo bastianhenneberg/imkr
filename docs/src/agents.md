@@ -137,7 +137,7 @@ imkr msg martin:api/claude "Can you look at the login bug?"
 ```
 
 Without a common network, AI Brain carries the messages: it knows the people and who may write
-to whom, imkr goes through `ai-brain-cli` (connected with `ai-brain-cli connect`) and signs in
+to whom, imkr goes through `ai-brain-harness` (connected with `ai-brain-harness connect`) and signs in
 nowhere itself.
 
 ```bash
