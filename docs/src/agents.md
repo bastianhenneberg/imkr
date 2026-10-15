@@ -85,6 +85,11 @@ in the settings says, tells you which account is next (`ask`, the default), goes
 itself (`auto`), or does nothing (`off`). The next one is the next in the list that is logged in
 and not used up, round. Accounts and keys live in `~/.local/state/imkr/accounts/` (0600).
 
+Limits belong to the subscription, not to the account's name. `imkr account` shows who each one
+is logged in as, and an account logged in to a subscription that has one already is removed again
+right after `add` (`login` warns). One used up counts for every account of the same subscription,
+so falling back never lands in the same limit.
+
 ### Agents talking to each other
 
 Agents in imkr can find, read and message each other, on this machine and on the others:

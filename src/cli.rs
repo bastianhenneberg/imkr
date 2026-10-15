@@ -1968,7 +1968,14 @@ pub fn account(args: &[String]) -> Result<()> {
                     if let Some(until) = store.used_up_until(&account) {
                         note.push_str(&format!("  used up until {until}"));
                     }
-                    println!("  {:<14} {}{note}", account.name, account.kind());
+                    if let Some(other) = store.same_login(&account) {
+                        note.push_str(&format!("  same subscription as {}", other.name));
+                    }
+                    let who = store
+                        .identity(&account)
+                        .map(|i| format!("  {}", i.shown))
+                        .unwrap_or_default();
+                    println!("  {:<14} {}{who}{note}", account.name, account.kind());
                 }
             }
             println!("in this order a used up account falls back to the next");
@@ -1995,10 +2002,34 @@ pub fn account(args: &[String]) -> Result<()> {
             println!("{} account {} added", account.tool, account.name);
             if !provider {
                 login(&store, &account)?;
+                // Logged in to a subscription that has an account already:
+                // a second one shares its limit and gains nothing.
+                if let Some(other) = store.same_login(&account) {
+                    store.remove(&account.tool, &account.name)?;
+                    bail!(
+                        "{} is logged in as {}, the same as account {}: removed it again. \
+                         Log in with another subscription, or use {}",
+                        account.name,
+                        store.identity(&other).map(|i| i.shown).unwrap_or_default(),
+                        other.name,
+                        other.name
+                    );
+                }
             }
             Ok(())
         }
-        ["login", given] => login(&store, &pick(given)?),
+        ["login", given] => {
+            let account = pick(given)?;
+            login(&store, &account)?;
+            if let Some(other) = store.same_login(&account) {
+                println!(
+                    "careful: {} is the same subscription as account {}, its limit is shared; \
+                     `imkr account rm {}:{}` if you do not need both",
+                    account.name, other.name, account.tool, account.name
+                );
+            }
+            Ok(())
+        }
         // In the session this runs in: for new shells, or the agent of a
         // pane right away.
         ["use", given] | ["switch", given] => {

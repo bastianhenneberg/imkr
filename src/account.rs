@@ -312,10 +312,30 @@ impl Store {
 
     /// When `account` can be used again, as local time, if it is used up.
     pub fn used_up_until(&self, account: &Account) -> Option<String> {
-        let until = *self
-            .used_up()
-            .get(&format!("{}:{}", account.tool, account.name))?;
-        crate::protocol::chrono_like(until)
+        crate::protocol::chrono_like(self.used_up_for(account, &self.used_up())?)
+    }
+
+    /// Until when `account` is used up: its own note, or that of another
+    /// account logged in to the same subscription, as limits are the
+    /// subscription's.
+    fn used_up_for(
+        &self,
+        account: &Account,
+        used_up: &std::collections::BTreeMap<String, u64>,
+    ) -> Option<u64> {
+        if let Some(until) = used_up.get(&format!("{}:{}", account.tool, account.name)) {
+            return Some(*until);
+        }
+        let identity = self.identity(account)?;
+        self.of_tool(&account.tool)
+            .into_iter()
+            .filter(|other| other.name != account.name)
+            .filter(|other| self.identity(other).is_some_and(|i| i.key == identity.key))
+            .find_map(|other| {
+                used_up
+                    .get(&format!("{}:{}", other.tool, other.name))
+                    .copied()
+            })
     }
 
     /// The account to fall back to after `current` of `tool`: the next in
@@ -326,8 +346,64 @@ impl Store {
         let at = all.iter().position(|a| a.name == current).unwrap_or(0);
         (1..all.len())
             .map(|step| &all[(at + step) % all.len()])
-            .find(|a| self.logged_in(a) && !used_up.contains_key(&format!("{}:{}", a.tool, a.name)))
+            .find(|a| self.logged_in(a) && self.used_up_for(a, &used_up).is_none())
             .cloned()
+    }
+
+    /// Who is logged in to a subscription account, as far as its login
+    /// files tell: Claude Code's `oauthAccount` in `.claude.json`, the id
+    /// token in Codex' `auth.json`. `None` for providers and accounts not
+    /// logged in.
+    pub fn identity(&self, account: &Account) -> Option<Identity> {
+        if account.url.is_some() {
+            return None;
+        }
+        match account.tool.as_str() {
+            "codex" => {
+                let file = match self.dir_of(account) {
+                    Some(dir) => dir.join("auth.json"),
+                    None => self.usual_dir("codex").join("auth.json"),
+                };
+                let auth: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+                let token = auth["tokens"]["id_token"].as_str()?;
+                let claims: serde_json::Value =
+                    serde_json::from_slice(&base64url(token.split('.').nth(1)?)?).ok()?;
+                let email = claims["email"].as_str()?.to_owned();
+                let id = claims["https://api.openai.com/auth"]["chatgpt_account_id"]
+                    .as_str()
+                    .unwrap_or_default();
+                Some(Identity {
+                    key: format!("{email}|{id}"),
+                    shown: email,
+                })
+            }
+            _ => {
+                let file = match self.dir_of(account) {
+                    Some(dir) => dir.join(".claude.json"),
+                    None => self.home.join(".claude.json"),
+                };
+                let config: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+                let login = &config["oauthAccount"];
+                let email = login["emailAddress"].as_str()?.to_owned();
+                let org = login["organizationUuid"].as_str().unwrap_or_default();
+                Some(Identity {
+                    key: format!("{email}|{org}"),
+                    shown: email,
+                })
+            }
+        }
+    }
+
+    /// Another account of the same agent logged in to the same
+    /// subscription: a second one gains nothing, its limit is the same.
+    pub fn same_login(&self, account: &Account) -> Option<Account> {
+        let identity = self.identity(account)?;
+        self.of_tool(&account.tool)
+            .into_iter()
+            .filter(|other| other.name != account.name)
+            .find(|other| self.identity(other).is_some_and(|i| i.key == identity.key))
     }
 
     /// Whether the account can be used: a subscription needs its login.
@@ -343,6 +419,40 @@ impl Store {
             _ => dir.join(".credentials.json").exists(),
         }
     }
+}
+
+/// Who an account is logged in as: `shown` in lists, `key` to compare
+/// (the address with the organisation or account it belongs to).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Identity {
+    pub shown: String,
+    key: String,
+}
+
+/// Decodes unpadded base64url, as in the parts of a JSON web token.
+fn base64url(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut bits = 0u32;
+    let mut count = 0;
+    for byte in text.bytes() {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            b'=' => break,
+            _ => return None,
+        };
+        bits = (bits << 6) | u32::from(value);
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            out.push((bits >> count) as u8);
+            bits &= (1 << count) - 1;
+        }
+    }
+    Some(out)
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -479,6 +589,81 @@ pub fn login_command(account: &Account) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn claude_login(dir: &Path, email: &str, org: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(".claude.json"),
+            format!(
+                r#"{{"oauthAccount":{{"emailAddress":"{email}","organizationUuid":"{org}"}}}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(dir.join(".credentials.json"), "secret").unwrap();
+    }
+
+    /// Standard and a second account logged in to the same subscription:
+    /// found as the same, and used up together, since the limit is the
+    /// subscription's (Bastian had `standard` and `stelljes` like that).
+    #[test]
+    fn the_same_subscription_twice_is_found_and_used_up_together() {
+        let base = std::env::temp_dir().join(format!("imkr-same-login-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        claude_login(&store.home, "me@x", "org1");
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        for name in ["twin", "other"] {
+            store
+                .add(Account {
+                    name: name.into(),
+                    tool: "claude".into(),
+                    ..Account::default()
+                })
+                .unwrap();
+        }
+        let dir = |name: &str| store.root.join("claude").join(name);
+        claude_login(&dir("twin"), "me@x", "org1");
+        claude_login(&dir("other"), "me@x", "org2");
+        let find = |name: &str| store.find("claude", name).unwrap();
+
+        assert_eq!(store.identity(&find("twin")).unwrap().shown, "me@x");
+        assert_eq!(store.same_login(&find("twin")).unwrap().name, STANDARD);
+        assert_eq!(store.same_login(&find(STANDARD)).unwrap().name, "twin");
+        // Same address, other organisation: another subscription.
+        assert!(store.same_login(&find("other")).is_none());
+
+        store
+            .mark_used_up(&find(STANDARD), crate::persist::now() + 3600)
+            .unwrap();
+        assert!(store.used_up_until(&find("twin")).is_some());
+        assert_eq!(store.next_free("claude", STANDARD).unwrap().name, "other");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn codex_logins_are_read_from_the_id_token() {
+        let base = std::env::temp_dir().join(format!("imkr-codex-login-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        let usual = store.usual_dir("codex");
+        std::fs::create_dir_all(&usual).unwrap();
+        // {"email":"me@x","https://api.openai.com/auth":{"chatgpt_account_id":"a1"}}
+        let claims = "eyJlbWFpbCI6Im1lQHgiLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYTEifX0";
+        std::fs::write(
+            usual.join("auth.json"),
+            format!(r#"{{"tokens":{{"id_token":"x.{claims}.y"}}}}"#),
+        )
+        .unwrap();
+        let standard = store.find("codex", STANDARD).unwrap();
+        assert_eq!(store.identity(&standard).unwrap().shown, "me@x");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn accounts_share_all_but_their_login() {
