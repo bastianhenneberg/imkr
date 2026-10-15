@@ -6,6 +6,8 @@ Say it like *Imker*, German for beekeeper: it tends the hives your agents work i
 imkr has tmux's prefix keys and sessions, tiling and floating panes, and an eye on every coding
 agent in them: working, waiting for you, or done. On this machine and on all your others.
 
+![Two agents work in imkr; one asks, the inbox answers it, Ctrl+B a jumps to the other](docs/demo/imkr.gif)
+
 ```text
 Hive "work"                    saved, not running: a map of sessions on every machine
 ├── ⌂ laptop                   the machine you sit at, the operator

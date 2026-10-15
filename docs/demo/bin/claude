@@ -1,0 +1,18 @@
+#!/bin/sh
+# A stand-in for Claude Code in the demo: works for a while, then asks.
+# imkr tells agents by their program name, so this counts as one.
+task=${1:-"add rate limiting to /login"}
+printf '\033[2m> %s\033[0m\n\n' "$task"
+for step in "Reading src/auth/login.rs" "Writing src/auth/limit.rs" "Running cargo test" "test result: ok. 48 passed"; do
+	sleep 1.2
+	printf '%s\n' "$step"
+done
+sleep 1
+printf '\nThe migration drops the column legacy_token.\n\n'
+printf 'Do you want to proceed?\n'
+printf '\342\235\257 1. Yes\n  2. Yes, and don'"'"'t ask again this session\n  3. No, and tell Claude what to do differently (esc)\n'
+read -r answer
+printf '\nApplying the migration (answer %s).\n' "$answer"
+sleep 1.5
+printf 'Done.\n'
+exec sh

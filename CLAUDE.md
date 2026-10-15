@@ -446,5 +446,7 @@ cargo test
   committen. `docs/src/keys.md` und `commands.md` kommen aus `BINDINGS`/`USAGE` (Test schlägt bei
   Abweichung an): `IMKR_WRITE_DOCS=1 cargo test docs_`. Mermaid-Labels mit `--` quoten.
   Kopie im Vault von Bastian: `topics/programmierung/projekte/imkr/doku/` (HTML, `markdown/`).
+  Demo-GIF: `vhs docs/demo/demo.tape` (eigene Testwelt aus `docs/demo/setup.sh`: Runtime/State/
+  Config, schlichte bash, damit nicht das echte claude startet; Schein-Agent `docs/demo/bin/claude`).
 - Lizenz: MIT OR Apache-2.0
 - Code und Kommentare auf Englisch
