@@ -172,6 +172,9 @@ For scripts and agents:
                                         a new window); --focus goes there,
                                         --name names a new window
   --host H new [--dir D] [-- command]   a window here whose program runs on H
+  note [--pane N] [<text> | ls]          put a thought on a pane's notepad
+                                        (Ctrl+B t), or list it; its agent
+                                        is not told
   rename [--pane N | --window N] [--clear | <name>]
                                         name a pane or a window
   move-window [--window N] <session>    move a window with its running panes to
@@ -295,6 +298,7 @@ fn main() -> Result<()> {
         ["list", ..] => cli::list(&args[1..]),
         ["send", ..] => cli::send(&args[1..]),
         ["msg", ..] => cli::msg(&args[1..]),
+        ["note", ..] => cli::note(&args[1..]),
         ["connect", ..] => cli::connect(&args[1..]),
         ["agents", ..] => cli::agents(&args[1..]),
         ["subscribe", ..] => cli::subscribe(&args[1..], chosen),

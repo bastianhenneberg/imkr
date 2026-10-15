@@ -15,6 +15,31 @@ a file opens in `$EDITOR` in a floating pane. Changed files are coloured, `f` in
 jumps to the tree, the mouse wheel scrolls the sidebar. `Sidebar files` in the settings turns it
 off.
 
+## Notepad
+
+`Ctrl+B t` opens a notepad at the bottom of the focused pane: for the thoughts that come while
+its agent works and that you do not want to throw at it yet. Type a line and Enter keeps it;
+the agent notices nothing. The pane's frame shows `✎2` while two notes wait.
+
+| Key | |
+|---|---|
+| typing, `Enter` | keep the line as a note |
+| `↑` `↓` | pick a note |
+| `Enter` on a picked note | hand it to the pane's agent: typed in once it is idle, never into a question; the note stays, struck through |
+| `y` | copy it |
+| `e` | take it back into the line to change it |
+| `x` | remove it |
+| `Esc` | close the pad; the notes stay |
+
+The notes belong to the pane and are saved with it: they come back after an update, a reboot,
+moving the window to another session, and when an ended session is brought back. From a shell
+or another agent:
+
+```bash
+imkr note --pane 3 "check the login tests before merging"
+imkr note ls --pane 3
+```
+
 ## Popups
 
 A popup is a pane outside every window, shown over the active one: a TUI you want at hand

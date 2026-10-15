@@ -353,6 +353,12 @@ pub enum Request {
         target: RenameTarget,
         name: Option<String>,
     },
+    /// Puts `text` on a pane's notepad (the focused one without `pane`),
+    /// or with `None` only lists it.
+    Note {
+        pane: Option<PaneId>,
+        text: Option<String>,
+    },
     /// Rename the session.
     RenameSession { name: String },
     /// Show `text` as a notification, the way the settings say, titled

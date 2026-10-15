@@ -206,6 +206,54 @@ directory), as in TUIOS: click a folder or press <code>Enter</code> on it to ope
 a file opens in <code>$EDITOR</code> in a floating pane. Changed files are coloured, <code>f</code> in the sidebar
 jumps to the tree, the mouse wheel scrolls the sidebar. <code>Sidebar files</code> in the settings turns it
 off.</p>
+<h2 id="notepad">Notepad</h2>
+<p><code>Ctrl+B t</code> opens a notepad at the bottom of the focused pane: for the thoughts that come while
+its agent works and that you do not want to throw at it yet. Type a line and Enter keeps it;
+the agent notices nothing. The pane's frame shows <code>✎2</code> while two notes wait.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>typing, <code>Enter</code></td>
+<td>keep the line as a note</td>
+</tr>
+<tr>
+<td><code>↑</code> <code>↓</code></td>
+<td>pick a note</td>
+</tr>
+<tr>
+<td><code>Enter</code> on a picked note</td>
+<td>hand it to the pane's agent: typed in once it is idle, never into a question; the note stays, struck through</td>
+</tr>
+<tr>
+<td><code>y</code></td>
+<td>copy it</td>
+</tr>
+<tr>
+<td><code>e</code></td>
+<td>take it back into the line to change it</td>
+</tr>
+<tr>
+<td><code>x</code></td>
+<td>remove it</td>
+</tr>
+<tr>
+<td><code>Esc</code></td>
+<td>close the pad; the notes stay</td>
+</tr>
+</tbody>
+</table>
+<p>The notes belong to the pane and are saved with it: they come back after an update, a reboot,
+moving the window to another session, and when an ended session is brought back. From a shell
+or another agent:</p>
+<pre><code class="language-bash">imkr note --pane 3 &quot;check the login tests before merging&quot;
+imkr note ls --pane 3
+</code></pre>
 <h2 id="popups">Popups</h2>
 <p>A popup is a pane outside every window, shown over the active one: a TUI you want at hand
 without giving it a pane or a window. <code>imkr popup --name pm -- peppermint-tui</code> starts it the

@@ -347,6 +347,12 @@ const COMMANDS: &[Command] = &[
         ],
     ),
     cmd(
+        "note",
+        "put a thought on a pane's notepad",
+        &["--pane"],
+        Nothing,
+    ),
+    cmd(
         "outbox",
         "messages waiting for machines out of reach",
         &[],

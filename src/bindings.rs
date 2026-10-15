@@ -108,6 +108,9 @@ pub enum Command {
     /// The changes of the focused pane's repository, to note on lines and
     /// send the notes to its agent.
     Review,
+    /// The notepad of the focused pane: thoughts for its agent, kept with
+    /// the pane.
+    Notes,
     /// Goes back from a submenu to the main menu.
     Back,
     Cancel,
@@ -371,6 +374,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "name pane",
         group: Group::Panes,
         keys: &[(Key::plain(Char('r')), C::RenamePane)],
+    },
+    Binding {
+        label: "t",
+        description: "notepad of the pane…",
+        group: Group::Panes,
+        keys: &[(Key::plain(Char('t')), C::Notes)],
     },
     Binding {
         label: ">",

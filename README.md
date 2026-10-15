@@ -49,6 +49,8 @@ sessions across machines, is imkr's own.
   layout comes back and agents resume their conversations.
 - **On the phone.** `imkr web` puts every machine's agents, an inbox and any pane into a browser,
   in your VPN, paired once with a QR code.
+- **A notepad per pane.** `Ctrl+B t` keeps the thoughts you do not want to throw at a working
+  agent yet; one key hands a note over later, once it is idle. Saved with the pane.
 - **Plugins** are plain programs in a popup, from a file or a git catalog of your own.
 
 ## Install

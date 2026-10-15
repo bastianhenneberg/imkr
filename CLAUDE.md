@@ -409,6 +409,11 @@ Projekt-Slug: `imkr`
 - Recap: `App::activity` (Zustandswechsel aus `update_agents`, max. 500), `away_since` (gesetzt in
   `take_client`, wenn der letzte Client geht), `attach` öffnet `Mode::Recap` nach ≥ 60 s mit
   Aktivität, `Ctrl+B s l` (`open_recap`) später. Test: abhängen, Fake-Agent starten, 66 s warten.
+- Notizzettel `Ctrl+B t` (Idee #504): `Pane::notes` (`persist::Note`, `sent`), gespeichert in
+  `SavedPane::notes` (Neustart, `last`/revive, Handover über `saved`), `MovedPane::notes` beim
+  Verschieben. `App::notepad` (`Notepad`: Pane, Auswahl, Eingabe), `Mode::Notes`, `notes_key`
+  (Enter auf gewählter Notiz → `mailbox`, `y` OSC 52, `e` zurück in die Zeile, `x` weg),
+  `draw_notes` unten im Pane, Rahmen `✎N` (offene). CLI `imkr note` → `Request::Note`.
 - Review `Ctrl+B v`: `src/review.rs` (`diff` liest nur: `git diff HEAD` plus `--no-index` je neuer
   Datei, nie `add -N`; `parse` nummeriert je Datei; `Note` hängt an Datei/Nummer/Code, nicht am
   Index; `prompt`). `App::review` (`Review`), `open_review`, `review_key`, `draw_review`, Notiz per

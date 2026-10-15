@@ -53,6 +53,19 @@ pub struct SavedPane {
     /// The accounts its agents use, by agent, see `Pane::accounts`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub accounts: BTreeMap<String, String>,
+    /// Its notepad (`Ctrl+B t`): thoughts kept for its agent, also when the
+    /// session ends and comes back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
+}
+
+/// One line on a pane's notepad.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    pub text: String,
+    /// Handed to the pane's agent already; kept, struck through.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sent: bool,
 }
 
 impl Saved {
@@ -629,6 +642,10 @@ mod tests {
                     command: None,
                     idle_since: Some(1_790_000_000),
                     accounts: BTreeMap::from([("claude".into(), "privat".into())]),
+                    notes: vec![Note {
+                        text: "ask about the login tests".into(),
+                        sent: false,
+                    }],
                 },
             ),
             (2, SavedPane::default()),

@@ -931,6 +931,38 @@ pub fn rename(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `imkr note [--pane N] [TEXT…]`: puts a thought on a pane's notepad
+/// (`Ctrl+B t`) without telling its agent; without text it lists the pad.
+pub fn note(args: &[String]) -> Result<()> {
+    let mut rest = args.to_vec();
+    let pane = take_pane(&mut rest)?;
+    let list = rest.first().is_some_and(|w| w == "ls") && rest.len() == 1;
+    let text = (!rest.is_empty() && !list).then(|| rest.join(" "));
+    let adding = text.is_some();
+    let reply = client::request(Request::Note { pane, text })?;
+    let notes = reply["notes"].as_array().cloned().unwrap_or_default();
+    if adding {
+        let open = notes
+            .iter()
+            .filter(|n| !n["sent"].as_bool().unwrap_or(false))
+            .count();
+        println!("on the notepad of pane {}, {open} open", reply["pane"]);
+        return Ok(());
+    }
+    for note in &notes {
+        let sent = note["sent"].as_bool().unwrap_or(false);
+        println!(
+            "{} {}",
+            if sent { "✓" } else { "•" },
+            note["text"].as_str().unwrap_or("")
+        );
+    }
+    if notes.is_empty() {
+        println!("the notepad of pane {} is empty (Ctrl+B t)", reply["pane"]);
+    }
+    Ok(())
+}
+
 /// `imkr popup [--name N] [--title T] [-- command args...]`: shows the
 /// popup `N`, or hides it if it is shown; the first time it starts the
 /// command (the shell without one) in this directory.

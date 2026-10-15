@@ -74,6 +74,9 @@ pub struct MovedPane {
     pub pane: HandoverPane,
     pub name: Option<String>,
     pub session: Option<String>,
+    /// Its notepad goes along to the other session.
+    #[serde(default)]
+    pub notes: Vec<crate::persist::Note>,
 }
 
 #[derive(Serialize, Deserialize)]

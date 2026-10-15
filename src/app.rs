@@ -148,12 +148,24 @@ enum Mode {
     Marks(usize),
     /// Reviewing the changes in `App::review`.
     Review,
+    /// The notepad in `App::notepad` is open.
+    Notes,
     /// The layouts for this window, that one selected.
     Layouts(usize),
     /// The menu of `App::context`, that item selected.
     Context(usize),
     /// What agents did since then (seconds since 1970), that one selected.
     Recap(u64, usize),
+}
+
+/// A pane's notepad while it is open (`Ctrl+B t`). The notes themselves
+/// live in `Pane::notes`, so they are saved with the pane.
+struct Notepad {
+    pane: PaneId,
+    /// The note selected with ↑↓; `None` while typing a new one.
+    selected: Option<usize>,
+    /// The line being typed.
+    input: String,
 }
 
 /// A menu opened by a right click: where, and what it offers.
@@ -719,6 +731,8 @@ pub struct App {
     context: Option<Context>,
     /// The review, kept with its notes while closed until they are sent.
     review: Option<Review>,
+    /// The open notepad: whose, and what is selected or being typed.
+    notepad: Option<Notepad>,
     /// The agent selected in the inbox. The list changes while it is open,
     /// answers must not go to whichever agent moved into its place.
     inbox_on: Option<InboxId>,
@@ -889,6 +903,7 @@ impl App {
             list_query: None,
             inbox_answer: String::new(),
             review: None,
+            notepad: None,
             context: None,
             activity: Default::default(),
             away_since: None,
@@ -1064,6 +1079,7 @@ impl App {
                 );
                 match spawned {
                     Ok(mut pane) => {
+                        pane.notes = spec.notes.clone();
                         let resume = match self.config.resume {
                             config::Resume::Off => None,
                             _ => spec.resume_command(&resume_commands),
@@ -1169,6 +1185,7 @@ impl App {
                         pane.session = spec.session;
                         pane.name = spec.name;
                         pane.accounts = spec.accounts;
+                        pane.notes = spec.notes;
                         self.panes.insert(id, pane);
                     }
                     Some(Err(e)) => {
@@ -1314,6 +1331,7 @@ impl App {
                         .filter(|(state, _)| *state == AgentState::Idle)
                         .map(|(_, since)| unix_now().saturating_sub(since.elapsed().as_secs())),
                     accounts: pane.accounts.clone(),
+                    notes: pane.notes.clone(),
                 };
                 (id, saved)
             })
@@ -2138,6 +2156,14 @@ impl App {
             }
             Request::List => Ok(self.list()),
             Request::Rename { target, name } => self.rename(target, name),
+            Request::Note { pane, text } => {
+                let id = pane.unwrap_or(self.ws.focus);
+                let pane = self.panes.get_mut(&id).ok_or(format!("no pane {id}"))?;
+                if let Some(text) = text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()) {
+                    pane.notes.push(crate::persist::Note { text, sent: false });
+                }
+                Ok(serde_json::json!({ "pane": id, "notes": pane.notes }))
+            }
             Request::Popup {
                 name,
                 title,
@@ -2845,6 +2871,161 @@ impl App {
                 review.scroll = review.cursor + 1 - page;
             }
         }
+    }
+
+    /// Opens the focused pane's notepad: what to tell its agent later,
+    /// written down without disturbing it.
+    fn open_notes(&mut self) {
+        let pane = self.ws.focus;
+        if !self.panes.contains_key(&pane) {
+            return;
+        }
+        self.notepad = Some(Notepad {
+            pane,
+            selected: None,
+            input: String::new(),
+        });
+        self.mode = Mode::Notes;
+    }
+
+    /// Typing adds a note; with one picked (↑↓) Enter hands it to the
+    /// pane's agent, `y` copies it, `e` takes it back into the line, `x`
+    /// removes it.
+    fn notes_key(&mut self, key: KeyEvent) {
+        let Some(pad) = &mut self.notepad else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        let Some(pane) = self.panes.get_mut(&pad.pane) else {
+            self.notepad = None;
+            self.mode = Mode::Normal;
+            return;
+        };
+        let count = pane.notes.len();
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match (pad.selected, key.code) {
+            (_, KeyCode::Esc) => {
+                self.notepad = None;
+                self.mode = Mode::Normal;
+            }
+            (None, KeyCode::Up) if count > 0 => pad.selected = Some(count - 1),
+            (None, KeyCode::Enter) => {
+                let text = pad.input.trim().to_owned();
+                if !text.is_empty() {
+                    pane.notes.push(crate::persist::Note { text, sent: false });
+                    pad.input.clear();
+                }
+            }
+            (None, KeyCode::Backspace) => {
+                pad.input.pop();
+            }
+            (None, KeyCode::Char(c)) if !ctrl => pad.input.push(c),
+            (Some(i), KeyCode::Up | KeyCode::Char('k')) => pad.selected = Some(i.saturating_sub(1)),
+            (Some(i), KeyCode::Down | KeyCode::Char('j')) => {
+                pad.selected = (i + 1 < count).then_some(i + 1);
+            }
+            (Some(i), KeyCode::Enter) => {
+                let (id, text) = (pad.pane, pane.notes[i].text.clone());
+                pane.notes[i].sent = true;
+                self.mailbox.push((id, text));
+                self.flash = Some(format!(
+                    "note for pane {id}, typed in once its agent is idle"
+                ));
+            }
+            (Some(i), KeyCode::Char('y')) => {
+                let text = pane.notes[i].text.clone();
+                self.send_active(&clipboard::osc52(&text));
+                self.flash = Some("note copied".into());
+            }
+            (Some(i), KeyCode::Char('e')) => {
+                pad.input = pane.notes.remove(i).text;
+                pad.selected = None;
+            }
+            (Some(i), KeyCode::Char('x') | KeyCode::Delete) => {
+                pane.notes.remove(i);
+                pad.selected = if pane.notes.is_empty() {
+                    None
+                } else {
+                    Some(i.min(pane.notes.len() - 1))
+                };
+            }
+            // Typing while a note is picked starts a new one.
+            (Some(_), KeyCode::Char(c)) if !ctrl => {
+                pad.selected = None;
+                pad.input.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    /// The notepad at the bottom of its pane: the notes, sent ones struck
+    /// through, the picked one marked, and the line being typed.
+    fn draw_notes(&self, frame: &mut Frame, body: Rect) {
+        let Some(pad) = &self.notepad else {
+            return;
+        };
+        let Some(pane) = self.panes.get(&pad.pane) else {
+            return;
+        };
+        let t = theme::current();
+        let area = self
+            .ws
+            .rects(self.body)
+            .into_iter()
+            .find(|(id, _)| *id == pad.pane)
+            .map_or(body, |(_, rect)| rect);
+        let wanted = pane.notes.len() as u16 + 3;
+        let height = wanted.clamp(4, (area.height / 2).max(4)).min(area.height);
+        let rect = Rect {
+            x: area.x,
+            y: area.y + area.height - height,
+            width: area.width,
+            height,
+        };
+        let open = pane.notes.iter().filter(|n| !n.sent).count();
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(t.warning))
+            .title(format!(" ✎ notes · pane {} · {open} open ", pad.pane));
+        let inner = block.inner(rect);
+        frame.render_widget(Clear, rect);
+        frame.render_widget(block, rect);
+        let rows = usize::from(inner.height.saturating_sub(1));
+        // The picked note stays in view; else the newest ones.
+        let last = pad.selected.unwrap_or(pane.notes.len().saturating_sub(1));
+        let first = (last + 1).saturating_sub(rows);
+        let mut lines: Vec<Line> = pane
+            .notes
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(rows)
+            .map(|(i, note)| {
+                let mut style = if note.sent {
+                    Style::new()
+                        .fg(t.subtle)
+                        .add_modifier(Modifier::CROSSED_OUT)
+                } else {
+                    Style::new()
+                };
+                if pad.selected == Some(i) {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+                Line::from(vec![
+                    Span::styled("• ", Style::new().fg(t.warning)),
+                    Span::styled(note.text.clone(), style),
+                ])
+            })
+            .collect();
+        lines.push(Line::from(vec![
+            Span::styled("› ", Style::new().fg(t.accent)),
+            Span::raw(pad.input.clone()),
+            Span::styled(
+                if pad.selected.is_none() { "▏" } else { "" },
+                Style::new().fg(t.accent),
+            ),
+        ]));
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 
     /// The diff over the panes: changed lines in the theme's colours, the
@@ -3770,6 +3951,10 @@ impl App {
                 self.review_key(key);
                 Ok(())
             }
+            Mode::Notes => {
+                self.notes_key(key);
+                Ok(())
+            }
             Mode::Layouts(selected) => {
                 self.layouts_key(key, selected);
                 Ok(())
@@ -4108,6 +4293,7 @@ impl App {
             Command::PaneToWindow(n) => self.pane_to_window(Some(n)),
             Command::PaneToNewWindow => self.pane_to_window(None),
             Command::Review => self.open_review(),
+            Command::Notes => self.open_notes(),
             Command::Layouts => self.mode = Mode::Layouts(0),
             Command::Recap => self.open_recap(),
             Command::WorktreeWindow => {
@@ -8067,6 +8253,7 @@ impl App {
                     pane: handed,
                     name: pane.name.clone(),
                     session: pane.session.clone(),
+                    notes: pane.notes.clone(),
                 })
             });
             match handed {
@@ -8189,6 +8376,7 @@ impl App {
                 Ok(mut pane) => {
                     pane.name = moved.name;
                     pane.session = moved.session;
+                    pane.notes = moved.notes;
                     self.panes.insert(new, pane);
                 }
                 Err(e) => {
@@ -9133,6 +9321,14 @@ impl App {
                     ));
                 }
             }
+            // Thoughts waiting on its notepad (Ctrl+B t).
+            let open_notes = pane.notes.iter().filter(|n| !n.sent).count();
+            if open_notes > 0 {
+                title.push(Span::styled(
+                    format!("✎{open_notes} "),
+                    Style::new().fg(t.warning),
+                ));
+            }
             if floating {
                 title.push(Span::styled("⧉ ", Style::new().fg(t.cyan)));
             }
@@ -9194,6 +9390,7 @@ impl App {
                         | Mode::Agents(_)
                         | Mode::Inbox(_)
                         | Mode::Review
+                        | Mode::Notes
                         | Mode::Layouts(_)
                         | Mode::Context(_)
                         | Mode::Recap(..)
@@ -9397,6 +9594,7 @@ impl App {
             }
             Mode::Inbox(selected) => self.draw_inbox(frame, body, selected),
             Mode::Review => self.draw_review(frame, body),
+            Mode::Notes => self.draw_notes(frame, body),
             Mode::Context(selected) => self.draw_context(frame, selected),
             Mode::Layouts(selected) => {
                 let (_, items) = self.layout_items();
@@ -10388,6 +10586,11 @@ impl App {
                 "LAYOUT",
                 t.blue,
                 "↑↓ choose · Enter or digit give it this window · s save · x remove · Esc cancel",
+            ),
+            Mode::Notes => (
+                "NOTES",
+                t.warning,
+                "type, Enter keeps it · ↑↓ pick · Enter send to the agent · y copy · e edit · x remove · Esc close",
             ),
             Mode::Review => (
                 "REVIEW",

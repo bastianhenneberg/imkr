@@ -66,6 +66,8 @@ pub struct Pane {
     /// Which subscription or provider its agent runs on, for its frame:
     /// `henneberg`, `Ollama`; set by `App::name_accounts`.
     pub shown_account: Option<String>,
+    /// Its notepad (`Ctrl+B t`), saved with the pane.
+    pub notes: Vec<crate::persist::Note>,
 }
 
 /// How much of its history a tapped pane sends first.
@@ -358,6 +360,7 @@ impl Pane {
             remote: Arc::default(),
             accounts: Default::default(),
             shown_account: None,
+            notes: Vec::new(),
         };
         pane.read_on()?;
         Ok(pane)
