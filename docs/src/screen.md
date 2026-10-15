@@ -25,6 +25,7 @@ the agent notices nothing. The pane's frame shows `✎2` while two notes wait.
 | Key | |
 |---|---|
 | typing, `Enter` | keep the line as a note |
+| pasting | into the line; several lines become a note each |
 | `↑` `↓` | pick a note |
 | `Enter` on a picked note | hand it to the pane's agent: typed in once it is idle, never into a question; the note stays, struck through |
 | `y` | copy it |

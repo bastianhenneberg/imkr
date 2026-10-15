@@ -9270,6 +9270,52 @@ impl App {
     }
 
     fn paste(&mut self, text: &str) -> Result<()> {
+        // Pasted into imkr's own lines, not the pane behind them.
+        if self.mode == Mode::Notes
+            && let Some(pad) = &mut self.notepad
+            && let Some(pane) = self.panes.get_mut(&pad.pane)
+        {
+            // Terminals send line breaks of a paste as \r as well as \n.
+            let lines: Vec<&str> = text
+                .split(['\n', '\r'])
+                .map(str::trim_end)
+                .filter(|l| !l.is_empty())
+                .collect();
+            match lines.as_slice() {
+                [] => {}
+                [one] => pad.input.push_str(one),
+                // Several lines: each one a note, the typed line first.
+                many => {
+                    let first = std::mem::take(&mut pad.input);
+                    for (i, line) in many.iter().enumerate() {
+                        let text = if i == 0 {
+                            format!("{first}{line}")
+                        } else {
+                            (*line).to_owned()
+                        };
+                        if !text.trim().is_empty() {
+                            pane.notes.push(crate::persist::Note {
+                                text: text.trim().to_owned(),
+                                sent: false,
+                            });
+                        }
+                    }
+                }
+            }
+            pad.selected = None;
+            return Ok(());
+        }
+        if self.mode == Mode::Prompt
+            && let Some(prompt) = &mut self.prompt
+        {
+            let joined: Vec<&str> = text
+                .split(['\n', '\r'])
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect();
+            prompt.text.push_str(&joined.join(" "));
+            return Ok(());
+        }
         let target = self.input_pane();
         let Some(pane) = self.panes.get_mut(&target) else {
             return Ok(());
