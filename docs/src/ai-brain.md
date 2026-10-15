@@ -1,7 +1,8 @@
 # imkr and AI Brain
 
 [AI Brain](https://brain.proxy.peppermint-digital.com) keeps tasks, knowledge and people.
-`ai-brain-cli` is its program on each machine. imkr works with it in three ways, and needs it for none
+The AI Brain harness (repository `ai-brain-harness`, command `ai-brain-cli`) is its program
+on each machine. imkr works with it in three ways, and needs it for none
 of its own features:
 
 - **`brain`, a conversation**: like Hermes, with Claude or Codex, the project's knowledge and AI
