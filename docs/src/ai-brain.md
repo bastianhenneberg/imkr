@@ -1,9 +1,11 @@
 # imkr and AI Brain
 
 [AI Brain](https://brain.proxy.peppermint-digital.com) keeps tasks, knowledge and people.
-`ai-brain-cli` is its program on each machine. imkr works with it in two ways, and needs it for
-neither of its own features:
+`ai-brain-cli` is its program on each machine. imkr works with it in three ways, and needs it for none
+of its own features:
 
+- **`brain`, a conversation**: like Hermes, with Claude or Codex, the project's knowledge and AI
+  Brain's tools, in an imkr window.
 - **CLI mode**: an agent for an AI Brain task, in an imkr window, with AI Brain's context.
 - **Messages to people**: colleagues' agents reach yours through AI Brain, without a shared
   network.
@@ -14,6 +16,30 @@ Both need `ai-brain-cli` installed and connected:
 curl -fsSL https://brain.proxy.peppermint-digital.com/install.sh | sh
 ai-brain-cli connect
 ```
+
+## brain: a conversation, like Hermes
+
+`ai-brain-cli chat`, short `brain`, is the harness with an input line: it signs in to AI Brain,
+brings the project's knowledge and AI Brain's tools, and then hands you Claude's or Codex' own
+input line. imkr is where these conversations run: each in a window of its own, with its state in
+the sidebar, its questions in the inbox and on the phone, several at once on every machine.
+
+```mermaid
+flowchart LR
+    K["Ctrl+B p a"] --> C{"Claude · Codex ·<br/>go on · task"}
+    C --> W["new window 'brain'<br/>ai-brain-cli chat --projekt …"]
+    W --> B[("AI Brain<br/>knowledge · tools")]
+    W --> S["● ◆ ✦ in sidebar, inbox, phone"]
+```
+
+| From | How |
+|---|---|
+| imkr, plugin | `Ctrl+B p a`: Claude, Codex, the last conversation again, or a task |
+| a shell | `brain`, or `ai-brain-cli chat --modell codex --projekt imkr` |
+
+The project is the AI Brain slug in the `CLAUDE.md` of the focused pane's directory or one above
+it. The conversation runs on where imkr runs, so `Ctrl+B p a` in a session on the server talks
+there.
 
 ## CLI mode: an agent per task
 
@@ -47,7 +73,7 @@ messages. So the agent shows in the sidebar, the inbox and `Ctrl+B a` like any o
 
 | From | How |
 |---|---|
-| imkr, plugin | `Ctrl+B p a`: the runs, then the open tasks of the project in this directory to pick one, or an order in words |
+| imkr, plugin | `Ctrl+B p t` (or `Ctrl+B p a`, then *Pick a task*): the open tasks of the project in this directory to pick one, or an order in words |
 | a shell | `ai-brain-cli agent --task 7666 --imkr` |
 | a shell, without a task | `ai-brain-cli agent --projekt imkr "Write the changelog" --imkr` |
 | AI Brain | it lays out orders for a machine: `ai-brain-cli auftraege`, then `auftrag N` |
@@ -66,8 +92,8 @@ plugin_catalogs = ["git@github.com:peppermint-digital/imkr-plugins.git"]
 imkr plugin add ai-brain
 ```
 
-It shows the runs in the sidebar (`2 working · 1 waiting`), `Ctrl+B p a` starts one,
-`Ctrl+B p l` lists them. The project is the AI Brain slug in the `CLAUDE.md` of the focused
+It shows the runs in the sidebar (`2 working · 1 waiting`), `Ctrl+B p a` opens a conversation,
+`Ctrl+B p t` starts an agent for a task, `Ctrl+B p l` lists the runs. The project is the AI Brain slug in the `CLAUDE.md` of the focused
 pane's directory or one above it; its tasks come from `ai-brain-cli aufgaben`. With an older
 `ai-brain-cli` without that command, it asks for a task number or an order instead.
 

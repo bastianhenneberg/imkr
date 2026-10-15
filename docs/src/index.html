@@ -213,7 +213,9 @@ flowchart LR
 </section>
 
 <section class="ch" id="cli-mode">
-  <div class="ch-head"><span class="hex"></span><h2>CLI mode: an agent per task</h2></div>
+  <div class="ch-head"><span class="hex"></span><h2>brain: talk to it, like Hermes</h2></div>
+  <p class="read"><kbd>Ctrl+B</kbd> <kbd>p</kbd> <kbd>a</kbd> opens <code>brain</code> (<code>ai-brain-cli chat</code>) in a new window: Claude or Codex with your project's knowledge and AI Brain's tools. imkr shows its state and brings its questions to the inbox, like every agent, on every machine.</p>
+  <h3>Or hand it a task</h3>
   <p class="read"><code>ai-brain-cli agent</code> takes an AI Brain task, writes what the agent needs to know and starts Claude Code or Codex on it. With <code>--imkr</code> it opens a window in imkr for it. The CLI owns context, task and sign-in; imkr owns the window, the state and the messages.</p>
   <div class="figure">
 <pre class="mermaid">
@@ -229,7 +231,7 @@ flowchart LR
     <table>
       <thead><tr><th>Start from</th><th>How</th></tr></thead>
       <tbody>
-        <tr><td>imkr, with the plugin</td><td><kbd>Ctrl+B</kbd> <kbd>p</kbd> <kbd>a</kbd>: pick one of the project's open tasks, or write an order</td></tr>
+        <tr><td>imkr, with the plugin</td><td><kbd>Ctrl+B</kbd> <kbd>p</kbd> <kbd>t</kbd>: pick one of the project's open tasks, or write an order</td></tr>
         <tr><td>a shell, for a task</td><td><code>ai-brain-cli agent --task 7666 --imkr</code></td></tr>
         <tr><td>a shell, without a task</td><td><code>ai-brain-cli agent --projekt imkr "Write the changelog" --imkr</code></td></tr>
         <tr><td>AI Brain hands out orders</td><td><code>ai-brain-cli auftraege</code>, then <code>ai-brain-cli auftrag N</code></td></tr>

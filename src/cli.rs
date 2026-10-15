@@ -1298,6 +1298,10 @@ pub fn new(args: &[String]) -> Result<()> {
     let float = take_flag(&mut options, "--float");
     let workspace = take_window(&mut options)?;
     let dir = take_value(&mut options, "--dir")?.map(std::path::PathBuf::from);
+    // `--focus` shows the new pane right away, `--name` names a new window:
+    // for plugins that open a program to work in, like a conversation.
+    let focus = take_flag(&mut options, "--focus");
+    let name = take_value(&mut options, "--name")?;
     // `--start`: the session is started first if it does not run.
     if take_flag(&mut options, "--start") {
         let path = protocol::socket_path()?;
@@ -1315,6 +1319,17 @@ pub fn new(args: &[String]) -> Result<()> {
         workspace,
         cwd: dir.or_else(|| std::env::current_dir().ok()),
     })?;
+    if let (Some(name), Some(window)) = (name, value["workspace"].as_u64()) {
+        client::request(Request::Rename {
+            target: RenameTarget::Workspace(window as u8),
+            name: Some(name),
+        })?;
+    }
+    if focus && let Some(pane) = value["pane"].as_u64() {
+        client::request(Request::Reveal {
+            pane: pane as PaneId,
+        })?;
+    }
     println!("{}", value["pane"]);
     Ok(())
 }

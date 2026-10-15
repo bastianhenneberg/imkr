@@ -317,9 +317,10 @@ For scripts and agents:
                                         install it as a Claude Code skill
   notify [--title T] [--pane N] &lt;text&gt;  show a notification (desktop, terminal or
                                         off, as set in the settings)
-  new [--float] [--window N] [--dir D] [-- command args...]
+  new [--float] [--window N] [--dir D] [--focus] [--name NAME] [-- command args...]
                                         start a command in a new pane (window 0:
-                                        a new window)
+                                        a new window); --focus goes there,
+                                        --name names a new window
   --host H new [--dir D] [-- command]   a window here whose program runs on H
   rename [--pane N | --window N] [--clear | &lt;name&gt;]
                                         name a pane or a window
