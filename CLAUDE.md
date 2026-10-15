@@ -229,6 +229,10 @@ Projekt-Slug: `imkr`
 - `protocol::test_socket()`: `IMKR_SOCKET` zählt nur als Testwelt, wenn es außerhalb des
   Runtime-Verzeichnisses liegt. In einem Pane ist es der Socket der eigenen Session; vorher suchten
   `hive ls/save/restore/switch` aus einem Pane neben dem Socket und fanden keine Hives.
+- SIGPIPE: Rust ignoriert es, `println!` paniced dann an einer geschlossenen Pipe. `main` setzt für
+  reine Ausgabebefehle `SIG_DFL` (still Exit 141), nicht für die an Verbindungen lebenden
+  (`lives_on_connections`: Client, attach, proxy, server, web, hosted, attach-pane). Neuer
+  langlebiger Befehl, der Sockets schreibt → dort eintragen.
 - Shell-Integration (OSC 133): `LinkScanner` liefert auch `Piece::Mark` (A/B/C/D;exit), `Pane::shell`
   (`Shell::mark`: C = Ausgabe beginnt, D = fertig), `Pane::last_command` (Ende exklusiv: `text`
   nimmt die Endzelle mit), `Request::LastCommand`; CLI `run`, `wait` ohne `--until`,
