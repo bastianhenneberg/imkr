@@ -73,7 +73,12 @@ Projekt-Slug: `imkr`
   `Request::UseAccount` (ohne `pane`: neue Shells; mit: `switch_account` = SIGTERM per
   `Pane::stop_foreground`, dann `finish_switches` tippt `imkr account run T:N -- <resume>`).
   `check_used_up` je Tick (nur nicht-working, `USED_UP_LINES`, `USED_UP_QUIET`), Einstellung
-  `account_fallback` ask/auto/off. UI `Ctrl+B s c` (`Mode::Accounts`). Test: Fake-`claude` im
+  `account_fallback` ask/auto/off. UI `Ctrl+B s c` (`Mode::Accounts`).
+  Identität je Konto (`Store::identity`: Claude `oauthAccount` in `.claude.json`, Codex `id_token`
+  in `auth.json`), `same_login` lehnt doppelte Abos nach `add` ab, `used_up_for` gilt je Abo.
+  Pane-Rahmen: `App::name_accounts` (alle `ACCOUNTS_EVERY`) → `Pane::shown_account`
+  (`account::shown`: Adresse vor dem @, bei Anbietern `provider_name` + Modell), dahinter das
+  Modell aus `Meta`. Test: Fake-`claude` im
   Scratchpad-bin, das die Limit-Meldung druckt, wenn `CLAUDE_CONFIG_DIR` fehlt.
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
   (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). pi: Erweiterung

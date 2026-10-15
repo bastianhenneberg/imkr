@@ -574,6 +574,8 @@ const INBOX_LINES: usize = 12;
 /// How often the sessions here and on other machines are listed again.
 const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(5);
+/// How often panes' frames look up which account their agent runs in.
+const ACCOUNTS_EVERY: Duration = Duration::from_secs(10);
 /// How often hives saved on other machines are fetched.
 const HIVES_EVERY: Duration = Duration::from_secs(60);
 /// How often messages from contacts through AI Brain are fetched.
@@ -692,6 +694,8 @@ pub struct App {
     /// `CARRIED_FOR` (a resumed agent works a little first).
     carried: HashMap<PaneId, u64>,
     carried_until: Option<Instant>,
+    /// When `name_accounts` last looked.
+    accounts_named: Option<Instant>,
     /// What the terminals showing a pane elsewhere were last told runs in
     /// it, see `tell_taps`.
     told: HashMap<PaneId, Option<(String, AgentState)>>,
@@ -873,6 +877,7 @@ impl App {
             hosting: false,
             carried: HashMap::new(),
             carried_until: None,
+            accounts_named: None,
             told: HashMap::new(),
             hide_old: true,
             conns: HashMap::new(),
@@ -2985,12 +2990,50 @@ impl App {
 
     /// Looks at what every agent is doing. When one starts waiting for the
     /// user where the user is not looking, it rings the bell and says so.
+    /// Names, for each pane's frame, the subscription or provider its agent
+    /// runs in (`Pane::shown_account`). Read from the accounts' login files,
+    /// so at most every `ACCOUNTS_EVERY`, and only for Claude and Codex
+    /// running here: a hosted window's agent runs in an account there.
+    fn name_accounts(&mut self) {
+        if self
+            .accounts_named
+            .is_some_and(|at| at.elapsed() < ACCOUNTS_EVERY)
+        {
+            return;
+        }
+        self.accounts_named = Some(Instant::now());
+        let Ok(store) = crate::account::Store::here() else {
+            return;
+        };
+        let mut known: HashMap<(String, String), String> = HashMap::new();
+        for pane in self.panes.values_mut() {
+            let tool = pane.program().filter(|p| {
+                crate::account::TOOLS.contains(&p.as_str()) && pane.remote_agent().is_none()
+            });
+            pane.shown_account = tool.and_then(|tool| {
+                let name = pane
+                    .accounts
+                    .get(&tool)
+                    .cloned()
+                    .unwrap_or_else(|| crate::account::STANDARD.to_owned());
+                if let Some(shown) = known.get(&(tool.clone(), name.clone())) {
+                    return Some(shown.clone());
+                }
+                let account = store.find(&tool, &name)?;
+                let shown = crate::account::shown(&store, &account);
+                known.insert((tool, name), shown.clone());
+                Some(shown)
+            });
+        }
+    }
+
     fn update_agents(&mut self) {
         self.finish_switches();
         self.check_used_up();
         for pane in self.panes.values_mut() {
             pane.refresh_meta();
         }
+        self.name_accounts();
         let now = Instant::now();
         if self.carried_until.is_some_and(|until| now > until) {
             self.carried.clear();
@@ -9068,6 +9111,21 @@ impl App {
                     format!("{} {} ", state.symbol(), state.name()),
                     state_style(state),
                 ));
+                // Which subscription and model it runs on: limits and
+                // costs are theirs.
+                let account = pane.shown_account.clone();
+                let model = pane
+                    .meta()
+                    .map(|m| crate::agent::short_model(&m.model))
+                    // A provider's account names its model already.
+                    .filter(|m| !account.as_deref().is_some_and(|a| a.contains(m.as_str())));
+                let about: Vec<String> = account.into_iter().chain(model).collect();
+                if !about.is_empty() {
+                    title.push(Span::styled(
+                        format!("· {} ", about.join(" · ")),
+                        Style::new().fg(t.muted),
+                    ));
+                }
             }
             if floating {
                 title.push(Span::styled("⧉ ", Style::new().fg(t.cyan)));

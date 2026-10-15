@@ -421,6 +421,47 @@ impl Store {
     }
 }
 
+/// What a pane's frame says about the account its agent runs in: the
+/// provider and model for one by address (`Ollama · qwen3-coder`), else who is logged
+/// in, the address before the @ (`henneberg`), else the account's name.
+pub fn shown(store: &Store, account: &Account) -> String {
+    if let Some(url) = &account.url {
+        // A provider's model is the account's choice, not in a transcript.
+        return match &account.model {
+            Some(model) => format!("{} · {model}", provider_name(url)),
+            None => provider_name(url),
+        };
+    }
+    store
+        .identity(account)
+        .map(|i| i.shown.split('@').next().unwrap_or_default().to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| account.name.clone())
+}
+
+/// A provider by its address: the known ones by name, others by host.
+pub fn provider_name(url: &str) -> String {
+    let host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split(['/', '?'])
+        .next()
+        .unwrap_or_default();
+    let known = [
+        ("openrouter", "OpenRouter"),
+        ("11434", "Ollama"),
+        ("ollama", "Ollama"),
+        ("anthropic", "Anthropic"),
+        ("openai", "OpenAI"),
+    ];
+    known
+        .iter()
+        .find(|(part, _)| host.contains(part))
+        .map(|(_, name)| (*name).to_owned())
+        .unwrap_or_else(|| host.to_owned())
+}
+
 /// Who an account is logged in as: `shown` in lists, `key` to compare
 /// (the address with the organisation or account it belongs to).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -641,6 +682,35 @@ mod tests {
         assert!(store.used_up_until(&find("twin")).is_some());
         assert_eq!(store.next_free("claude", STANDARD).unwrap().name, "other");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn frames_name_providers_and_subscriptions() {
+        assert_eq!(provider_name("http://localhost:11434"), "Ollama");
+        assert_eq!(provider_name("https://openrouter.ai/api"), "OpenRouter");
+        assert_eq!(
+            provider_name("https://llm.example.com/v1"),
+            "llm.example.com"
+        );
+        let store = Store {
+            root: std::env::temp_dir().join("imkr-shown-none"),
+            home: std::env::temp_dir().join("imkr-shown-none"),
+        };
+        let local = Account {
+            name: "local".into(),
+            tool: "claude".into(),
+            url: Some("http://localhost:11434".into()),
+            model: Some("qwen3-coder".into()),
+            ..Account::default()
+        };
+        assert_eq!(shown(&store, &local), "Ollama · qwen3-coder");
+        // Not logged in (no login files): the account's name.
+        let privat = Account {
+            name: "privat".into(),
+            tool: "claude".into(),
+            ..Account::default()
+        };
+        assert_eq!(shown(&store, &privat), "privat");
     }
 
     #[test]

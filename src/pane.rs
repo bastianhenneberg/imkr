@@ -63,6 +63,9 @@ pub struct Pane {
     /// The accounts its agents use, by agent (`claude`, `codex`), when not
     /// `standard`: what its shell started with, or switched to since.
     pub accounts: std::collections::BTreeMap<String, String>,
+    /// Which subscription or provider its agent runs on, for its frame:
+    /// `henneberg`, `Ollama`; set by `App::name_accounts`.
+    pub shown_account: Option<String>,
 }
 
 /// How much of its history a tapped pane sends first.
@@ -343,6 +346,7 @@ impl Pane {
             taps: Arc::default(),
             remote: Arc::default(),
             accounts: Default::default(),
+            shown_account: None,
         };
         pane.read_on()?;
         Ok(pane)

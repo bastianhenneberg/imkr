@@ -254,6 +254,9 @@ imkr account switch privat --pane 3     # the agent in pane 3 goes on in it, now
 imkr account run privat -- claude       # one command in it
 imkr account sync                       # share what is new in ~/.claude, MCP servers again
 </code></pre>
+<p>Every agent's frame says what it runs on, after its state: <code>claude ● working · henneberg · opus 5.5</code>
+(the subscription by its address before the @, then the model), or <code>· Ollama · qwen3-coder</code> for a
+provider.</p>
 <p><code>Ctrl+B s c</code> lists them: Enter puts the focused agent into the chosen account, <code>u</code> new shells of
 this session. Switching ends the agent and starts it again in the same conversation, typed into
 its shell as <code>imkr account run claude:privat -- claude --resume &lt;id&gt;</code>, so no key shows on the
