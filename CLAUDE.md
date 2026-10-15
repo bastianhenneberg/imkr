@@ -290,7 +290,8 @@ Projekt-Slug: `imkr`
   `settings sync|export|import` (`cli::sync_settings_with`, drüben per `remote_output`), danach
   `Request::ReloadConfig` an alle Sessions. `hosts sync` gleicht nach den Upgrades nacheinander ab.
   Kontoliste (`accounts.toml` aus dem State, `ACCOUNTS`) wird vereinigt statt ersetzt
-  (`plan`: bei Unterschied Push und Pull, `apply` → `Store::merge_in`: fehlende anhängen samt Ordner,
+  (`plan`: Push nur wenn hier seit dem Sync geändert und drüben Namen fehlen, Pull nur wenn drüben
+  Namen stehen, die hier fehlen — Listen dürfen dauerhaft verschieden sein; `apply` → `Store::merge_in`: fehlende anhängen samt Ordner,
   Default nur wenn keiner da); nie Logins. `default_of` zählt nur angemeldete Konten.
   Test: Fake-ssh, das nach `--` den Befehl mit HOME/IMKR_CONFIG der zweiten Welt ausführt.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),

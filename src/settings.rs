@@ -170,12 +170,19 @@ pub fn plan(local: &[Item], remote: &[Item], base: Option<&[Item]>) -> (Vec<Step
             text: None,
         };
         // Accounts are joined, not replaced: each side takes what it lacks.
+        // The lists may differ for good (a machine leaves out the account
+        // its own login is already), so only what is new goes: ours when it
+        // changed since the last sync, theirs when it has accounts we lack.
         if path == ACCOUNTS
             && let (Some(here), Some(there)) = (&here, &there)
         {
-            if here.text != there.text {
-                steps.push(step(Way::Push, "accounts joined"));
-                steps.push(step(Way::Pull, "accounts joined"));
+            let (mine, theirs) = (account_names(&here.text), account_names(&there.text));
+            let changed_here = was.as_ref().is_none_or(|w| w.text != here.text);
+            if changed_here && !mine.is_subset(&theirs) {
+                steps.push(step(Way::Push, "accounts new here"));
+            }
+            if !theirs.is_subset(&mine) {
+                steps.push(step(Way::Pull, "accounts new there"));
             }
             continue;
         }
@@ -200,6 +207,24 @@ pub fn plan(local: &[Item], remote: &[Item], base: Option<&[Item]>) -> (Vec<Step
         }
     }
     (steps, undecided)
+}
+
+/// The accounts a list names, as `tool:name`.
+fn account_names(text: &str) -> std::collections::BTreeSet<String> {
+    let table: toml::Table = text.parse().unwrap_or_default();
+    table
+        .get("account")
+        .and_then(|a| a.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|a| {
+            Some(format!(
+                "{}:{}",
+                a.get("tool")?.as_str()?,
+                a.get("name")?.as_str()?
+            ))
+        })
+        .collect()
 }
 
 /// The shared settings of a config: without this machine's own keys.
@@ -422,11 +447,32 @@ mod tests {
             modified,
             text: text.into(),
         };
-        let (steps, undecided) = plan(&[item("a", 1)], &[item("b", 9)], None);
+        let list = |names: &[&str]| {
+            names
+                .iter()
+                .map(|n| format!("[[account]]\nname = \"{n}\"\ntool = \"claude\"\n"))
+                .collect::<String>()
+        };
+        let ways = |steps: Vec<Step>| steps.iter().map(|s| s.way).collect::<Vec<_>>();
+        let (a, b) = (list(&["work"]), list(&["play"]));
+        let (steps, undecided) = plan(&[item(&a, 1)], &[item(&b, 9)], None);
         assert!(undecided.is_empty());
-        let ways: Vec<Way> = steps.iter().map(|s| s.way).collect();
-        assert_eq!(ways, vec![Way::Push, Way::Pull]);
-        assert!(plan(&[item("a", 1)], &[item("a", 9)], None).0.is_empty());
+        assert_eq!(ways(steps), vec![Way::Push, Way::Pull]);
+        assert!(plan(&[item(&a, 1)], &[item(&a, 9)], None).0.is_empty());
+        // There leaves `work` out for good (its own login): once synced,
+        // nothing goes again until here changes.
+        let (both, other) = (list(&["work", "play"]), list(&["play"]));
+        let base = [item(&both, 1)];
+        assert!(
+            plan(&[item(&both, 1)], &[item(&other, 9)], Some(&base))
+                .0
+                .is_empty()
+        );
+        let more = list(&["work", "play", "new"]);
+        assert_eq!(
+            ways(plan(&[item(&more, 2)], &[item(&other, 9)], Some(&base)).0),
+            vec![Way::Push]
+        );
         assert!(allowed(ACCOUNTS));
     }
 
