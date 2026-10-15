@@ -196,12 +196,23 @@ impl Pane {
         cmd.env("IMKR", "1");
         cmd.env("IMKR_PANE", id.to_string());
         cmd.env("IMKR_SOCKET", spawn.socket);
+        // Each agent's account: the one chosen for this session, else the
+        // default (`imkr account default`). Noted in the pane as it started,
+        // so a default set later does not rename what already runs.
+        let mut accounts = spawn.accounts.clone();
         if let Ok(store) = crate::account::Store::here() {
-            for (tool, name) in spawn.accounts {
-                if let Some(account) = store.find(tool, name) {
+            for tool in crate::account::TOOLS {
+                let name = accounts
+                    .get(*tool)
+                    .cloned()
+                    .unwrap_or_else(|| store.default_of(tool));
+                if let Some(account) = store.find(tool, &name) {
                     for (key, value) in store.env(&account) {
                         cmd.env(key, value);
                     }
+                }
+                if name != crate::account::STANDARD {
+                    accounts.insert((*tool).to_owned(), name);
                 }
             }
         }
@@ -222,7 +233,7 @@ impl Pane {
         // child exits.
         drop(pair.slave);
         let mut pane = Self::start(id, (rows, cols), pair.master, child, before, events)?;
-        pane.accounts = spawn.accounts.clone();
+        pane.accounts = accounts;
         Ok(pane)
     }
 

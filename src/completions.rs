@@ -141,6 +141,7 @@ const COMMANDS: &[Command] = &[
             sub("run", Accounts),
             sub("use", Accounts),
             sub("switch", Accounts),
+            sub("default", Accounts),
         ],
     ),
     cmd(
@@ -402,7 +403,11 @@ pub fn complete(args: &[String]) -> Result<()> {
                 crate::account::TOOLS
                     .iter()
                     .flat_map(|tool| store.of_tool(tool))
-                    .map(|a| a.name)
+                    .flat_map(|a| {
+                        // A subscription also by its login (`stelljes`).
+                        let shown = a.url.is_none().then(|| crate::account::shown(&store, &a));
+                        std::iter::once(a.name).chain(shown)
+                    })
                     .collect()
             })
             .unwrap_or_default(),

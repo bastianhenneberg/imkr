@@ -72,7 +72,13 @@ imkr account use privat                 # new shells of this session start in it
 imkr account switch privat --pane 3     # the agent in pane 3 goes on in it, now
 imkr account run privat -- claude       # one command in it
 imkr account sync                       # share what is new in ~/.claude, MCP servers again
+imkr account default henneberg          # new shells on this machine start in it
 ```
+
+Accounts show by the subscription they are logged in to, `(standard)` marks the one new shells
+start in (`imkr account default`, else `~/.claude`), and commands take either name:
+`imkr account use stelljes` finds `standard` when that is stelljes' login. A pane keeps the account
+it started in, also when the default changes later.
 
 Every agent's frame says what it runs on, after its state: `claude ● working · henneberg · opus 5.5`
 (the subscription by its address before the @, then the model), or `· Ollama · qwen3-coder` for a

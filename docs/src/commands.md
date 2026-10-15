@@ -43,6 +43,7 @@ Commands:
   account [ls] | add claude|codex NAME [--url URL --model M --token-stdin]
           | login NAME | rm NAME | sync | env NAME | run NAME -- CMD
           | use NAME (new shells here) | switch NAME [--pane N] (agent now)
+          | default [NAME] (new shells everywhere here start in it)
                 several Claude Code and Codex accounts on this machine,
                 subscriptions or providers (OpenRouter, Ollama)
   revive NAME   bring back a session that stopped (reboot, crash) or was

@@ -60,6 +60,9 @@ impl Account {
 
 #[derive(Default, Serialize, Deserialize)]
 struct File {
+    /// The account new shells start in, by agent, when not `standard`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    default: std::collections::BTreeMap<String, String>,
     /// In the order to fall back in when one is used up.
     #[serde(default, rename = "account")]
     accounts: Vec<Account>,
@@ -85,23 +88,64 @@ impl Store {
         self.root.join("accounts.toml")
     }
 
-    /// The registered accounts, in their order.
-    pub fn load(&self) -> Vec<Account> {
+    fn read(&self) -> File {
         std::fs::read_to_string(self.file())
             .ok()
             .and_then(|text| toml::from_str::<File>(&text).ok())
-            .map(|file| file.accounts)
             .unwrap_or_default()
     }
 
+    /// The registered accounts, in their order.
+    pub fn load(&self) -> Vec<Account> {
+        self.read().accounts
+    }
+
+    /// The account new shells of `tool` start in: the one set with
+    /// `imkr account default`, else `standard`.
+    pub fn default_of(&self, tool: &str) -> String {
+        self.read()
+            .default
+            .get(tool)
+            .filter(|name| self.find(tool, name).is_some())
+            .cloned()
+            .unwrap_or_else(|| STANDARD.to_owned())
+    }
+
+    /// Makes `account` the one new shells of its agent start in.
+    pub fn set_default(&self, account: &Account) -> Result<()> {
+        let mut file = self.read();
+        if account.is_standard() {
+            file.default.remove(&account.tool);
+        } else {
+            file.default
+                .insert(account.tool.clone(), account.name.clone());
+        }
+        self.write(&file)
+    }
+
+    /// The account of `tool` called `given`, by its own name or by the
+    /// subscription it is logged in to (`shown`): `stelljes` finds
+    /// `standard` when that one is stelljes' login.
+    pub fn named(&self, tool: &str, given: &str) -> Option<Account> {
+        self.find(tool, given).or_else(|| {
+            self.of_tool(tool)
+                .into_iter()
+                .find(|a| a.url.is_none() && shown(self, a) == given)
+        })
+    }
+
     fn save(&self, accounts: &[Account]) -> Result<()> {
+        let mut file = self.read();
+        file.accounts = accounts.to_vec();
+        self.write(&file)
+    }
+
+    fn write(&self, file: &File) -> Result<()> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let path = self.file();
         std::fs::create_dir_all(&self.root)?;
-        let text = toml::to_string(&File {
-            accounts: accounts.to_vec(),
-        })?;
+        let text = toml::to_string(file)?;
         let tmp = path.with_extension("tmp");
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -276,6 +320,11 @@ impl Store {
         };
         let account = accounts.remove(at);
         self.save(&accounts)?;
+        if self.read().default.get(tool) == Some(&account.name) {
+            let mut file = self.read();
+            file.default.remove(tool);
+            self.write(&file)?;
+        }
         if let Some(dir) = self.dir_of(&account) {
             // Links and the login only: remove_dir_all does not follow links.
             let _ = std::fs::remove_dir_all(dir);
@@ -711,6 +760,41 @@ mod tests {
             ..Account::default()
         };
         assert_eq!(shown(&store, &privat), "privat");
+    }
+
+    /// Bastian's case: `standard` is stelljes' login, henneberg is the one
+    /// he means to start in.
+    #[test]
+    fn a_default_account_and_names_by_subscription() {
+        let base = std::env::temp_dir().join(format!("imkr-default-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        claude_login(&store.home, "stelljes@x", "o1");
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        store
+            .add(Account {
+                name: "work".into(),
+                tool: "claude".into(),
+                ..Account::default()
+            })
+            .unwrap();
+        claude_login(&store.root.join("claude/work"), "henneberg@x", "o2");
+
+        assert_eq!(store.default_of("claude"), STANDARD);
+        assert_eq!(store.named("claude", "stelljes").unwrap().name, STANDARD);
+        assert_eq!(store.named("claude", "henneberg").unwrap().name, "work");
+        store
+            .set_default(&store.find("claude", "work").unwrap())
+            .unwrap();
+        assert_eq!(store.default_of("claude"), "work");
+        assert_eq!(store.default_of("codex"), STANDARD);
+        // Gone with its account.
+        store.remove("claude", "work").unwrap();
+        assert_eq!(store.default_of("claude"), STANDARD);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

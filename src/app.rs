@@ -2192,8 +2192,14 @@ impl App {
                     ));
                 }
                 match pane {
+                    // For the session no entry means the default, so
+                    // `standard` is kept when another one is the default.
+                    None if name == store.default_of(&tool) => {
+                        self.accounts.remove(&tool);
+                        Ok(serde_json::json!({ "tool": tool, "account": name }))
+                    }
                     None => {
-                        set_account(&mut self.accounts, &tool, &name);
+                        self.accounts.insert(tool.clone(), name.clone());
                         Ok(serde_json::json!({ "tool": tool, "account": name }))
                     }
                     Some(id) => self.switch_account(id, &account),
@@ -9533,11 +9539,12 @@ impl App {
         let mut accounts = Vec::new();
         let mut items = Vec::new();
         for tool in crate::account::TOOLS {
+            let default = store.default_of(tool);
             for account in store.of_tool(tool) {
                 let session = self
                     .accounts
                     .get(*tool)
-                    .map_or(account.is_standard(), |name| *name == account.name);
+                    .map_or(account.name == default, |name| *name == account.name);
                 let agent = focused.is_some_and(|pane| {
                     pane.program().as_deref() == Some(*tool)
                         && pane
@@ -9545,7 +9552,10 @@ impl App {
                             .get(*tool)
                             .map_or(account.is_standard(), |name| *name == account.name)
                 });
-                let mut hint = account.kind();
+                let mut hint = match (&account.url, store.identity(&account)) {
+                    (None, Some(who)) => who.shown,
+                    _ => account.kind(),
+                };
                 if !store.logged_in(&account) {
                     hint.push_str(" · not logged in");
                 }
@@ -9559,7 +9569,19 @@ impl App {
                 );
                 items.push(menu::MenuItem {
                     key: char::from_digit((items.len() as u32 + 1) % 10, 10).unwrap_or(' '),
-                    title: format!("{marks} {}", account.name),
+                    title: format!(
+                        "{marks} {}{}",
+                        if account.url.is_some() {
+                            account.name.clone()
+                        } else {
+                            crate::account::shown(&store, &account)
+                        },
+                        if account.name == default {
+                            " (standard)"
+                        } else {
+                            ""
+                        }
+                    ),
                     hint,
                     danger: false,
                     apart: false,

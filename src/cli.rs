@@ -1929,7 +1929,8 @@ pub fn hive(args: &[String]) -> Result<()> {
 pub fn account(args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: imkr account [ls] | add claude|codex NAME [--url URL] [--model M] \
                          [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
-                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N]";
+                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] \
+                         | default [NAME]";
     use crate::account::{Account, Store, TOOLS};
     let store = Store::here()?;
     // `NAME` or `tool:NAME`, the only one of that name if no tool is said.
@@ -1941,7 +1942,7 @@ pub fn account(args: &[String]) -> Result<()> {
         let found: Vec<Account> = TOOLS
             .iter()
             .filter(|t| tool.is_none_or(|tool| tool == **t))
-            .filter_map(|t| store.find(t, name))
+            .filter_map(|t| store.named(t, name))
             .collect();
         match found.as_slice() {
             [one] => Ok(one.clone()),
@@ -1960,8 +1961,26 @@ pub fn account(args: &[String]) -> Result<()> {
         [] | ["ls"] => {
             for tool in TOOLS {
                 println!("{tool}");
+                let default = store.default_of(tool);
                 for account in store.of_tool(tool) {
+                    // By the subscription it is logged in to, `(standard)` for
+                    // the one new shells start in.
+                    let mut name = crate::account::shown(&store, &account);
+                    if account.url.is_some() {
+                        name = account.name.clone();
+                    }
+                    if account.name == default {
+                        name.push_str(" (standard)");
+                    }
                     let mut note = String::new();
+                    if account.is_standard() {
+                        note.push_str(&format!("  ~/.{tool}"));
+                    } else if account.url.is_some() {
+                        note.push_str(&format!("  {}", account.kind()));
+                    }
+                    if let Some(who) = store.identity(&account) {
+                        note.push_str(&format!("  {}", who.shown));
+                    }
                     if !store.logged_in(&account) {
                         note.push_str("  (not logged in: `imkr account login …`)");
                     }
@@ -1969,13 +1988,12 @@ pub fn account(args: &[String]) -> Result<()> {
                         note.push_str(&format!("  used up until {until}"));
                     }
                     if let Some(other) = store.same_login(&account) {
-                        note.push_str(&format!("  same subscription as {}", other.name));
+                        note.push_str(&format!(
+                            "  same subscription as {}",
+                            crate::account::shown(&store, &other)
+                        ));
                     }
-                    let who = store
-                        .identity(&account)
-                        .map(|i| format!("  {}", i.shown))
-                        .unwrap_or_default();
-                    println!("  {:<14} {}{who}{note}", account.name, account.kind());
+                    println!("  {name:<24}{note}");
                 }
             }
             println!("in this order a used up account falls back to the next");
@@ -2016,6 +2034,37 @@ pub fn account(args: &[String]) -> Result<()> {
                     );
                 }
             }
+            Ok(())
+        }
+        ["default"] => {
+            for tool in TOOLS {
+                let name = store.default_of(tool);
+                let shown = store
+                    .find(tool, &name)
+                    .map(|a| crate::account::shown(&store, &a))
+                    .unwrap_or(name);
+                println!("{tool}: {shown}");
+            }
+            Ok(())
+        }
+        // New shells start in it, in every session here; running agents
+        // keep theirs (`switch` moves one).
+        ["default", given] => {
+            let account = pick(given)?;
+            if !store.logged_in(&account) {
+                bail!(
+                    "{} is not logged in: `imkr account login {given}`",
+                    account.name
+                );
+            }
+            store.set_default(&account)?;
+            println!(
+                "new shells start in {} account {} (standard); running agents keep theirs, \
+                 `imkr account switch {} --pane N` moves one",
+                account.tool,
+                crate::account::shown(&store, &account),
+                given
+            );
             Ok(())
         }
         ["login", given] => {
