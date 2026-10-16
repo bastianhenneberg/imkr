@@ -257,12 +257,13 @@ pub fn revive(name: &str) -> Result<()> {
     if path.exists() {
         return Ok(());
     }
-    let hive = load_hive(LAST)?.context("no hive `last`")?;
-    let session = hive
-        .sessions
-        .get(name)
-        .with_context(|| format!("{name} is not among the closed sessions"))?;
-    write(&path, &to_json(&session.layout)?)
+    if let Some(session) = load_hive(LAST)?.and_then(|mut hive| hive.sessions.remove(name)) {
+        return write(&path, &to_json(&session.layout)?);
+    }
+    // Older ones are in the archive; back out of it, it is a session again.
+    let entry = unarchive(name)?
+        .with_context(|| format!("{name} is not among the closed or archived sessions"))?;
+    write(&path, &to_json(&entry.layout)?)
 }
 
 /// Forgets session `name` that does not run: its state file and its place
@@ -278,7 +279,15 @@ pub fn forget(name: &str) -> Result<bool> {
     if let Some(mut hive) = load_hive(LAST)?
         && hive.sessions.remove(name).is_some()
     {
+        hive.hive_of.remove(name);
         write_hive(LAST, &hive)?;
+        found = true;
+    }
+    let mut list = archived();
+    let before = list.len();
+    list.retain(|a| a.name != name);
+    if list.len() < before {
+        write_archive(&list)?;
         found = true;
     }
     Ok(found)
@@ -301,6 +310,10 @@ pub struct Hive {
     /// everything runs, to bring back and to show machines that are off.
     #[serde(default)]
     pub machines: Vec<HiveMachine>,
+    /// In `last`: the hive each session ran in when it ended, to file it
+    /// under that hive in the archive later (#506).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hive_of: BTreeMap<String, String>,
 }
 
 /// Another machine in a hive.
@@ -378,18 +391,37 @@ pub fn keep_in_last(session: &str, layout: Saved) -> Result<()> {
             layout,
         },
     );
-    keep_newest(&mut hive, LAST_KEEPS);
+    match hive_for(session) {
+        Some(owner) => hive.hive_of.insert(session.to_owned(), owner),
+        None => hive.hive_of.remove(session),
+    };
+    let dropped = keep_newest(&mut hive, LAST_KEEPS);
+    // What falls out of `last` goes into the archive, never away (#506).
+    let dropped: Vec<Archived> = dropped
+        .into_iter()
+        .map(|(name, session)| Archived {
+            hive: hive.hive_of.remove(&name),
+            name,
+            saved_at: session.saved_at,
+            layout: session.layout,
+        })
+        .collect();
+    if !dropped.is_empty() {
+        archive(dropped)?;
+    }
     write_hive(LAST, &hive)?;
     Ok(())
 }
 
-/// How many ended sessions `last` keeps: the newest. What is to stay longer
-/// goes into a hive of its own (`imkr hive save`); sessions stopped by a
-/// crash or reboot are not in `last` and always stay.
+/// How many ended sessions `last` keeps: the newest. Older ones go into
+/// the archive (`archived`); sessions stopped by a crash or reboot are not
+/// in `last` and always stay.
 pub const LAST_KEEPS: usize = 10;
 
-/// Drops the sessions saved longest ago until `keep` are left.
-fn keep_newest(hive: &mut Hive, keep: usize) {
+/// Takes out the sessions saved longest ago until `keep` are left, and
+/// returns them.
+fn keep_newest(hive: &mut Hive, keep: usize) -> Vec<(String, HiveSession)> {
+    let mut dropped = Vec::new();
     while hive.sessions.len() > keep {
         let Some(oldest) = hive
             .sessions
@@ -399,7 +431,127 @@ fn keep_newest(hive: &mut Hive, keep: usize) {
         else {
             break;
         };
-        hive.sessions.remove(&oldest);
+        if let Some(session) = hive.sessions.remove(&oldest) {
+            dropped.push((oldest, session));
+        }
+    }
+    dropped
+}
+
+/// An ended session older than the ten in `last`, kept with the hive it
+/// ran in (#506).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Archived {
+    pub name: String,
+    /// The hive active on this machine when it ended; none without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hive: Option<String>,
+    /// When it ended, in seconds since 1970.
+    pub saved_at: u64,
+    pub layout: Saved,
+}
+
+/// The archive file, next to the hives; the dot keeps it out of their list.
+fn archive_path() -> Result<PathBuf> {
+    Ok(saves_dir()?.join(".archive.json"))
+}
+
+/// The archived sessions of this machine, newest first.
+pub fn archived() -> Vec<Archived> {
+    let mut list: Vec<Archived> = archive_path()
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    list.sort_by_key(|a| std::cmp::Reverse(a.saved_at));
+    list
+}
+
+fn write_archive(list: &[Archived]) -> Result<()> {
+    write(&archive_path()?, &serde_json::to_string_pretty(list)?)
+}
+
+/// Files `entries` in the archive; one of the same name and hive is
+/// replaced, the newer counts.
+fn archive(entries: Vec<Archived>) -> Result<()> {
+    let mut list = archived();
+    for entry in entries {
+        list.retain(|a| !(a.name == entry.name && a.hive == entry.hive));
+        list.push(entry);
+    }
+    list.sort_by_key(|a| std::cmp::Reverse(a.saved_at));
+    write_archive(&list)
+}
+
+/// Takes session `name` out of the archive: the one of the active hive,
+/// else the newest of that name.
+fn unarchive(name: &str) -> Result<Option<Archived>> {
+    let mut list = archived();
+    let active = active_hive();
+    let at = list
+        .iter()
+        .position(|a| a.name == name && a.hive == active)
+        .or_else(|| list.iter().position(|a| a.name == name));
+    let Some(at) = at else {
+        return Ok(None);
+    };
+    let entry = list.remove(at);
+    write_archive(&list)?;
+    Ok(Some(entry))
+}
+
+/// The hive session `session` of this machine belongs to as it ends: the
+/// active hive if it holds it, else the newest saved hive that does (a
+/// switch saves the hive it leaves before ending its sessions, and has made
+/// the next one active by then), else the active hive, as the one worked in.
+fn hive_for(session: &str) -> Option<String> {
+    let active = active_hive();
+    let id = crate::protocol::machine_id();
+    let holding: Vec<(String, u64)> = saves()
+        .into_iter()
+        .filter(|name| name != LAST)
+        .filter_map(|name| {
+            let hive = load_hive(&name).ok()??;
+            let here = if hive.machine_id.is_empty() || hive.machine_id == id {
+                hive.sessions.get(session)
+            } else {
+                hive.machines
+                    .iter()
+                    .find(|m| m.id == id)
+                    .and_then(|m| m.sessions.get(session))
+            };
+            here.map(|s| (name, s.saved_at))
+        })
+        .collect();
+    if let Some(active) = &active
+        && holding.iter().any(|(name, _)| name == active)
+    {
+        return Some(active.clone());
+    }
+    holding
+        .into_iter()
+        .max_by_key(|(_, saved_at)| *saved_at)
+        .map(|(name, _)| name)
+        .or(active)
+}
+
+/// The hive the user works in on this machine: set by switching to a hive
+/// and by saving one, saved again before the next switch (#507).
+pub fn active_hive() -> Option<String> {
+    let text = fs::read_to_string(saves_dir().ok()?.join(".active")).ok()?;
+    let name = text.trim();
+    (crate::protocol::valid_session_name(name) && name != LAST).then(|| name.to_owned())
+}
+
+/// Remembers `name` as the active hive, or none.
+pub fn set_active_hive(name: Option<&str>) -> Result<()> {
+    let path = saves_dir()?.join(".active");
+    match name.filter(|&n| n != LAST) {
+        Some(name) => write(&path, name),
+        None => match fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        },
     }
 }
 
@@ -484,7 +636,11 @@ pub fn import_hives(hives: BTreeMap<String, Hive>) -> Result<Vec<String>> {
 
 pub fn delete_hive(name: &str) -> Result<()> {
     let path = save_path(name)?;
-    fs::remove_file(&path).with_context(|| format!("there is no hive called {name}"))
+    fs::remove_file(&path).with_context(|| format!("there is no hive called {name}"))?;
+    if active_hive().as_deref() == Some(name) {
+        set_active_hive(None)?;
+    }
+    Ok(())
 }
 
 /// Renames hive `old` to `name`, never over another hive.
@@ -494,7 +650,11 @@ pub fn rename_hive(old: &str, name: &str) -> Result<()> {
     if to.exists() {
         anyhow::bail!("there is a hive called {name} already");
     }
-    fs::rename(&from, &to).with_context(|| format!("there is no hive called {old}"))
+    fs::rename(&from, &to).with_context(|| format!("there is no hive called {old}"))?;
+    if active_hive().as_deref() == Some(old) {
+        set_active_hive(Some(name))?;
+    }
+    Ok(())
 }
 
 /// The save files by name.
@@ -506,7 +666,8 @@ pub fn saves() -> Vec<String> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_str()?.strip_suffix(".json")?.to_owned();
-            Some(name)
+            // The archive lives here too, as a dot file.
+            (!name.starts_with('.')).then_some(name)
         })
         .collect();
     names.sort();
@@ -767,6 +928,51 @@ mod tests {
         delete_hive("beta").unwrap();
         assert!(delete_hive("beta").is_err());
         assert_eq!(saves(), ["last"]);
+
+        // The active hive follows renames and goes with its hive (#507).
+        write_hive("alpha", &Hive::default()).unwrap();
+        set_active_hive(Some("alpha")).unwrap();
+        assert_eq!(active_hive().as_deref(), Some("alpha"));
+        rename_hive("alpha", "kunde").unwrap();
+        assert_eq!(active_hive().as_deref(), Some("kunde"));
+        set_active_hive(Some(LAST)).unwrap();
+        assert_eq!(active_hive(), None, "`last` is never the active hive");
+        set_active_hive(Some("kunde")).unwrap();
+
+        // What falls out of `last` goes into the archive with its hive,
+        // never away, and comes back from there (#506).
+        for i in 0..LAST_KEEPS + 2 {
+            keep_in_last(&format!("s{i:02}"), sample()).unwrap();
+        }
+        let last = load_hive(LAST).unwrap().unwrap();
+        assert_eq!(last.sessions.len(), LAST_KEEPS);
+        let archived = archived();
+        assert_eq!(archived.len(), 4);
+        // Nothing is lost: every session is in `last` or in the archive.
+        let mut all: Vec<String> = last.sessions.keys().cloned().collect();
+        all.extend(archived.iter().map(|a| a.name.clone()));
+        all.sort();
+        let mut expected: Vec<String> = (0..LAST_KEEPS + 2).map(|i| format!("s{i:02}")).collect();
+        expected.extend(["play".to_owned(), "work".to_owned()]);
+        expected.sort();
+        assert_eq!(all, expected);
+        // Each carries the hive it ended in: none before one was active.
+        for entry in &archived {
+            let hive = entry.name.starts_with('s').then(|| "kunde".to_owned());
+            assert_eq!(entry.hive, hive, "{}", entry.name);
+        }
+        assert_eq!(saves(), ["kunde", "last"], "the archive is no hive");
+        let back = archived[0].name.clone();
+        let path = path_for(&back).unwrap();
+        revive(&back).unwrap();
+        assert!(path.exists());
+        assert!(!self::archived().iter().any(|a| a.name == back));
+        fs::remove_file(&path).unwrap();
+        let gone = archived[1].name.clone();
+        assert!(forget(&gone).unwrap());
+        assert!(!self::archived().iter().any(|a| a.name == gone));
+        delete_hive("kunde").unwrap();
+        assert_eq!(active_hive(), None);
         unsafe { std::env::remove_var("IMKR_STATE") };
         let _ = fs::remove_dir_all(dir);
     }

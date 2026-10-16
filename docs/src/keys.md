@@ -121,6 +121,7 @@ Session list (Ctrl+B, S), in the list
   s              save all as hive
   h              hives
   o              hide/show old
+  a              show/hide the archive
   Esc            cancel
 
 Hives (Ctrl+B, H), in the list

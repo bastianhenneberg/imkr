@@ -966,6 +966,7 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("s", "save all as hive"),
     ("h", "hives"),
     ("o", "hide/show old"),
+    ("a", "show/hide the archive"),
     ("Esc", "cancel"),
 ];
 

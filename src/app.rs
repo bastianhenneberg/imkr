@@ -713,6 +713,8 @@ pub struct App {
     told: HashMap<PaneId, Option<(String, AgentState)>>,
     /// `Ctrl+B S` leaves out old sessions, see `is_old_session`; `o` shows them.
     hide_old: bool,
+    /// `Ctrl+B S` also lists the archive, `a` toggles it (#506).
+    show_archive: bool,
     next_client_id: ClientId,
     /// The server socket, handed to every pane as `IMKR_SOCKET`.
     socket: PathBuf,
@@ -894,6 +896,7 @@ impl App {
             accounts_named: None,
             told: HashMap::new(),
             hide_old: true,
+            show_archive: false,
             conns: HashMap::new(),
             next_client_id: 0,
             socket,
@@ -5568,6 +5571,41 @@ impl App {
         if self.hide_old {
             entries.retain(|(place, ..)| !old.contains(place));
         }
+        // The archive of this machine: the active hive's first, then the
+        // other hives', then those ended outside a hive (#506). One entry
+        // per name, the one `persist::revive` would bring back.
+        let mut archived = persist::archived();
+        let archived_count = archived.len();
+        let active = persist::active_hive();
+        archived.sort_by_key(|a| (a.hive != active, a.hive.is_none(), a.hive.clone()));
+        let mut archive_of: BTreeMap<String, String> = BTreeMap::new();
+        if self.show_archive {
+            for entry in archived {
+                if archive_of.contains_key(&entry.name)
+                    || entries
+                        .iter()
+                        .any(|(p, ..)| p.host.is_none() && p.name == entry.name)
+                {
+                    continue;
+                }
+                let day = protocol::chrono_like(entry.saved_at).unwrap_or_default();
+                let group = match &entry.hive {
+                    Some(hive) => format!("▣ archive · {hive}"),
+                    None => "▣ archive · no hive".to_owned(),
+                };
+                archive_of.insert(entry.name.clone(), group);
+                entries.push((
+                    Place {
+                        host: None,
+                        name: entry.name,
+                    },
+                    String::new(),
+                    BTreeMap::new(),
+                    Some(format!("archived {day}").trim_end().to_owned()),
+                    None,
+                ));
+            }
+        }
         let (places, items): (Vec<Place>, Vec<menu::MenuItem>) = entries
             .into_iter()
             .enumerate()
@@ -5646,7 +5684,14 @@ impl App {
             .map(|(place, mut item)| {
                 let asleep = item.title.starts_with('◌');
                 let machine = self.machine_label(place.host.as_deref());
-                if asleep {
+                let archive = place
+                    .host
+                    .is_none()
+                    .then(|| archive_of.get(&place.name).cloned())
+                    .flatten();
+                if let Some(group) = archive {
+                    item.group = Some(group);
+                } else if asleep {
                     item.group = Some("◌ not running".into());
                 } else if let Some(machine) = machine {
                     item.hint = item
@@ -5660,7 +5705,11 @@ impl App {
                 (place, item)
             })
             .collect();
-        grouped.sort_by_key(|(_, item)| item.title.starts_with('◌'));
+        // Running, then not running, then the archive, which keeps its order.
+        grouped.sort_by_key(|(_, item)| {
+            let archived = item.group.as_deref().is_some_and(|g| g.starts_with('▣'));
+            (item.title.starts_with('◌'), archived)
+        });
         let (places, mut items): (Vec<Place>, Vec<menu::MenuItem>) = grouped
             .into_iter()
             .enumerate()
@@ -5674,6 +5723,21 @@ impl App {
                 key: 'o',
                 title: format!("{hidden} old hidden"),
                 hint: "not running, Enter on one brings it back".into(),
+                danger: false,
+                apart: true,
+                color: Some(theme::current().muted),
+                group: None,
+            });
+        }
+        if archived_count > 0 {
+            items.push(menu::MenuItem {
+                key: 'a',
+                title: if self.show_archive {
+                    "hide the archive".into()
+                } else {
+                    format!("archive ({archived_count})")
+                },
+                hint: "ended before the ten in `last`, by hive".into(),
                 danger: false,
                 apart: true,
                 color: Some(theme::current().muted),
@@ -5871,7 +5935,9 @@ impl App {
     /// Asks for the template of the new session `place` when there are
     /// any, else goes there right away.
     fn choose_template(&mut self, place: Place) {
-        if self.session_exists(&place) {
+        let archived =
+            place.host.is_none() && persist::archived().iter().any(|a| a.name == place.name);
+        if self.session_exists(&place) || archived {
             self.go_to(&place);
             return;
         }
@@ -7078,6 +7144,7 @@ impl App {
     fn hive_items(&self) -> (Vec<String>, Vec<menu::MenuItem>) {
         let infos = persist::hive_infos();
         let running = protocol::sessions();
+        let active = persist::active_hive();
         let items = infos
             .iter()
             .enumerate()
@@ -7103,9 +7170,14 @@ impl App {
                 } else {
                     ""
                 };
+                let title = if active.as_deref() == Some(info.name.as_str()) {
+                    format!("{} ● active", info.name)
+                } else {
+                    info.name.clone()
+                };
                 menu::MenuItem {
                     key: char::from_digit((i as u32 + 1) % 10, 10).unwrap_or(' '),
-                    title: info.name.clone(),
+                    title,
                     hint: format!("{} · {age} ago{auto}", sessions.join(", ")),
                     danger: false,
                     apart: false,
@@ -7151,13 +7223,20 @@ impl App {
                 self.mode = Mode::Sessions(0);
                 return;
             }
+            KeyCode::Char('a') => {
+                self.show_archive = !self.show_archive;
+                self.mode = Mode::Sessions(0);
+                return;
+            }
             KeyCode::Char('x') => {
                 if let Some(name) = names.get(selected).filter(|n| !n.is_empty()) {
                     let place = Place {
                         host: None,
                         name: name.clone(),
                     };
-                    let asleep = self.dormant_of(&place).is_some();
+                    let archived = !self.session_exists(&place)
+                        && persist::archived().iter().any(|a| a.name == *name);
+                    let asleep = self.dormant_of(&place).is_some() || archived;
                     self.confirm_target = Some(name.clone());
                     self.mode = Mode::Confirm(if asleep {
                         Action::ForgetSession
@@ -7323,11 +7402,18 @@ impl App {
     fn switch_hive(&mut self, name: &str) {
         let socket = self.socket.clone();
         let own = protocol::session_name();
+        // This session's layout from here, as `save_hive` takes it.
+        let layout = self.saved();
         let name = name.to_owned();
         self.flash = Some(format!("switching to hive {name}…"));
         thread::spawn(move || {
             let result = crate::client::hive_outsiders(&name).and_then(|outsiders| {
-                let lines = crate::client::switch_hive(&name, &outsiders, Some(&own))?;
+                let lines = crate::client::switch_hive(
+                    &name,
+                    &outsiders,
+                    Some(&own),
+                    Some((own.as_str(), layout)),
+                )?;
                 let ends_here = outsiders.iter().any(|(h, s)| h.is_none() && *s == own);
                 Ok((lines, ends_here))
             });
@@ -7384,6 +7470,7 @@ impl App {
                 // Every machine gets it, to bring back from anywhere.
                 if name != persist::LAST {
                     crate::client::push_hive(&name, &hive);
+                    persist::set_active_hive(Some(&name))?;
                 }
                 Ok(hive)
             });
@@ -7495,9 +7582,13 @@ impl App {
                 Some("this terminal's imkr is too old for other machines, reattach".into());
             return;
         }
-        // A session closed on purpose comes back from the hive `last` first;
-        // a stopped one brings its layout back by itself when it starts.
-        if self.dormant_of(place).as_deref() == Some("closed") {
+        // A session closed on purpose comes back from the hive `last` first,
+        // an older one from the archive; a stopped one brings its layout
+        // back by itself when it starts.
+        let archived = place.host.is_none()
+            && !self.session_exists(place)
+            && persist::archived().iter().any(|a| a.name == place.name);
+        if archived || self.dormant_of(place).as_deref() == Some("closed") {
             match place.host.clone() {
                 None => {
                     if let Err(e) = persist::revive(&place.name) {
@@ -10397,9 +10488,8 @@ impl App {
                     target()
                 ))],
             ),
-            Action::SwitchHive => (
-                " Switch hive ",
-                if self.confirm_list.is_empty() {
+            Action::SwitchHive => (" Switch hive ", {
+                let mut lines = if self.confirm_list.is_empty() {
                     vec![Line::from(format!(
                         "Switch to the hive {}? Nothing else runs, nothing ends.",
                         target()
@@ -10419,8 +10509,18 @@ impl App {
                         )));
                     }
                     lines
-                },
-            ),
+                };
+                // The hive left behind is saved as it is now (#507).
+                if let Some(active) = persist::active_hive()
+                    .filter(|a| Some(a.as_str()) != self.confirm_target.as_deref())
+                {
+                    lines.insert(
+                        0,
+                        Line::from(format!("The hive {active} is saved first, as it is now.")),
+                    );
+                }
+                lines
+            }),
             Action::OverwriteHive => (
                 " Update hive ",
                 vec![Line::from(format!(

@@ -17,8 +17,10 @@ Every session that ends on purpose (`Ctrl+B Q`, `x` in the sessions menu, `kill-
 its layout into the hive `last`, so bringing `last` back reopens everything that was open, each
 session as its own server again. Sessions already running are left alone, and a running
 session is marked with ● in the list.
-`last` keeps the ten sessions ended most recently; for longer, save them as a hive of their own.
-Sessions stopped by a crash or a reboot are not in `last` and always come back.
+`last` keeps the ten sessions ended most recently. Older ones go into the **archive**, never
+away, each filed under the hive it belonged to: `a` in `Ctrl+B S` lists it, the active hive's
+first, Enter brings one back, `x` forgets it. Typing an archived name as a new session brings it
+back too. Sessions stopped by a crash or a reboot are not in `last` and always come back.
 
 ```bash
 imkr hive save work       # the running sessions as the hive `work`
@@ -32,6 +34,14 @@ imkr hive rm api
 Switching (`w` in `Ctrl+B H`) changes context, say from one customer to another: the hive comes
 back, then every running session it does not have ends, on its machines too, and goes into
 `last` as any ended session does. It asks first and names them, because work can end with them.
+
+The hive you switched to, or saved last under a name, is the **active** one, marked `● active` in
+`Ctrl+B H` and `●` in `imkr hive ls`. Switching saves it first, as it is at that moment, so going
+from `kunde-a` to `kunde-b` and back loses nothing done in between.
+
+Hives are saved pictures, not something that runs: sessions run on their own, whichever hive
+they came from. Enter in `Ctrl+B H` brings a second hive's sessions in next to the running ones,
+so two terminals can work in two hives at once; `w` is the hard switch that ends the rest.
 
 `imkr save` and `imkr restore` are short for `hive save` and `hive restore`. Hives live in
 `~/.local/state/imkr/saves/`, plain JSON, easy to copy or back up.

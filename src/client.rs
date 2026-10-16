@@ -1271,8 +1271,21 @@ pub fn switch_hive(
     name: &str,
     outsiders: &[(Option<String>, String)],
     keep: Option<&str>,
+    own: Option<(&str, crate::persist::Saved)>,
 ) -> Result<Vec<String>> {
-    let mut report = restore_hive(name, None, None)?;
+    // The hive left behind keeps how it was now, not how it was last saved
+    // (#507): its sessions end below and would live on only in `last`.
+    let mut report = Vec::new();
+    if let Some(active) = crate::persist::active_hive().filter(|a| a != name)
+        && let Some(previous) = crate::persist::load_hive(&active)?
+    {
+        let hive = snapshot_everywhere(own, Some(&previous))?;
+        crate::persist::write_hive(&active, &hive)?;
+        push_hive(&active, &hive);
+        report.push(format!("saved {active}"));
+    }
+    report.extend(restore_hive(name, None, None)?);
+    crate::persist::set_active_hive(Some(name))?;
     let mut ended = Vec::new();
     for (host, session) in outsiders {
         let done = match host {

@@ -1832,6 +1832,8 @@ pub fn save(args: &[String]) -> Result<()> {
         if !to.is_empty() {
             println!("  given to {}", to.join(", "));
         }
+        // What is saved under a name is the hive worked in from now on.
+        crate::persist::set_active_hive(Some(name))?;
     }
     Ok(())
 }
@@ -1879,7 +1881,27 @@ pub fn restore(args: &[String]) -> Result<()> {
                         ));
                     }
                 }
-                println!("{name:<12} {}", sessions.join(", "));
+                let marked = if crate::persist::active_hive().as_deref() == Some(name.as_str()) {
+                    format!("{name} ●")
+                } else {
+                    name.clone()
+                };
+                println!("{marked:<12} {}", sessions.join(", "));
+            }
+            let archived = crate::persist::archived();
+            if !archived.is_empty() {
+                let names: Vec<String> = archived
+                    .iter()
+                    .map(|a| match &a.hive {
+                        Some(hive) => format!("{} ({hive})", a.name),
+                        None => a.name.clone(),
+                    })
+                    .collect();
+                println!(
+                    "{:<12} {} · `imkr revive NAME`",
+                    "archive",
+                    names.join(", ")
+                );
             }
             Ok(())
         }
@@ -1974,7 +1996,7 @@ pub fn hive(args: &[String]) -> Result<()> {
                     bail!("not switched");
                 }
             }
-            for line in client::switch_hive(name, &outsiders, None)? {
+            for line in client::switch_hive(name, &outsiders, None, None)? {
                 println!("{line}");
             }
             Ok(())

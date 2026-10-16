@@ -209,6 +209,16 @@ Projekt-Slug: `imkr`
   Tab `dir_key` → `template::complete_with`), andere Rechner per ssh `imkr dirs` (Pfad auf stdin)
   in `dir_lists` gecacht, `MAX_PATH`);
   der Ordner wird `Template::root`, „leer“ = Vorlage mit einem Window.
+- Archiv (#506): was `keep_newest` aus `last` drängt, geht nach `saves/.archive.json`
+  (`persist::Archived` mit `hive`, `archive`/`unarchive`/`archived`), nie weg. Die Marke kommt aus
+  `Hive::hive_of` in `last`, gesetzt in `keep_in_last` per `hive_for` (aktiver Hive, wenn er die
+  Session hat, sonst der neueste gespeicherte, der sie hat — nicht nach Zeitpunkt: beim Wechsel ist
+  der neue Hive schon aktiv, wenn die alten Sessions enden). `revive` fällt auf das Archiv zurück,
+  `forget` räumt es mit. UI: `a` in `Ctrl+B S` (`show_archive`, Gruppen `▣ archive · HIVE`),
+  `choose_template`/`go_to` holen archivierte Namen zurück. Punktdateien zählt `saves()` nicht.
+  Aktiver Hive (#507): `persist::active_hive`/`set_active_hive` (`saves/.active`, je Rechner, nie
+  `last`), gesetzt von `switch_hive` und Speichern unter einem Namen, folgt `rename`/`delete`;
+  `client::switch_hive` speichert ihn vor dem Wechsel (`own` = Layout der aufrufenden Session).
 - Ruhende Sessions: `persist::dormant_sessions` (State-Dateien ohne laufenden Server = stopped,
   Hive `last` = closed, nur die `LAST_KEEPS` = 10 neuesten, `keep_newest`), `client::local_sessions` hängt sie mit `SessionInfo::dormant` an (also
   auch in `ls --json` und für andere Rechner). `go_to` holt closed per `persist::revive` (remote

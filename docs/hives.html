@@ -231,8 +231,10 @@ panes and directories. <code>Ctrl+B H</code> opens the hives, and every key it t
 its layout into the hive <code>last</code>, so bringing <code>last</code> back reopens everything that was open, each
 session as its own server again. Sessions already running are left alone, and a running
 session is marked with ● in the list.
-<code>last</code> keeps the ten sessions ended most recently; for longer, save them as a hive of their own.
-Sessions stopped by a crash or a reboot are not in <code>last</code> and always come back.</p>
+<code>last</code> keeps the ten sessions ended most recently. Older ones go into the <strong>archive</strong>, never
+away, each filed under the hive it belonged to: <code>a</code> in <code>Ctrl+B S</code> lists it, the active hive's
+first, Enter brings one back, <code>x</code> forgets it. Typing an archived name as a new session brings it
+back too. Sessions stopped by a crash or a reboot are not in <code>last</code> and always come back.</p>
 <pre><code class="language-bash">imkr hive save work       # the running sessions as the hive `work`
 imkr hive ls              # every hive with its sessions and age
 imkr hive restore work    # start what of `work` does not run
@@ -243,6 +245,12 @@ imkr hive rm api
 <p>Switching (<code>w</code> in <code>Ctrl+B H</code>) changes context, say from one customer to another: the hive comes
 back, then every running session it does not have ends, on its machines too, and goes into
 <code>last</code> as any ended session does. It asks first and names them, because work can end with them.</p>
+<p>The hive you switched to, or saved last under a name, is the <strong>active</strong> one, marked <code>● active</code> in
+<code>Ctrl+B H</code> and <code>●</code> in <code>imkr hive ls</code>. Switching saves it first, as it is at that moment, so going
+from <code>kunde-a</code> to <code>kunde-b</code> and back loses nothing done in between.</p>
+<p>Hives are saved pictures, not something that runs: sessions run on their own, whichever hive
+they came from. Enter in <code>Ctrl+B H</code> brings a second hive's sessions in next to the running ones,
+so two terminals can work in two hives at once; <code>w</code> is the hard switch that ends the rest.</p>
 <p><code>imkr save</code> and <code>imkr restore</code> are short for <code>hive save</code> and <code>hive restore</code>. Hives live in
 <code>~/.local/state/imkr/saves/</code>, plain JSON, easy to copy or back up.</p>
 <h3 id="hives-across-machines">Hives across machines</h3>
