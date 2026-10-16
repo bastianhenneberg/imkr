@@ -539,12 +539,19 @@ pub fn print(report: &Report, colour: bool) -> String {
         if accounts.is_empty() {
             continue;
         }
+        if !out.is_empty() {
+            out.push('\n');
+        }
         out.push_str(&paint(
             "1",
             if *tool == "codex" { "Codex" } else { "Claude" },
         ));
         out.push('\n');
-        for account in accounts {
+        for (n, account) in accounts.into_iter().enumerate() {
+            // A blank line between accounts, so each stands on its own.
+            if n > 0 {
+                out.push('\n');
+            }
             let name = if account.default {
                 format!("{} (standard)", account.name)
             } else {
@@ -589,6 +596,7 @@ pub fn print(report: &Report, colour: bool) -> String {
             }
         }
     }
+    out.push('\n');
     out.push_str(&paint("1", "Tokens"));
     out.push_str(&paint(
         "2",
