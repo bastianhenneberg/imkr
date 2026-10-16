@@ -1138,6 +1138,31 @@ pub fn pull_hives(host: &str) -> Result<Vec<String>> {
     crate::persist::import_hives(serde_json::from_slice(&output.stdout)?)
 }
 
+/// Fetches the archive of `host` (`imkr archive export`) and keeps it here,
+/// so the archive view shows the hive's sessions on every machine, also
+/// while one is off (#506). A machine with an older imkr has none.
+pub fn pull_archive(host: &str) -> Result<()> {
+    let output = Command::new("ssh")
+        .args([
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            "--",
+            host,
+        ])
+        .arg(remote_command(&["archive", "export"]))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .context("could not run ssh")?;
+    if !output.status.success() {
+        bail!("{host} has no archive to give");
+    }
+    crate::persist::store_replica(host, serde_json::from_slice(&output.stdout)?)
+}
+
 /// Brings hive `name` back, as a map of every machine in it: this
 /// machine's sessions that do not run are started from their layouts; every
 /// other machine is made known (the sidebar shows it, or that it is off)

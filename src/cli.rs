@@ -1924,6 +1924,36 @@ pub fn restore(args: &[String]) -> Result<()> {
     }
 }
 
+/// `imkr archive [export]`: the sessions ended before the ten in `last`,
+/// by hive, here and as last fetched from the other machines; `export`
+/// gives this machine's own as JSON, for the others to fetch.
+pub fn archive(args: &[String]) -> Result<()> {
+    match args {
+        [cmd] if cmd == "export" => {
+            println!("{}", serde_json::to_string(&crate::persist::archived())?);
+            Ok(())
+        }
+        [] | [_] if args.first().is_none_or(|a| a == "ls") => {
+            let line = |machine: &str, entry: &crate::persist::Archived| {
+                let when = crate::protocol::chrono_like(entry.saved_at).unwrap_or_default();
+                let hive = entry.hive.as_deref().unwrap_or("no hive");
+                println!("{:<14} {:<20} {hive:<14} {when}", machine, entry.name);
+            };
+            let here = crate::protocol::machine_name();
+            for entry in crate::persist::archived() {
+                line(&here, &entry);
+            }
+            for replica in crate::persist::replicas() {
+                for entry in &replica.sessions {
+                    line(&replica.host, entry);
+                }
+            }
+            Ok(())
+        }
+        _ => bail!("usage: imkr archive [ls | export]"),
+    }
+}
+
 /// `imkr hive <ls | save | restore | rm | rename>`: hives, saved groups
 /// of sessions. `save` and `restore` also work without `hive`.
 pub fn hive(args: &[String]) -> Result<()> {

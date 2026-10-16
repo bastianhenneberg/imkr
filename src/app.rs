@@ -462,6 +462,9 @@ enum Action {
     /// Switch to the hive named in `App::confirm_target`, ending the
     /// sessions in `App::confirm_list`.
     SwitchHive,
+    /// Start here the archived session `host:name` in `App::confirm_target`
+    /// of a machine that does not answer.
+    StartArchivedHere,
 }
 
 /// The sessions besides this one, here and on other machines, as the
@@ -5583,32 +5586,58 @@ impl App {
         // The archive of this machine: the active hive's first, then the
         // other hives', then those ended outside a hive (#506). One entry
         // per name, the one `persist::revive` would bring back.
-        let mut archived = persist::archived();
+        // The archive of every machine of the hives: this one's, and the
+        // others' as last fetched, so a machine that is off shows too (#506).
+        // The active hive first, then the other hives, then sessions ended
+        // outside a hive; this machine first in each.
+        let replicas = persist::replicas();
+        let mut archived: Vec<(Option<String>, persist::Archived)> = persist::archived()
+            .into_iter()
+            .map(|a| (None, a))
+            .chain(replicas.into_iter().flat_map(|r| {
+                r.sessions
+                    .into_iter()
+                    .map(move |a| (Some(r.host.clone()), a))
+            }))
+            .collect();
         let archived_count = archived.len();
         let active = persist::active_hive();
-        archived.sort_by_key(|a| (a.hive != active, a.hive.is_none(), a.hive.clone()));
-        let mut archive_of: BTreeMap<String, String> = BTreeMap::new();
+        archived.sort_by_key(|(host, a)| {
+            (
+                a.hive != active,
+                a.hive.is_none(),
+                a.hive.clone(),
+                host.is_some(),
+                host.clone(),
+            )
+        });
+        let mut archive_of: BTreeMap<(Option<String>, String), String> = BTreeMap::new();
         // The archive is a view of its own, only in the session list.
         let archive_view = self.show_archive && matches!(self.mode, Mode::Sessions(_));
         if archive_view {
             entries.clear();
-            for entry in archived {
-                if archive_of.contains_key(&entry.name)
-                    || entries
-                        .iter()
-                        .any(|(p, ..)| p.host.is_none() && p.name == entry.name)
-                {
+            let runs = |host: &Option<String>, name: &str| match host {
+                None => places.local.iter().any(|s| s.name == name),
+                Some(host) => places.hosts.iter().any(|(h, sessions)| {
+                    h == host
+                        && sessions
+                            .as_ref()
+                            .is_ok_and(|s| s.iter().any(|s| s.name == name && s.dormant.is_none()))
+                }),
+            };
+            let here = protocol::machine_name();
+            for (host, entry) in archived {
+                let key = (host.clone(), entry.name.clone());
+                if archive_of.contains_key(&key) || runs(&host, &entry.name) {
                     continue;
                 }
                 let day = protocol::chrono_like(entry.saved_at).unwrap_or_default();
-                let group = match &entry.hive {
-                    Some(hive) => format!("▣ archive · {hive}"),
-                    None => "▣ archive · no hive".to_owned(),
-                };
-                archive_of.insert(entry.name.clone(), group);
+                let hive = entry.hive.as_deref().unwrap_or("no hive");
+                let machine = host.clone().unwrap_or_else(|| here.clone());
+                archive_of.insert(key, format!("▣ {hive} · {machine}"));
                 entries.push((
                     Place {
-                        host: None,
+                        host,
                         name: entry.name,
                     },
                     String::new(),
@@ -5696,10 +5725,12 @@ impl App {
             .map(|(place, mut item)| {
                 let asleep = item.title.starts_with('◌');
                 let machine = self.machine_label(place.host.as_deref());
-                let archive = place
-                    .host
-                    .is_none()
-                    .then(|| archive_of.get(&place.name).cloned())
+                let archive = archive_view
+                    .then(|| {
+                        archive_of
+                            .get(&(place.host.clone(), place.name.clone()))
+                            .cloned()
+                    })
                     .flatten();
                 if let Some(group) = archive {
                     item.group = Some(group);
@@ -7258,6 +7289,14 @@ impl App {
                 self.mode = Mode::Sessions(0);
                 return;
             }
+            KeyCode::Char('x')
+                if self.show_archive && places.get(selected).is_some_and(|p| p.host.is_some()) =>
+            {
+                if let Some(place) = places.get(selected) {
+                    self.forget_elsewhere(place);
+                }
+                return;
+            }
             KeyCode::Char('x') => {
                 if let Some(name) = names.get(selected).filter(|n| !n.is_empty()) {
                     let place = Place {
@@ -7305,12 +7344,14 @@ impl App {
             _ => return,
         };
         // In the archive only its entries are picked, nothing starts anew.
-        if self.show_archive && places.get(pick).is_none() {
+        let in_archive = self.show_archive;
+        if in_archive && places.get(pick).is_none() {
             return;
         }
         self.mode = Mode::Normal;
         self.show_archive = false;
         match places.get(pick) {
+            Some(place) if in_archive && place.host.is_some() => self.revive_elsewhere(place),
             Some(place) if place.host.is_none() && place.name == protocol::session_name() => {}
             Some(place) => self.go_to(place),
             None if pick == places.len() => {
@@ -7609,6 +7650,101 @@ impl App {
             .position(|p| p.host.is_none() && p.name == current)
             .unwrap_or(0);
         self.mode = Mode::Sessions(selected);
+    }
+
+    /// Brings back `place`, archived on another machine: there if it
+    /// answers, else it asks whether to start it here (#506).
+    fn revive_elsewhere(&mut self, place: &Place) {
+        let Some(host) = place.host.clone() else {
+            return;
+        };
+        let answers = self
+            .places
+            .lock()
+            .unwrap()
+            .hosts
+            .iter()
+            .any(|(h, sessions)| *h == host && sessions.is_ok());
+        if !answers {
+            self.confirm_target = Some(format!("{host}:{}", place.name));
+            self.mode = Mode::Confirm(Action::StartArchivedHere);
+            return;
+        }
+        let socket = self.socket.clone();
+        let (name, target) = (place.name.clone(), place.target());
+        self.flash = Some(format!("bringing {name} back on {host} …"));
+        thread::spawn(move || {
+            let request = match crate::client::remote_output(&host, &["revive", &name], "") {
+                Ok(_) => {
+                    let _ = persist::drop_from_replica(&host, &name);
+                    Request::Go { target }
+                }
+                Err(e) => Request::Flash {
+                    text: format!("{name} cannot come back on {host}: {e:#}"),
+                },
+            };
+            let _ = crate::client::request_at(&socket, request);
+        });
+    }
+
+    /// Starts here the archived session `host:name` of a machine that does
+    /// not answer, from the layout kept of its archive.
+    fn start_archived_here(&mut self, target: &str) {
+        let Some((host, name)) = target.split_once(':') else {
+            return;
+        };
+        let entry = persist::replicas()
+            .into_iter()
+            .find(|r| r.host == host)
+            .and_then(|r| r.sessions.into_iter().find(|a| a.name == name));
+        let Some(entry) = entry else {
+            self.flash = Some(format!("{name} is no longer in the archive of {host}"));
+            return;
+        };
+        let here = Place {
+            host: None,
+            name: name.to_owned(),
+        };
+        if self.session_exists(&here) || persist::archived().iter().any(|a| a.name == name) {
+            self.flash = Some(format!("a session {name} is here already, rename it first"));
+            return;
+        }
+        let socket = self.socket.clone();
+        let (host, name) = (host.to_owned(), name.to_owned());
+        self.flash = Some(format!("starting {name} here …"));
+        thread::spawn(move || {
+            let request = match crate::client::start_from(&name, entry.layout) {
+                Ok(_) => {
+                    let _ = persist::drop_from_replica(&host, &name);
+                    Request::Go { target: name }
+                }
+                Err(e) => Request::Flash {
+                    text: format!("{name} did not start here: {e:#}"),
+                },
+            };
+            let _ = crate::client::request_at(&socket, request);
+        });
+    }
+
+    /// Forgets `place`, archived on another machine, there; that machine
+    /// has to answer.
+    fn forget_elsewhere(&mut self, place: &Place) {
+        let Some(host) = place.host.clone() else {
+            return;
+        };
+        let socket = self.socket.clone();
+        let name = place.name.clone();
+        self.flash = Some(format!("forgetting {name} on {host} …"));
+        thread::spawn(move || {
+            let text = match crate::client::remote_output(&host, &["forget", &name], "") {
+                Ok(_) => {
+                    let _ = persist::drop_from_replica(&host, &name);
+                    format!("{name} forgotten on {host}")
+                }
+                Err(e) => format!("{name} stays: {host} does not answer ({e:#})"),
+            };
+            let _ = crate::client::request_at(&socket, Request::Flash { text });
+        });
     }
 
     /// Sends the active client to `place`, on this machine or another.
@@ -8634,6 +8770,11 @@ impl App {
             Action::SwitchHive => {
                 if let Some(name) = self.confirm_target.take() {
                     self.switch_hive(&name);
+                }
+            }
+            Action::StartArchivedHere => {
+                if let Some(target) = self.confirm_target.take() {
+                    self.start_archived_here(&target);
                 }
             }
         }
@@ -10562,6 +10703,24 @@ impl App {
                 }
                 lines
             }),
+            Action::StartArchivedHere => {
+                let (host, name) = target().split_once(':').map_or_else(
+                    || (String::new(), target()),
+                    |(h, n)| (h.to_owned(), n.to_owned()),
+                );
+                (
+                    " Start here ",
+                    vec![
+                        Line::from(format!("{host} does not answer.")),
+                        Line::from(format!(
+                            "Start {name} on this machine, from its archived layout?"
+                        )),
+                        Line::from(format!(
+                            "Directories {host} has and this one not become its start directory."
+                        )),
+                    ],
+                )
+            }
             Action::OverwriteHive => (
                 " Update hive ",
                 vec![Line::from(format!(
@@ -11179,6 +11338,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                     for (host, sessions) in &found {
                         if sessions.is_ok() {
                             let _ = crate::client::pull_hives(host);
+                            let _ = crate::client::pull_archive(host);
                         }
                     }
                 }

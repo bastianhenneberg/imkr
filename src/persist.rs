@@ -483,6 +483,67 @@ fn archive(entries: Vec<Archived>) -> Result<()> {
     write_archive(&list)
 }
 
+/// Another machine's archive as last fetched from it, kept here so it
+/// shows, and can be started here, while that machine is off.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Replica {
+    /// The machine, as ssh reaches it.
+    pub host: String,
+    pub sessions: Vec<Archived>,
+}
+
+/// Where the archive of `host` is kept here: a dot file next to the hives.
+fn replica_path(host: &str) -> Result<PathBuf> {
+    let safe: String = host
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Ok(saves_dir()?.join(format!(".archive.{safe}.json")))
+}
+
+/// Keeps `sessions`, the archive of `host`, until the next fetch.
+pub fn store_replica(host: &str, sessions: Vec<Archived>) -> Result<()> {
+    let replica = Replica {
+        host: host.to_owned(),
+        sessions,
+    };
+    write(&replica_path(host)?, &serde_json::to_string(&replica)?)
+}
+
+/// The archives of the other machines, as last fetched.
+pub fn replicas() -> Vec<Replica> {
+    let Ok(entries) = saves_dir().and_then(|dir| Ok(fs::read_dir(dir)?)) else {
+        return Vec::new();
+    };
+    let mut list: Vec<Replica> = entries
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(".archive.") && name.ends_with(".json")
+        })
+        .filter_map(|e| serde_json::from_str(&fs::read_to_string(e.path()).ok()?).ok())
+        .collect();
+    list.sort_by(|a, b| a.host.cmp(&b.host));
+    list
+}
+
+/// Takes `name` out of the archive kept of `host`, once it came back or
+/// was forgotten there, so it does not show until the next fetch.
+pub fn drop_from_replica(host: &str, name: &str) -> Result<()> {
+    let Some(mut replica) = replicas().into_iter().find(|r| r.host == host) else {
+        return Ok(());
+    };
+    replica.sessions.retain(|a| a.name != name);
+    store_replica(host, replica.sessions)
+}
+
 /// Takes session `name` out of the archive: the one of the active hive,
 /// else the newest of that name.
 fn unarchive(name: &str) -> Result<Option<Archived>> {
@@ -971,6 +1032,22 @@ mod tests {
         let gone = archived[1].name.clone();
         assert!(forget(&gone).unwrap());
         assert!(!self::archived().iter().any(|a| a.name == gone));
+        // Another machine's archive is kept here, apart from this one's.
+        let theirs = Archived {
+            name: "api".into(),
+            hive: Some("kunde".into()),
+            saved_at: 5,
+            layout: sample(),
+        };
+        store_replica("coding.machine", vec![theirs.clone()]).unwrap();
+        let replicas = replicas();
+        assert_eq!(replicas.len(), 1);
+        assert_eq!(replicas[0].host, "coding.machine");
+        assert_eq!(replicas[0].sessions, [theirs]);
+        assert!(!self::archived().iter().any(|a| a.name == "api"));
+        assert!(!saves().iter().any(|s| s.starts_with('.')), "{:?}", saves());
+        drop_from_replica("coding.machine", "api").unwrap();
+        assert!(self::replicas()[0].sessions.is_empty());
         delete_hive("kunde").unwrap();
         assert_eq!(active_hive(), None);
         unsafe { std::env::remove_var("IMKR_STATE") };

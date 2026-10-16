@@ -20,7 +20,11 @@ session is marked with ● in the list.
 `last` keeps the ten sessions ended most recently. Older ones go into the **archive**, never
 away, each filed under the hive it belonged to. The archive has a view of its own: `Ctrl+B s a`,
 or `a` in `Ctrl+B S` (`a` again goes back), the active hive's first, Enter brings one back, `x`
-forgets it. It holds this machine's sessions, as `last` does. Typing an archived name as a new session brings it
+forgets it. It shows the archive of every machine, grouped by hive and machine
+(`▣ kunde · codingmachine`): each machine gives its own along with the hives, so one that is off
+still shows. Enter brings a session back where it was archived; if that machine does not answer,
+imkr asks whether to start it here instead, from its archived layout. `imkr archive` lists them
+all on the command line. Typing an archived name as a new session brings it
 back too. Sessions stopped by a crash or a reboot are not in `last` and always come back.
 
 ```bash

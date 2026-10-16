@@ -271,6 +271,13 @@ const COMMANDS: &[Command] = &[
         &["--pane", "--json"],
         Nothing,
     ),
+    Command {
+        name: "archive",
+        about: "ended sessions older than the ten in `last`",
+        options: &[],
+        words: Nothing,
+        subs: &[sub("ls", Nothing), sub("export", Nothing)],
+    },
     cmd(
         "operator",
         "the machine the user sits at",

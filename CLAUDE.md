@@ -218,6 +218,11 @@ Projekt-Slug: `imkr`
   `Mode::Sessions`, Titel „Archive“, Gruppen `▣ archive · HIVE`, leer mit Hinweis, Enter startet
   dort nie Neues): `a` in `Ctrl+B S` und `Ctrl+B s a` (`Command::Archive`; „save all as hive“ dort `v`),
   `choose_template`/`go_to` holen archivierte Namen zurück. Punktdateien zählt `saves()` nicht.
+  Andere Rechner: `client::pull_archive` (ssh `imkr archive export`, im Takt von `pull_hives`) →
+  `persist::store_replica` (`saves/.archive.<host>.json`, `Replica`), die Ansicht zeigt eigene +
+  `replicas()` je `▣ HIVE · RECHNER`; Enter `revive_elsewhere` (antwortet → `imkr revive` dort,
+  sonst `Action::StartArchivedHere` → `start_archived_here` mit `client::start_from`), `x` →
+  `forget_elsewhere`, danach `drop_from_replica`. Test: zwei Welten mit Schein-ssh, Datei `down`.
   Aktiver Hive (#507): `persist::active_hive`/`set_active_hive` (`saves/.active`, je Rechner, nie
   `last`), gesetzt von `switch_hive` und Speichern unter einem Namen, folgt `rename`/`delete`;
   `client::switch_hive` speichert ihn vor dem Wechsel (`own` = Layout der aufrufenden Session).

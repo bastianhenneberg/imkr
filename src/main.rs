@@ -143,6 +143,8 @@ For scripts and agents:
                 why a pane counts as the agent it is, in its state
   operator [--json]
                 the machine the user sits at (and the name it reaches this one by)
+  archive [ls | export]
+                ended sessions older than the ten in `last`, by hive, on every machine
   cp SOURCE… DEST
                 copy files like scp: machine:path, or @pane (@3, @api/claude,
                 @server:api/claude) for that pane's directory, @pane::sub/path
@@ -309,6 +311,7 @@ fn main() -> Result<()> {
         ["cp", ..] => cli::cp(&args[1..]),
         ["explain", ..] => cli::explain(&args[1..]),
         ["operator", ..] => cli::operator(&args[1..]),
+        ["archive", ..] => cli::archive(&args[1..]),
         ["layout", ..] => cli::layout(&args[1..]),
         ["mcp"] => mcp::serve(),
         ["run", ..] => cli::run(&args[1..]),
