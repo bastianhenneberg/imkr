@@ -82,7 +82,10 @@ Projekt-Slug: `imkr`
   Scratchpad-bin, das die Limit-Meldung druckt, wenn `CLAUDE_CONFIG_DIR` fehlt.
 - Verbrauch: `src/usage.rs` (`report`: je Konto einmal je Abo (`Identity::key`), Claude per curl
   `api.anthropic.com/api/oauth/usage` mit dem Token aus `.credentials.json` auf stdin (`-H @-`, nie
-  argv), nie selbst erneuern (abgelaufen → Hinweis); Codex aus `rate_limits` der neuesten
+  argv), nie selbst erneuern: alter Schlüssel → `renew_key` lässt Claude Code ein Wort mit Haiku
+  antworten (`--no-session-persistence --tools "" --strict-mcp-config --setting-sources ""`), nur
+  wenn `claude_runs_in` nichts findet (Chrome-Helfer `--chrome-native-host` zählt nicht);
+  `claude auth status` erneuert NICHT; Codex aus `rate_limits` der neuesten
   `sessions/**/*.jsonl`; Tokens je Agent aus den geteilten Transkripten, Claude je `message.id`
   einmal, ohne Cache-Lesen). CLI `imkr account usage [--json] [--wait]`, `Ctrl+B s u` =
   `Command::Usage` → Popup mit `--wait`.

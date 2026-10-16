@@ -110,7 +110,7 @@ and red from 95 %, with when each resets; `imkr account usage` prints the same, 
 Claude
   henneberg (standard)  Max 20x   5h          █░░░░░░░░░  14 %  resets 21:00
                                   week        ████░░░░░░  40 %  resets 22.10.
-  department            Max 20x   not used since 15.10.: numbers once Claude runs in it again
+  department            Max 20x   5h          ░░░░░░░░░░   0 %  resets 21:59
 Codex
   henneberg (standard)            week        ░░░░░░░░░░   0 %  resets 21.10.
 Tokens
@@ -119,8 +119,9 @@ Tokens
 
 Claude's numbers are those of Claude Code's `/usage`, asked of Anthropic with the account's
 login. Its access key lasts some hours and Claude Code renews it with the login (which lasts
-weeks) when it runs in the account; imkr never renews it itself, two renewing at once could log
-the account out. So an account not used for a while shows its plan and when it was last used. Codex notes its limits in its own logs
+weeks) when it runs. For an account not used for a while, the overview has Claude Code renew it:
+one word from Haiku, without history, tools or MCP servers, a tiny request. imkr never renews it
+itself, as that replaces the login, and does not while a Claude runs in that account. Codex notes its limits in its own logs
 with every answer: they are as of its last run. Tokens count per agent, not per account, as all
 accounts share the conversations; cache reads are left out. A local Ollama has no limit.
 
