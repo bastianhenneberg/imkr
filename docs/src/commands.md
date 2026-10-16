@@ -44,6 +44,7 @@ Commands:
           | login NAME | rm NAME | sync | env NAME | run NAME -- CMD
           | use NAME (new shells here) | switch NAME [--pane N] (agent now)
           | default [NAME] (new shells everywhere here start in it)
+          | usage [--json] (each account's limits and the tokens used)
                 several Claude Code and Codex accounts on this machine,
                 subscriptions or providers (OpenRouter, Ollama)
   revive NAME   bring back a session that stopped (reboot, crash) or was

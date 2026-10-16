@@ -142,6 +142,7 @@ const COMMANDS: &[Command] = &[
             sub("use", Accounts),
             sub("switch", Accounts),
             sub("default", Accounts),
+            sub("usage", Nothing),
         ],
     ),
     cmd(

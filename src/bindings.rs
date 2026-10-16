@@ -42,6 +42,8 @@ pub enum Command {
     SaveHive,
     /// The archive of ended sessions, by hive (#506).
     Archive,
+    /// Each account's limits and the tokens used, in a popup.
+    Usage,
     /// What the agents did while no terminal was attached.
     Recap,
     PickPane,
@@ -940,6 +942,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "save all as hive…",
         group: Group::Sessions,
         keys: &[(Key::plain(Char('v')), C::SaveHive)],
+    },
+    Binding {
+        label: "u",
+        description: "accounts: usage and limits",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('u')), C::Usage)],
     },
     Binding {
         label: "l",

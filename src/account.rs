@@ -569,7 +569,8 @@ pub fn provider_name(url: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub shown: String,
-    key: String,
+    /// The login and its organisation: alike for one subscription.
+    pub key: String,
 }
 
 /// Decodes unpadded base64url, as in the parts of a JSON web token.

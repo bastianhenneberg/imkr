@@ -4392,6 +4392,13 @@ impl App {
                 self.show_archive = true;
                 self.mode = Mode::Sessions(0);
             }
+            Command::Usage => {
+                let command = ["sh", "-c", "imkr account usage --wait"].map(str::to_owned);
+                let title = Some("Accounts: usage and limits".to_owned());
+                if let Err(e) = self.toggle_popup("usage", title, &command, None) {
+                    self.flash = Some(format!("no usage: {e:#}"));
+                }
+            }
             Command::Hives => self.mode = Mode::Hives(0),
             Command::Accounts => self.mode = Mode::Accounts(0),
             Command::Jump => {

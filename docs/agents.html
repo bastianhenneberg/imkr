@@ -276,6 +276,23 @@ and not used up, round. Accounts and keys live in <code>~/.local/state/imkr/acco
 is logged in as, and an account logged in to a subscription that has one already is removed again
 right after <code>add</code> (<code>login</code> warns). One used up counts for every account of the same subscription,
 so falling back never lands in the same limit.</p>
+<h4 id="how-much-each-account-has-used">How much each account has used</h4>
+<p><code>Ctrl+B s u</code> shows every account with its plan and limit windows, a bar each, yellow from 80 %
+and red from 95 %, with when each resets; <code>imkr account usage</code> prints the same, <code>--json</code> too.</p>
+<pre><code class="language-text">Claude
+  henneberg (standard)  Max 20x   5h          █░░░░░░░░░  14 %  resets 21:00
+                                  week        ████░░░░░░  40 %  resets 22.10.
+  department            Max 20x   login expired: start claude once in this account
+Codex
+  henneberg (standard)            week        ░░░░░░░░░░   0 %  resets 21.10.
+Tokens
+  Claude   5h    1.8 M   7 days   21.7 M
+</code></pre>
+<p>Claude's numbers are those of Claude Code's <code>/usage</code>, asked of Anthropic with the account's
+login; imkr never refreshes a login itself, that would replace the keys Claude Code holds, so an
+expired one says to start Claude in that account once. Codex notes its limits in its own logs
+with every answer: they are as of its last run. Tokens count per agent, not per account, as all
+accounts share the conversations; cache reads are left out. A local Ollama has no limit.</p>
 <h3 id="agents-talking-to-each-other">Agents talking to each other</h3>
 <p>Agents in imkr can find, read and message each other, on this machine and on the others:</p>
 <pre><code class="language-bash">imkr agents --all                                  # every agent with its address

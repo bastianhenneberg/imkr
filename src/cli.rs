@@ -2049,7 +2049,33 @@ pub fn account(args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: imkr account [ls] | add claude|codex NAME [--url URL] [--model M] \
                          [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
                          | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] \
-                         | default [NAME]";
+                         | default [NAME] | usage [--json]";
+    // How much each account used of its plan; `--wait` keeps it on screen
+    // in the popup of Ctrl+B s u.
+    if args.first().is_some_and(|a| a == "usage") {
+        let mut rest = args[1..].to_vec();
+        let json = take_flag(&mut rest, "--json");
+        let wait = take_flag(&mut rest, "--wait");
+        if wait {
+            println!("asking the accounts …");
+        }
+        let report = crate::usage::report()?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            if wait {
+                print!("\x1b[1A\x1b[2K");
+            }
+            let colour = std::io::IsTerminal::is_terminal(&std::io::stdout());
+            print!("{}", crate::usage::print(&report, colour));
+        }
+        if wait {
+            print!("\nEnter closes. ");
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let _ = std::io::stdin().read_line(&mut String::new());
+        }
+        return Ok(());
+    }
     use crate::account::{Account, Store, TOOLS};
     let store = Store::here()?;
     // `NAME` or `tool:NAME`, the only one of that name if no tool is said.
