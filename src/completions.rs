@@ -271,6 +271,12 @@ const COMMANDS: &[Command] = &[
         &["--pane", "--json"],
         Nothing,
     ),
+    cmd(
+        "operator",
+        "the machine the user sits at",
+        &["--json"],
+        Nothing,
+    ),
     cmd("cp", "copy files, also to and from panes", &[], Files),
     cmd(
         "fleet",

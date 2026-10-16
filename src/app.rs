@@ -2190,6 +2190,20 @@ impl App {
                     .collect();
                 serde_json::to_value(hosts).map_err(|e| e.to_string())
             }
+            Request::Operator => {
+                if self.clients.is_empty() {
+                    return Err("nobody is attached to this session".into());
+                }
+                // A client on this machine tells no origin: the user sits here.
+                let origin = self.newest_origin();
+                Ok(serde_json::json!({
+                    "machine": origin
+                        .as_ref()
+                        .map_or_else(protocol::machine_name, |o| o.host.clone()),
+                    "via": origin.as_ref().and_then(|o| o.via.clone()),
+                    "here": origin.is_none(),
+                }))
+            }
             Request::OpenSessions => {
                 self.open_sessions();
                 Ok(serde_json::json!({}))

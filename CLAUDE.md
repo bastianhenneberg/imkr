@@ -415,6 +415,10 @@ Projekt-Slug: `imkr`
   (Enter auf gewählter Notiz → `mailbox`, `y` OSC 52, `e` zurück in die Zeile, `x` weg),
   `draw_notes` je Einstellung `notes_at` (`NotesAt`: rechts volle Höhe, Mitte, unten; Höhe nach
   Umbruch), Rahmen `✎N` (offene). CLI `imkr note` → `Request::Note`.
+- Wo der User sitzt: `Request::Operator` (Client nötig; `newest_origin` → `machine`/`via`, ohne
+  Origin = lokaler Client → `here`), CLI `imkr operator [--json]` fragt die eigene Session, dann
+  die übrigen des Rechners. Für Agents, die etwas auf dem Bildschirm des Users zeigen wollen
+  (`agent-tunnel` aus chezmoi/AI-Brain-Harness).
 - Review `Ctrl+B v`: `src/review.rs` (`diff` liest nur: `git diff HEAD` plus `--no-index` je neuer
   Datei, nie `add -N`; `parse` nummeriert je Datei; `Note` hängt an Datei/Nummer/Code, nicht am
   Index; `prompt`). `App::review` (`Review`), `open_review`, `review_key`, `draw_review`, Notiz per

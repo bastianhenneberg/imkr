@@ -399,6 +399,10 @@ pub enum Request {
     /// Open the session list, e.g. when `imkr` starts and the settings of
     /// the machine it runs on say so.
     OpenSessions,
+    /// Where the user sits who is attached to this session: `machine`,
+    /// `via` (the name that machine reaches this one by, if it is another)
+    /// and `here`. An error while nobody is attached.
+    Operator,
     /// The session's layout as `persist` saves it, for save files.
     Snapshot,
     /// Replace the server with the binary at `exe`, keeping the session,

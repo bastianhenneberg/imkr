@@ -1168,6 +1168,33 @@ pub fn layout(args: &[String]) -> Result<()> {
 
 /// `imkr explain [--pane N] [--json]`: why a pane counts as the agent it
 /// is, in its state.
+/// `imkr operator [--json]`: the machine the user sits at, as the client
+/// attached to this session tells, else to another session here. For
+/// agents that want to show something on the user's screen, e.g. a browser.
+pub fn operator(args: &[String]) -> Result<()> {
+    let mut rest = args.to_vec();
+    let json = take_flag(&mut rest, "--json");
+    if let Some(extra) = rest.first() {
+        bail!("unknown argument {extra}, see `imkr operator --json`");
+    }
+    let own = client::request(Request::Operator);
+    let found = own.or_else(|first| {
+        crate::protocol::sessions()
+            .iter()
+            .filter_map(|name| crate::protocol::session_socket(name).ok())
+            .find_map(|path| client::request_at(&path, Request::Operator).ok())
+            .ok_or(first)
+    });
+    let found =
+        found.map_err(|_| anyhow!("nobody is attached to an imkr session on this machine"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&found)?);
+    } else {
+        println!("{}", found["machine"].as_str().unwrap_or_default());
+    }
+    Ok(())
+}
+
 pub fn explain(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let json = take_flag(&mut rest, "--json");

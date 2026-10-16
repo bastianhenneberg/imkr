@@ -141,6 +141,8 @@ For scripts and agents:
                 the active window's, or give it one; its programs run on
   explain [--pane N] [--json]
                 why a pane counts as the agent it is, in its state
+  operator [--json]
+                the machine the user sits at (and the name it reaches this one by)
   cp SOURCE… DEST
                 copy files like scp: machine:path, or @pane (@3, @api/claude,
                 @server:api/claude) for that pane's directory, @pane::sub/path
@@ -306,6 +308,7 @@ fn main() -> Result<()> {
         ["fleet", ..] => cli::fleet(&args[1..]),
         ["cp", ..] => cli::cp(&args[1..]),
         ["explain", ..] => cli::explain(&args[1..]),
+        ["operator", ..] => cli::operator(&args[1..]),
         ["layout", ..] => cli::layout(&args[1..]),
         ["mcp"] => mcp::serve(),
         ["run", ..] => cli::run(&args[1..]),

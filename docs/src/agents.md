@@ -194,6 +194,21 @@ imkr run --pane 3 -- cargo test   # types it in, waits, prints the output, exits
 imkr wait --pane 3                # waits for the command running there (--timeout S)
 ```
 
+### Where the user sits
+
+An agent on another machine sometimes wants to show you something on your own screen, a browser
+for example. `imkr operator` says which machine you sit at, as the terminal attached to the
+session tells it:
+
+```bash
+imkr operator          # laptop
+imkr operator --json   # {"machine": "laptop", "via": "codingmachine", "here": false}
+```
+
+`via` is the name your machine reaches this one by, e.g. for a tunnel back. If nobody is attached
+to the agent's session, it asks the other sessions on the machine; with nobody anywhere it fails.
+AI Brain's `agent-tunnel` uses it to open its browser where you are.
+
 ### Copying files
 
 `imkr cp` copies like scp, and also to and from the directory a pane works in, here or in
