@@ -163,7 +163,14 @@ fn claude_limits(dir: &Path, now: u64) -> Result<(Option<String>, Vec<Window>)> 
     );
     let expires = oauth["expiresAt"].as_u64().unwrap_or(0) / 1000;
     if expires <= now {
-        bail!("login expired: start claude once in this account");
+        // Only the access key of some hours is old; the login lasts weeks
+        // and Claude Code fetches a new key with it on its next start here.
+        let login = oauth["refreshTokenExpiresAt"].as_u64().unwrap_or(0) / 1000;
+        if login > 0 && login <= now {
+            bail!("logged out: imkr account login");
+        }
+        let since = crate::protocol::chrono_like(expires).unwrap_or_default();
+        bail!("not used since {since}: numbers once Claude runs in it again");
     }
     let token = oauth["accessToken"].as_str().context("no access token")?;
     // The key goes on stdin, never on the command line where ps shows it.
