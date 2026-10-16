@@ -157,6 +157,37 @@ pub fn urgency(state: AgentState) -> u8 {
     }
 }
 
+/// At most this many agent dots after a session, then `+N`.
+const MAX_DOTS: usize = 6;
+
+/// One dot per agent in its state's colour, in `counts`' order (waiting
+/// first): one agent done must not hide another still working, and the dots
+/// say how many work. Quiet ones are dim, past `MAX_DOTS` a count. The
+/// sidebar and `Ctrl+B S` both show them.
+pub fn agent_dots(counts: &[(AgentState, usize)]) -> Vec<(Style, String)> {
+    let dim = Style::new().fg(theme::current().muted);
+    let mut states: Vec<AgentState> = counts
+        .iter()
+        .flat_map(|&(state, n)| std::iter::repeat_n(state, n))
+        .collect();
+    let more = states.len().saturating_sub(MAX_DOTS);
+    states.truncate(MAX_DOTS);
+    let mut dots: Vec<(Style, String)> = states
+        .into_iter()
+        .map(|state| {
+            let style = match state {
+                AgentState::Idle => dim,
+                state => state_style(state),
+            };
+            (style, "●".to_owned())
+        })
+        .collect();
+    if more > 0 {
+        dots.push((dim, format!("+{more}")));
+    }
+    dots
+}
+
 pub fn state_style(state: AgentState) -> Style {
     let t = theme::current();
     match state {
@@ -272,26 +303,12 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             } else {
                 "  "
             };
-            // Every state with its count, "●1 ✦1": one agent done must not
-            // hide another still working.
-            let parts: Vec<(AgentState, String)> = if session.counts.is_empty() {
-                session
-                    .state
-                    .map(|(state, n)| (state, format!("{}{n}", state.symbol())))
-                    .into_iter()
-                    .collect()
-            } else {
-                session
-                    .counts
-                    .iter()
-                    .map(|&(state, n)| (state, format!("{}{n}", state.symbol())))
-                    .collect()
+            let counts = match (session.counts.is_empty(), session.state) {
+                (true, Some((state, n))) => vec![(state, n.max(1))],
+                _ => session.counts.clone(),
             };
-            let right = parts
-                .iter()
-                .map(|(_, part)| part.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
+            let parts = agent_dots(&counts);
+            let right: String = parts.iter().map(|(_, part)| part.as_str()).collect();
             let left = fit(
                 &format!("{indent}{marker}{}", session.name),
                 width.saturating_sub(right.chars().count() + 1),
@@ -305,11 +322,8 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 Style::new()
             };
             let mut spans = vec![Span::styled(left, style), Span::raw(" ".repeat(pad))];
-            for (i, (state, part)) in parts.into_iter().enumerate() {
-                if i > 0 {
-                    spans.push(Span::raw(" "));
-                }
-                spans.push(Span::styled(part, state_style(state)));
+            for (style, part) in parts {
+                spans.push(Span::styled(part, style));
             }
             let target = (!session.current && !session.offline).then_some(Target::Session(i));
             out.push((Line::from(spans), target));
@@ -935,7 +949,8 @@ mod tests {
         assert!(find("Sessions").is_some());
         // This session is not a target, the other machine's is.
         assert_eq!(find("▸ default").unwrap().1, None);
-        assert!(find("▸ default").unwrap().0.contains("●1 ✦1"));
+        // A dot per agent: one working, one done.
+        assert!(find("▸ default").unwrap().0.ends_with("●●"));
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);

@@ -339,6 +339,9 @@ pub struct MenuItem {
     /// The group it belongs to, e.g. its machine: a heading goes above the
     /// first item of each group. Groups follow each other in the list.
     pub group: Option<String>,
+    /// Coloured marks before the hint, e.g. a dot per agent of a session in
+    /// its state's colour.
+    pub marks: Vec<(ratatui::style::Color, String)>,
 }
 
 /// The quit menu in the middle of `area`, `selected` highlighted.
@@ -373,9 +376,13 @@ pub fn draw_choices(
         .map(|i| i.title.chars().count())
         .max()
         .unwrap_or(0);
+    let marks_width = |i: &MenuItem| {
+        let n: usize = i.marks.iter().map(|(_, m)| m.chars().count()).sum();
+        if n > 0 { n + 1 } else { 0 }
+    };
     let hint_width = items
         .iter()
-        .map(|i| i.hint.chars().count())
+        .map(|i| marks_width(i) + i.hint.chars().count())
         .max()
         .unwrap_or(0);
     let row_width = 3 + GAP + title_width + GAP + hint_width;
@@ -424,8 +431,17 @@ pub fn draw_choices(
                 Style::new().fg(color).add_modifier(Modifier::BOLD),
             ),
             Span::raw(" ".repeat(title_pad)),
-            Span::styled(item.hint.clone(), Style::new().add_modifier(Modifier::DIM)),
         ];
+        for (color, mark) in &item.marks {
+            spans.push(Span::styled(mark.clone(), Style::new().fg(*color)));
+        }
+        if !item.marks.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            item.hint.clone(),
+            Style::new().add_modifier(Modifier::DIM),
+        ));
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         spans.push(Span::raw(" ".repeat(row_width.saturating_sub(used))));
         let mut line = Line::from(spans);
@@ -772,6 +788,7 @@ mod tests {
             apart: false,
             color: None,
             group: None,
+            marks: Vec::new(),
         }];
         let keys = [("Enter", "switch"), ("r", "rename"), ("Esc", "cancel")];
         let screen = render(80, 20, |f, a| {

@@ -226,7 +226,8 @@ Projekt-Slug: `imkr`
   (`.archive-taken.json`); `pull_archive` schickt erst `imkr archive drop NAME SAVED_AT` (nur genau
   der Eintrag, nie `forget`: der löschte auch eine dort neu laufende Session gleichen Namens).
 - Session-Zustand: `protocol::SESSION_ORDER` (blocked, working, done, idle) für `urgent()` (Farbe)
-  und `counts()`; Sidebar zeigt alle Zustände mit Zahl je in ihrer Farbe (`SessionRow::counts`).
+  und `counts()`; Sidebar und `Ctrl+B S` zeigen einen Punkt je Agent in seiner Farbe
+  (`sidebar::agent_dots`, `MAX_DOTS`, ruhige grau; im Menü über `MenuItem::marks`).
   Vorher stand done vor working: Session grün, obwohl ein Agent noch arbeitete. Test: zwei Welten mit Schein-ssh, Datei `down`.
   Aktiver Hive (#507): `persist::active_hive`/`set_active_hive` (`saves/.active`, je Rechner, nie
   `last`), gesetzt von `switch_hive` und Speichern unter einem Namen, folgt `rename`/`delete`;

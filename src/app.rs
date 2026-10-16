@@ -1981,6 +1981,7 @@ impl App {
                     apart: false,
                     color: state.and_then(|s| sidebar::state_style(s).fg),
                     group: None,
+                    marks: Vec::new(),
                 }
             })
             .collect();
@@ -2670,6 +2671,7 @@ impl App {
                 apart: false,
                 color: None,
                 group,
+                marks: Vec::new(),
             })
             .collect();
         (names, items)
@@ -5664,25 +5666,27 @@ impl App {
                         apart: false,
                         color: Some(theme::current().muted),
                         group: None,
+                        marks: Vec::new(),
                     };
                     return (place, item);
                 }
-                // What its agents do, as the sidebar marks them: "◆1 ●2".
+                // What its agents do, as the sidebar marks them: a dot per
+                // agent in its state's colour.
                 let info = protocol::SessionInfo {
                     agents,
                     ..Default::default()
                 };
                 let urgent = info.urgent().map(|(state, _)| state);
-                let counts: Vec<String> = info
-                    .counts()
-                    .into_iter()
-                    .map(|(state, n)| format!("{}{n}", state.symbol()))
-                    .collect();
-                // How long its agents have been quiet: "✓1 2h ago".
-                let mut counts = counts.join(" ");
+                let marks: Vec<(ratatui::style::Color, String)> =
+                    sidebar::agent_dots(&info.counts())
+                        .into_iter()
+                        .filter_map(|(style, dot)| Some((style.fg?, dot)))
+                        .collect();
+                // How long its agents have been quiet: "2h ago".
+                let mut counts = String::new();
                 if let Some(quiet) = quiet.filter(|&q| q >= 60) {
                     let ago = sidebar::age(Duration::from_secs(quiet));
-                    counts = format!("{counts} {ago} ago");
+                    counts = format!("{ago} ago");
                 }
                 let hint = match (counts.is_empty(), hint.is_empty()) {
                     (true, _) => hint,
@@ -5704,6 +5708,7 @@ impl App {
                     apart: false,
                     color: urgent.and_then(|state| sidebar::state_style(state).fg),
                     group: None,
+                    marks,
                 };
                 (place, item)
             })
@@ -5761,6 +5766,7 @@ impl App {
                 apart: true,
                 color: Some(theme::current().muted),
                 group: None,
+                marks: Vec::new(),
             });
         }
         if archive_view {
@@ -5773,6 +5779,7 @@ impl App {
                     apart: true,
                     color: Some(theme::current().muted),
                     group: None,
+                    marks: Vec::new(),
                 });
             }
             items.push(menu::MenuItem {
@@ -5783,6 +5790,7 @@ impl App {
                 apart: true,
                 color: Some(theme::current().muted),
                 group: None,
+                marks: Vec::new(),
             });
             return (places, items);
         }
@@ -5794,6 +5802,7 @@ impl App {
             apart: true,
             color: Some(theme::current().muted),
             group: None,
+            marks: Vec::new(),
         });
         items.push(menu::MenuItem {
             key: 'n',
@@ -5803,6 +5812,7 @@ impl App {
             apart: true,
             color: None,
             group: None,
+            marks: Vec::new(),
         });
         (places, items)
     }
@@ -5900,6 +5910,7 @@ impl App {
                     apart: false,
                     color: None,
                     group: (i >= first_suggested).then(|| "Tailscale".to_owned()),
+                    marks: Vec::new(),
                 }
             })
             .collect();
@@ -5978,6 +5989,7 @@ impl App {
                 apart: false,
                 color: None,
                 group: None,
+                marks: Vec::new(),
             })
             .collect();
         (templates, items)
@@ -6462,6 +6474,7 @@ impl App {
                     apart: false,
                     color: None,
                     group: None,
+                    marks: Vec::new(),
                 }
             })
             .collect()
@@ -6596,6 +6609,7 @@ impl App {
                     apart: false,
                     color: sidebar::state_style(state).fg,
                     group,
+                    marks: Vec::new(),
                 };
                 (state, at, item)
             })
@@ -6619,6 +6633,7 @@ impl App {
                     apart: false,
                     color: Some(theme::current().accent),
                     group: Some("Messages from contacts".into()),
+                    marks: Vec::new(),
                 };
                 (
                     (InboxAt::Message(m.id), m.text, InboxId::Message(m.id)),
@@ -6961,6 +6976,7 @@ impl App {
                     apart: false,
                     color: urgent.and_then(|state| sidebar::state_style(state).fg),
                     group,
+                    marks: Vec::new(),
                 };
                 (spot, item)
             })
@@ -7021,6 +7037,7 @@ impl App {
                     apart: false,
                     color: state.and_then(|state| sidebar::state_style(state).fg),
                     group,
+                    marks: Vec::new(),
                 };
                 (spot, item)
             })
@@ -7134,6 +7151,7 @@ impl App {
                 apart: false,
                 color: None,
                 group: None,
+                marks: Vec::new(),
             })
             .collect();
         items.push(menu::MenuItem {
@@ -7144,6 +7162,7 @@ impl App {
             apart: true,
             color: None,
             group: None,
+            marks: Vec::new(),
         });
         (names, items)
     }
@@ -7234,6 +7253,7 @@ impl App {
                     apart: false,
                     color: None,
                     group: None,
+                    marks: Vec::new(),
                 }
             })
             .collect();
@@ -9907,6 +9927,7 @@ impl App {
                         apart: false,
                         color: None,
                         group: None,
+                        marks: Vec::new(),
                     });
                 }
                 self.draw_list(
@@ -9951,6 +9972,7 @@ impl App {
                         apart: false,
                         color: None,
                         group: None,
+                        marks: Vec::new(),
                     });
                 }
                 self.draw_list(
@@ -10013,6 +10035,7 @@ impl App {
                         apart: false,
                         color: None,
                         group: None,
+                        marks: Vec::new(),
                     });
                 }
                 self.draw_list(
@@ -10155,6 +10178,7 @@ impl App {
                     apart: false,
                     color: None,
                     group: Some((*tool).to_owned()),
+                    marks: Vec::new(),
                 });
                 accounts.push(account);
             }
@@ -10332,6 +10356,7 @@ impl App {
                 apart: false,
                 color: None,
                 group: None,
+                marks: Vec::new(),
             });
         }
         // Once the agent selected left the list, the one in its place, but
@@ -10450,6 +10475,7 @@ impl App {
                 apart: false,
                 color: None,
                 group: None,
+                marks: Vec::new(),
             });
         }
         let title = format!("{title}· /{query}▏ ");
@@ -10468,6 +10494,7 @@ impl App {
                     apart: false,
                     color: None,
                     group: None,
+                    marks: Vec::new(),
                 },
                 MenuEntry::ClosePane => menu::MenuItem {
                     key,
@@ -10477,6 +10504,7 @@ impl App {
                     apart: false,
                     color: None,
                     group: None,
+                    marks: Vec::new(),
                 },
                 MenuEntry::EndSession => menu::MenuItem {
                     key,
@@ -10489,6 +10517,7 @@ impl App {
                     apart: false,
                     color: None,
                     group: None,
+                    marks: Vec::new(),
                 },
             })
             .collect()
@@ -11971,6 +12000,7 @@ mod tests {
             apart: false,
             color: None,
             group: None,
+            marks: Vec::new(),
         };
         assert!(list_matches(&item, ""));
         assert!(list_matches(&item, "BRA"));
