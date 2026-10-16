@@ -4373,6 +4373,10 @@ impl App {
                 self.mode = Mode::NewSessionWhere(0);
             }
             Command::Sessions => self.open_sessions(),
+            Command::Archive => {
+                self.show_archive = true;
+                self.mode = Mode::Sessions(0);
+            }
             Command::Hives => self.mode = Mode::Hives(0),
             Command::Accounts => self.mode = Mode::Accounts(0),
             Command::Jump => {
@@ -5567,7 +5571,12 @@ impl App {
             })
             .map(|(place, ..)| place.clone())
             .collect();
-        let hidden = if self.hide_old { old.len() } else { 0 };
+        let hidden =
+            if self.hide_old && !(self.show_archive && matches!(self.mode, Mode::Sessions(_))) {
+                old.len()
+            } else {
+                0
+            };
         if self.hide_old {
             entries.retain(|(place, ..)| !old.contains(place));
         }
@@ -5579,7 +5588,10 @@ impl App {
         let active = persist::active_hive();
         archived.sort_by_key(|a| (a.hive != active, a.hive.is_none(), a.hive.clone()));
         let mut archive_of: BTreeMap<String, String> = BTreeMap::new();
-        if self.show_archive {
+        // The archive is a view of its own, only in the session list.
+        let archive_view = self.show_archive && matches!(self.mode, Mode::Sessions(_));
+        if archive_view {
+            entries.clear();
             for entry in archived {
                 if archive_of.contains_key(&entry.name)
                     || entries
@@ -5729,21 +5741,38 @@ impl App {
                 group: None,
             });
         }
-        if archived_count > 0 {
+        if archive_view {
+            if places.is_empty() {
+                items.push(menu::MenuItem {
+                    key: ' ',
+                    title: "the archive is empty".into(),
+                    hint: "sessions come here once more than ten have ended".into(),
+                    danger: false,
+                    apart: true,
+                    color: Some(theme::current().muted),
+                    group: None,
+                });
+            }
             items.push(menu::MenuItem {
                 key: 'a',
-                title: if self.show_archive {
-                    "hide the archive".into()
-                } else {
-                    format!("archive ({archived_count})")
-                },
-                hint: "ended before the ten in `last`, by hive".into(),
+                title: "back to the sessions".into(),
+                hint: String::new(),
                 danger: false,
                 apart: true,
                 color: Some(theme::current().muted),
                 group: None,
             });
+            return (places, items);
         }
+        items.push(menu::MenuItem {
+            key: 'a',
+            title: format!("archive ({archived_count})"),
+            hint: "ended before the ten in `last`, by hive".into(),
+            danger: false,
+            apart: true,
+            color: Some(theme::current().muted),
+            group: None,
+        });
         items.push(menu::MenuItem {
             key: 'n',
             title: "new session…".into(),
@@ -7205,6 +7234,7 @@ impl App {
         let count = items.iter().filter(|item| !item.apart).count().max(1);
         let pick = match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
+                self.show_archive = false;
                 self.mode = Mode::Normal;
                 return;
             }
@@ -7274,7 +7304,12 @@ impl App {
             },
             _ => return,
         };
+        // In the archive only its entries are picked, nothing starts anew.
+        if self.show_archive && places.get(pick).is_none() {
+            return;
+        }
         self.mode = Mode::Normal;
+        self.show_archive = false;
         match places.get(pick) {
             Some(place) if place.host.is_none() && place.name == protocol::session_name() => {}
             Some(place) => self.go_to(place),
@@ -7565,6 +7600,7 @@ impl App {
 
     /// Opens the session list with this session selected.
     fn open_sessions(&mut self) {
+        self.show_archive = false;
         let current = protocol::session_name();
         let selected = self
             .session_items()
@@ -9672,10 +9708,15 @@ impl App {
             Mode::Picker => self.draw_picker(frame, body),
             Mode::Sessions(selected) => {
                 let (_, items) = self.session_items();
+                let title = if self.show_archive {
+                    " ⬢ Archive "
+                } else {
+                    " ⬢ Sessions "
+                };
                 self.draw_list(
                     frame,
                     body,
-                    " ⬢ Sessions ",
+                    title,
                     &items,
                     selected,
                     bindings::SESSION_LIST_KEYS,

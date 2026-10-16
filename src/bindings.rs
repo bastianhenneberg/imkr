@@ -40,6 +40,8 @@ pub enum Command {
     EndSession,
     /// Save every running session as a hive, asking for its name.
     SaveHive,
+    /// The archive of ended sessions, by hive (#506).
+    Archive,
     /// What the agents did while no terminal was attached.
     Recap,
     PickPane,
@@ -929,9 +931,15 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         label: "a",
+        description: "archive of ended sessions",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('a')), C::Archive)],
+    },
+    Binding {
+        label: "v",
         description: "save all as hive…",
         group: Group::Sessions,
-        keys: &[(Key::plain(Char('a')), C::SaveHive)],
+        keys: &[(Key::plain(Char('v')), C::SaveHive)],
     },
     Binding {
         label: "l",
@@ -966,7 +974,7 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("s", "save all as hive"),
     ("h", "hives"),
     ("o", "hide/show old"),
-    ("a", "show/hide the archive"),
+    ("a", "archive / back"),
     ("Esc", "cancel"),
 ];
 
@@ -1380,8 +1388,13 @@ mod tests {
             lookup(Menu::Session, event(Char('x'), none)),
             Some(C::EndSession)
         );
+        // `a` is the archive, as in the session list.
         assert_eq!(
             lookup(Menu::Session, event(Char('a'), none)),
+            Some(C::Archive)
+        );
+        assert_eq!(
+            lookup(Menu::Session, event(Char('v'), none)),
             Some(C::SaveHive)
         );
         assert!(reference().contains("save new") && reference().contains("or key switch"));

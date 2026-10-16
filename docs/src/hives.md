@@ -18,8 +18,9 @@ its layout into the hive `last`, so bringing `last` back reopens everything that
 session as its own server again. Sessions already running are left alone, and a running
 session is marked with ● in the list.
 `last` keeps the ten sessions ended most recently. Older ones go into the **archive**, never
-away, each filed under the hive it belonged to: `a` in `Ctrl+B S` lists it, the active hive's
-first, Enter brings one back, `x` forgets it. Typing an archived name as a new session brings it
+away, each filed under the hive it belonged to. The archive has a view of its own: `Ctrl+B s a`,
+or `a` in `Ctrl+B S` (`a` again goes back), the active hive's first, Enter brings one back, `x`
+forgets it. It holds this machine's sessions, as `last` does. Typing an archived name as a new session brings it
 back too. Sessions stopped by a crash or a reboot are not in `last` and always come back.
 
 ```bash
