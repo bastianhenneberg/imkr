@@ -8751,6 +8751,7 @@ impl App {
     /// Omarchy, remembers which Omarchy theme that was.
     fn apply_theme(&mut self) {
         agent::configure(&self.config.extra_agents, &self.config.question_phrases);
+        sidebar::set_nerd_font(self.config.nerd_font);
         crate::pane::set_tmux_shim(if self.config.tmux_shim {
             crate::tmux::shim_dir().ok()
         } else {

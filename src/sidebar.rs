@@ -154,12 +154,20 @@ pub fn urgency(state: AgentState) -> u8 {
     }
 }
 
+/// Whether the terminal's font is a Nerd Font, see `Config::nerd_font`.
+static NERD_FONT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_nerd_font(on: bool) {
+    NERD_FONT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A dot per agent in its state's colour with the number of its window
 /// inside, waiting first: `❶ ❷` is window 1 working and window 2 waiting,
 /// two dots with one number are two agents in that window. Quiet ones are
 /// dim; past window 10, or without a known window, the number follows a
 /// plain dot. The sidebar and `Ctrl+B S` both show them.
 pub fn agent_dots(dots: &[(AgentState, Option<u8>)]) -> Vec<(Style, String)> {
+    let nerd = NERD_FONT.load(std::sync::atomic::Ordering::Relaxed);
     let dim = Style::new().fg(theme::current().muted);
     dots.iter()
         .enumerate()
@@ -168,9 +176,16 @@ pub fn agent_dots(dots: &[(AgentState, Option<u8>)]) -> Vec<(Style, String)> {
                 AgentState::Idle => dim,
                 state => state_style(state),
             };
-            // ❶ to ❿: dingbat negative circled digits.
             let dot = match window {
-                Some(n @ 1..=10) => char::from_u32(0x2775 + u32::from(n)).map(String::from),
+                // Nerd Font `md-numeric_N_circle`, drawn round for one cell;
+                // each is followed by its outline, hence two apart.
+                Some(n @ 1..=9) if nerd => {
+                    char::from_u32(0xF0CA0 + 2 * (u32::from(n) - 1)).map(String::from)
+                }
+                // ❶ to ❿: dingbat negative circled digits.
+                Some(n @ 1..=10) if !nerd => {
+                    char::from_u32(0x2775 + u32::from(n)).map(String::from)
+                }
                 _ => None,
             };
             let dot = dot.unwrap_or_else(|| match window {
@@ -947,6 +962,14 @@ mod tests {
         ];
         let dots: Vec<String> = agent_dots(&dots).into_iter().map(|(_, d)| d).collect();
         assert_eq!(dots, ["❸", " ❸", " ●12", " ●"]);
+        // With a Nerd Font, round circles: 1 is U+F0CA0, 3 two each later.
+        set_nerd_font(true);
+        let round: Vec<String> = agent_dots(&[(AgentState::Working, Some(3))])
+            .into_iter()
+            .map(|(_, d)| d)
+            .collect();
+        set_nerd_font(false);
+        assert_eq!(round, ["\u{F0CA4}"]);
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);

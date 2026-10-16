@@ -276,6 +276,9 @@ pub struct Config {
     pub session_banner_at: BannerAt,
     /// Where a pane's notepad shows: right, middle or bottom.
     pub notes_at: NotesAt,
+    /// The terminal's font is a Nerd Font: agent dots use its round
+    /// numbered circles instead of ❶, which other fonts draw as an oval.
+    pub nerd_font: bool,
     /// Keeps `imkr web` running, the sessions in a phone's browser.
     pub web: bool,
     /// Where `imkr web` listens, e.g. `100.97.56.232:4657`; without it on
@@ -467,6 +470,7 @@ impl Default for Config {
             session_banner: true,
             session_banner_at: BannerAt::Middle,
             notes_at: NotesAt::Right,
+            nerd_font: false,
             web: false,
             web_listen: None,
             name: None,
@@ -725,6 +729,11 @@ pub const SETTINGS: &[Setting] = &[
             let next = if forward { i + 1 } else { i + ALL.len() - 1 };
             c.notes_at = ALL[next % ALL.len()];
         },
+    },
+    Setting {
+        name: "Nerd Font",
+        value: |c| if c.nerd_font { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.nerd_font = !c.nerd_font,
     },
     Setting {
         name: "Images",
