@@ -378,7 +378,8 @@ pub fn draw_choices(
         .unwrap_or(0);
     let marks_width = |i: &MenuItem| {
         let n: usize = i.marks.iter().map(|(_, m)| m.chars().count()).sum();
-        if n > 0 { n + 1 } else { 0 }
+        let space = i.marks.last().is_some_and(|(_, m)| !m.ends_with(' '));
+        n + usize::from(space)
     };
     let hint_width = items
         .iter()
@@ -435,7 +436,7 @@ pub fn draw_choices(
         for (color, mark) in &item.marks {
             spans.push(Span::styled(mark.clone(), Style::new().fg(*color)));
         }
-        if !item.marks.is_empty() {
+        if item.marks.last().is_some_and(|(_, m)| !m.ends_with(' ')) {
             spans.push(Span::raw(" "));
         }
         spans.push(Span::styled(

@@ -170,8 +170,7 @@ pub fn agent_dots(dots: &[(AgentState, Option<u8>)]) -> Vec<(Style, String)> {
     let nerd = NERD_FONT.load(std::sync::atomic::Ordering::Relaxed);
     let dim = Style::new().fg(theme::current().muted);
     dots.iter()
-        .enumerate()
-        .map(|(i, &(state, window))| {
+        .map(|&(state, window)| {
             let style = match state {
                 AgentState::Idle => dim,
                 state => state_style(state),
@@ -192,7 +191,9 @@ pub fn agent_dots(dots: &[(AgentState, Option<u8>)]) -> Vec<(Style, String)> {
                 Some(n) => format!("●{n}"),
                 None => "●".to_owned(),
             });
-            (style, if i > 0 { format!(" {dot}") } else { dot })
+            // A space after each, not before: Ghostty draws a Nerd Font
+            // symbol up to two cells wide when a space follows it.
+            (style, format!("{dot} "))
         })
         .collect()
 }
@@ -953,7 +954,7 @@ mod tests {
         // This session is not a target, the other machine's is.
         assert_eq!(find("▸ default").unwrap().1, None);
         // A dot per agent with its window inside: 1 working, 2 done.
-        assert!(find("▸ default").unwrap().0.ends_with("❶ ❷"));
+        assert!(find("▸ default").unwrap().0.ends_with("❶ ❷ "));
         let dots = [
             (AgentState::Working, Some(3)),
             (AgentState::Working, Some(3)),
@@ -961,7 +962,7 @@ mod tests {
             (AgentState::Idle, None),
         ];
         let dots: Vec<String> = agent_dots(&dots).into_iter().map(|(_, d)| d).collect();
-        assert_eq!(dots, ["❸", " ❸", " ●12", " ●"]);
+        assert_eq!(dots, ["❸ ", "❸ ", "●12 ", "● "]);
         // With a Nerd Font, round circles: 1 is U+F0CA0, 3 two each later.
         set_nerd_font(true);
         let round: Vec<String> = agent_dots(&[(AgentState::Working, Some(3))])
@@ -969,7 +970,7 @@ mod tests {
             .map(|(_, d)| d)
             .collect();
         set_nerd_font(false);
-        assert_eq!(round, ["\u{F0CA4}"]);
+        assert_eq!(round, ["\u{F0CA4} "]);
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);

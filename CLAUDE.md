@@ -232,7 +232,9 @@ Projekt-Slug: `imkr`
   Menü über `MenuItem::marks`). Nicht die Anzahl: zweimal ❶ ließ sich nicht auseinanderhalten.
   Einstellung `nerd_font` (`sidebar::set_nerd_font` in `apply_theme`): Nerd-Font-Kreise
   `md-numeric_N_circle` (U+F0CA0 + 2·(n−1), 1–9), sonst ❶ aus einer Ersatzschrift (bei Victor Mono
-  Noto CJK, breit gezeichnet → oval).
+  Noto CJK, breit gezeichnet → oval). Leerstelle HINTER jedem Punkt: Ghostty zeichnet ein
+  Nerd-Font-Symbol bis zu zwei Zellen breit, wenn eine Leerstelle folgt; ohne waren sie
+  unterschiedlich groß (der letzte stieß an den Rand).
   Vorher stand done vor working: Session grün, obwohl ein Agent noch arbeitete. Test: zwei Welten mit Schein-ssh, Datei `down`.
   Aktiver Hive (#507): `persist::active_hive`/`set_active_hive` (`saves/.active`, je Rechner, nie
   `last`), gesetzt von `switch_hive` und Speichern unter einem Namen, folgt `rename`/`delete`;
