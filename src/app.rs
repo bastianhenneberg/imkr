@@ -3454,6 +3454,17 @@ impl App {
     }
 
     /// The number of the workspace that contains pane `id`.
+    /// This session's agent dots: each agent's state and window.
+    fn own_dots(&self) -> Vec<(AgentState, Option<u8>)> {
+        let mut dots: Vec<(AgentState, Option<u8>)> = self
+            .panes
+            .keys()
+            .filter_map(|&id| Some((self.shown_state(id)?, self.workspace_of(id))))
+            .collect();
+        protocol::sort_dots(&mut dots);
+        dots
+    }
+
     fn workspace_of(&self, id: PaneId) -> Option<u8> {
         if self.ws.contains(id) {
             return Some(self.workspace);
@@ -3608,10 +3619,13 @@ impl App {
         let row = |host: Option<String>, info: &protocol::SessionInfo| sidebar::SessionRow {
             current: host.is_none() && info.name == current,
             machine: self.machine_label(host.as_deref()),
+            dots: if host.is_none() && info.name == current {
+                self.own_dots()
+            } else {
+                info.dots()
+            },
             host,
             name: info.name.clone(),
-            state: info.urgent(),
-            counts: info.counts(),
             problem: None,
             offline: false,
             dormant: info.dormant.is_some(),
@@ -3631,8 +3645,7 @@ impl App {
                         machine: self.machine_label(Some(host)),
                         name: String::new(),
                         current: false,
-                        state: None,
-                        counts: Vec::new(),
+                        dots: Vec::new(),
                         problem: Some("no session yet".into()),
                         offline: false,
                         dormant: false,
@@ -3647,8 +3660,7 @@ impl App {
                         machine: self.machine_label(Some(host)),
                         name: String::new(),
                         current: false,
-                        state: None,
-                        counts: Vec::new(),
+                        dots: Vec::new(),
                         problem: Some(short_problem(e)),
                         offline: true,
                         dormant: false,
@@ -3661,8 +3673,7 @@ impl App {
                             machine: self.machine_label(Some(host)),
                             name,
                             current: false,
-                            state: None,
-                            counts: Vec::new(),
+                            dots: Vec::new(),
                             problem: None,
                             offline: true,
                             dormant: false,
@@ -5677,11 +5688,16 @@ impl App {
                     ..Default::default()
                 };
                 let urgent = info.urgent().map(|(state, _)| state);
-                let marks: Vec<(ratatui::style::Color, String)> =
-                    sidebar::agent_dots(&info.counts())
-                        .into_iter()
-                        .filter_map(|(style, dot)| Some((style.fg?, dot)))
-                        .collect();
+                let dots = if place.host.is_none() && place.name == protocol::session_name() {
+                    self.own_dots()
+                } else {
+                    self.session_info(&place)
+                        .map_or_else(|| info.dots(), |found| found.dots())
+                };
+                let marks: Vec<(ratatui::style::Color, String)> = sidebar::agent_dots(&dots)
+                    .into_iter()
+                    .filter_map(|(style, dot)| Some((style.fg?, dot)))
+                    .collect();
                 // How long its agents have been quiet: "2h ago".
                 let mut counts = String::new();
                 if let Some(quiet) = quiet.filter(|&q| q >= 60) {

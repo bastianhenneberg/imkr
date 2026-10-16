@@ -54,11 +54,8 @@ pub struct SessionRow {
     pub machine: Option<String>,
     pub name: String,
     pub current: bool,
-    /// The state that needs attention most among its agents, and how many
-    /// agents there are.
-    pub state: Option<(AgentState, usize)>,
-    /// How many agents are in each state, each shown in its colour.
-    pub counts: Vec<(AgentState, usize)>,
+    /// A dot per agent: its state and its window, see `agent_dots`.
+    pub dots: Vec<(AgentState, Option<u8>)>,
     /// Why the host's sessions are unknown; the row is then about the host.
     pub problem: Option<String>,
     /// Last seen on a machine that is off now: shown, but not to go to.
@@ -157,28 +154,29 @@ pub fn urgency(state: AgentState) -> u8 {
     }
 }
 
-/// A dot per state of a session's agents, in its colour and with the count
-/// inside, in `counts`' order (waiting first): `❷❶` is two working and one
-/// waiting, so one agent done never hides another still working. Quiet ones
-/// are dim; past ten the count follows a plain dot. The sidebar and
-/// `Ctrl+B S` both show them.
-pub fn agent_dots(counts: &[(AgentState, usize)]) -> Vec<(Style, String)> {
+/// A dot per agent in its state's colour with the number of its window
+/// inside, waiting first: `❶ ❷` is window 1 working and window 2 waiting,
+/// two dots with one number are two agents in that window. Quiet ones are
+/// dim; past window 10, or without a known window, the number follows a
+/// plain dot. The sidebar and `Ctrl+B S` both show them.
+pub fn agent_dots(dots: &[(AgentState, Option<u8>)]) -> Vec<(Style, String)> {
     let dim = Style::new().fg(theme::current().muted);
-    counts
-        .iter()
-        .filter(|&&(_, n)| n > 0)
+    dots.iter()
         .enumerate()
-        .map(|(i, &(state, n))| {
+        .map(|(i, &(state, window))| {
             let style = match state {
                 AgentState::Idle => dim,
                 state => state_style(state),
             };
             // ❶ to ❿: dingbat negative circled digits.
-            let dot = match u32::try_from(n) {
-                Ok(n @ 1..=10) => char::from_u32(0x2775 + n).map(String::from),
+            let dot = match window {
+                Some(n @ 1..=10) => char::from_u32(0x2775 + u32::from(n)).map(String::from),
                 _ => None,
             };
-            let dot = dot.unwrap_or_else(|| format!("●{n}"));
+            let dot = dot.unwrap_or_else(|| match window {
+                Some(n) => format!("●{n}"),
+                None => "●".to_owned(),
+            });
             (style, if i > 0 { format!(" {dot}") } else { dot })
         })
         .collect()
@@ -299,11 +297,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             } else {
                 "  "
             };
-            let counts = match (session.counts.is_empty(), session.state) {
-                (true, Some((state, n))) => vec![(state, n.max(1))],
-                _ => session.counts.clone(),
-            };
-            let parts = agent_dots(&counts);
+            let parts = agent_dots(&session.dots);
             let right: String = parts.iter().map(|(_, part)| part.as_str()).collect();
             let left = fit(
                 &format!("{indent}{marker}{}", session.name),
@@ -917,8 +911,7 @@ mod tests {
             machine: host.map(|h| format!("⇄ {h}")),
             name: name.into(),
             current,
-            state: None,
-            counts: Vec::new(),
+            dots: Vec::new(),
             problem: None,
             offline: false,
             dormant: false,
@@ -927,8 +920,7 @@ mod tests {
         data.sessions = vec![
             // One agent done, one still working: both show, working first.
             SessionRow {
-                state: Some((AgentState::Working, 2)),
-                counts: vec![(AgentState::Working, 1), (AgentState::Done, 1)],
+                dots: vec![(AgentState::Working, Some(1)), (AgentState::Done, Some(2))],
                 ..session(None, "default", true)
             },
             session(Some("codingmachine"), "brain", false),
@@ -945,11 +937,16 @@ mod tests {
         assert!(find("Sessions").is_some());
         // This session is not a target, the other machine's is.
         assert_eq!(find("▸ default").unwrap().1, None);
-        // A dot per state with its count inside: one working, one done.
-        assert!(find("▸ default").unwrap().0.ends_with("❶ ❶"));
-        let counts = [(AgentState::Working, 2), (AgentState::Done, 12)];
-        let dots: Vec<String> = agent_dots(&counts).into_iter().map(|(_, d)| d).collect();
-        assert_eq!(dots, ["❷", " ●12"]);
+        // A dot per agent with its window inside: 1 working, 2 done.
+        assert!(find("▸ default").unwrap().0.ends_with("❶ ❷"));
+        let dots = [
+            (AgentState::Working, Some(3)),
+            (AgentState::Working, Some(3)),
+            (AgentState::Done, Some(12)),
+            (AgentState::Idle, None),
+        ];
+        let dots: Vec<String> = agent_dots(&dots).into_iter().map(|(_, d)| d).collect();
+        assert_eq!(dots, ["❸", " ❸", " ●12", " ●"]);
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);

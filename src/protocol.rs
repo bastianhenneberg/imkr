@@ -238,6 +238,25 @@ impl SessionInfo {
             .map(|state| (state, total))
     }
 
+    /// A dot per agent: its state and its window, in `SESSION_ORDER`, then
+    /// by window. From a server too old to list its agents, the states only.
+    pub fn dots(&self) -> Vec<(AgentState, Option<u8>)> {
+        if self.agent_panes.is_empty() {
+            return self
+                .counts()
+                .into_iter()
+                .flat_map(|(state, n)| std::iter::repeat_n((state, None), n))
+                .collect();
+        }
+        let mut dots: Vec<(AgentState, Option<u8>)> = self
+            .agent_panes
+            .iter()
+            .filter_map(|a| Some((AgentState::from_name(&a.state)?, Some(a.workspace))))
+            .collect();
+        sort_dots(&mut dots);
+        dots
+    }
+
     /// How many agents are in each state, in `SESSION_ORDER`, leaving out
     /// the states nobody is in.
     pub fn counts(&self) -> Vec<(AgentState, usize)> {
@@ -249,6 +268,12 @@ impl SessionInfo {
             })
             .collect()
     }
+}
+
+/// Agent dots in `SESSION_ORDER`, then by window.
+pub fn sort_dots(dots: &mut [(AgentState, Option<u8>)]) {
+    let rank = |state: &AgentState| SESSION_ORDER.iter().position(|s| s == state);
+    dots.sort_by_key(|(state, window)| (rank(state), *window));
 }
 
 /// The order a session's agents count in: waiting for you, then still

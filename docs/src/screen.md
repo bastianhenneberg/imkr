@@ -6,9 +6,10 @@ A sidebar on the right, like the rail in TUIOS, lists every window with its proj
 focused pane's directory) and what its agents are doing, every agent across all windows with
 its window, directory and how long it has been in its state, and the git branch of the
 focused pane with its changed files. Agents waiting for you come first. Each session has a dot
-per state of its agents, in that state's colour and with the count inside, the sidebar and
-`Ctrl+B S` alike: red waits for you, yellow works, green is done, grey is quiet. `❶ ❷` is one
-waiting and two still working. Enter or a click on a
+per agent, in its state's colour and with the number of its window inside, the sidebar and
+`Ctrl+B S` alike: red waits for you, yellow works, green is done, grey is quiet. `❶ ❷` is
+window 1 waiting and window 2 working; two dots with one number are two agents in one window.
+Windows without an agent have no dot. Enter or a click on a
 changed file shows its diff in a floating pane, `o` in the sidebar opens it in `$EDITOR`. Click a row to go there. `Ctrl+B b` shows or
 hides it (as in TUIOS), `Ctrl+B e` moves the keyboard into it, the settings put it left or right.
 
