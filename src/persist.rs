@@ -544,6 +544,60 @@ pub fn drop_from_replica(host: &str, name: &str) -> Result<()> {
     store_replica(host, replica.sessions)
 }
 
+/// Takes out of this machine's archive the entry `name` ended at
+/// `saved_at`, and only that one: another machine started it meanwhile.
+/// False when it is not there (any more).
+pub fn drop_archived(name: &str, saved_at: u64) -> Result<bool> {
+    let mut list = archived();
+    let before = list.len();
+    list.retain(|a| !(a.name == name && a.saved_at == saved_at));
+    if list.len() == before {
+        return Ok(false);
+    }
+    write_archive(&list)?;
+    Ok(true)
+}
+
+/// An archived session of another machine started here while that machine
+/// was off; it is to leave that machine's archive once it answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Taken {
+    pub host: String,
+    pub name: String,
+    pub saved_at: u64,
+}
+
+fn taken_path() -> Result<PathBuf> {
+    Ok(saves_dir()?.join(".archive-taken.json"))
+}
+
+/// The archived sessions taken from other machines and not yet dropped there.
+pub fn taken() -> Vec<Taken> {
+    taken_path()
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Remembers that `entry` of `host` was started here.
+pub fn note_taken(host: &str, entry: &Archived) -> Result<()> {
+    let mut list = taken();
+    list.push(Taken {
+        host: host.to_owned(),
+        name: entry.name.clone(),
+        saved_at: entry.saved_at,
+    });
+    write(&taken_path()?, &serde_json::to_string(&list)?)
+}
+
+/// Forgets `done`, dropped on its machine now.
+pub fn clear_taken(done: &Taken) -> Result<()> {
+    let mut list = taken();
+    list.retain(|t| t != done);
+    write(&taken_path()?, &serde_json::to_string(&list)?)
+}
+
 /// Takes session `name` out of the archive: the one of the active hive,
 /// else the newest of that name.
 fn unarchive(name: &str) -> Result<Option<Archived>> {
@@ -1043,11 +1097,21 @@ mod tests {
         let replicas = replicas();
         assert_eq!(replicas.len(), 1);
         assert_eq!(replicas[0].host, "coding.machine");
-        assert_eq!(replicas[0].sessions, [theirs]);
+        assert_eq!(replicas[0].sessions, std::slice::from_ref(&theirs));
         assert!(!self::archived().iter().any(|a| a.name == "api"));
         assert!(!saves().iter().any(|s| s.starts_with('.')), "{:?}", saves());
         drop_from_replica("coding.machine", "api").unwrap();
         assert!(self::replicas()[0].sessions.is_empty());
+        // Started here while that machine was off: noted until it dropped it.
+        note_taken("coding.machine", &theirs).unwrap();
+        assert_eq!(taken().len(), 1);
+        clear_taken(&taken()[0]).unwrap();
+        assert!(taken().is_empty());
+        // Only the very entry leaves an archive, not one ended later.
+        let first = self::archived()[0].clone();
+        assert!(!drop_archived(&first.name, first.saved_at + 1).unwrap());
+        assert!(drop_archived(&first.name, first.saved_at).unwrap());
+        assert!(!self::archived().contains(&first));
         delete_hive("kunde").unwrap();
         assert_eq!(active_hive(), None);
         unsafe { std::env::remove_var("IMKR_STATE") };

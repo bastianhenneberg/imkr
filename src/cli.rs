@@ -1933,6 +1933,14 @@ pub fn archive(args: &[String]) -> Result<()> {
             println!("{}", serde_json::to_string(&crate::persist::archived())?);
             Ok(())
         }
+        // Another machine started this entry while this one was off.
+        [cmd, name, saved_at] if cmd == "drop" => {
+            let saved_at: u64 = saved_at.parse().context("SAVED_AT is seconds since 1970")?;
+            if crate::persist::drop_archived(name, saved_at)? {
+                println!("{name} left the archive");
+            }
+            Ok(())
+        }
         [] | [_] if args.first().is_none_or(|a| a == "ls") => {
             let line = |machine: &str, entry: &crate::persist::Archived| {
                 let when = crate::protocol::chrono_like(entry.saved_at).unwrap_or_default();
@@ -1950,7 +1958,7 @@ pub fn archive(args: &[String]) -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: imkr archive [ls | export]"),
+        _ => bail!("usage: imkr archive [ls | export | drop NAME SAVED_AT]"),
     }
 }
 

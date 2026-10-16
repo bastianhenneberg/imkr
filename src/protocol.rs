@@ -227,21 +227,39 @@ impl SessionInfo {
         self.agent_panes.iter().map(|a| a.since).min()
     }
 
-    /// The state that needs attention most among its agents, and how many
-    /// agents there are.
+    /// The state the session shows, and how many agents there are: one
+    /// waiting for you first, then one still working, then a finished one,
+    /// see `SESSION_ORDER`.
     pub fn urgent(&self) -> Option<(AgentState, usize)> {
         let total = self.agents.values().sum();
-        [
-            AgentState::Blocked,
-            AgentState::Done,
-            AgentState::Working,
-            AgentState::Idle,
-        ]
-        .into_iter()
-        .find(|state| self.agents.get(state.name()).is_some_and(|&n| n > 0))
-        .map(|state| (state, total))
+        SESSION_ORDER
+            .into_iter()
+            .find(|state| self.agents.get(state.name()).is_some_and(|&n| n > 0))
+            .map(|state| (state, total))
+    }
+
+    /// How many agents are in each state, in `SESSION_ORDER`, leaving out
+    /// the states nobody is in.
+    pub fn counts(&self) -> Vec<(AgentState, usize)> {
+        SESSION_ORDER
+            .into_iter()
+            .filter_map(|state| {
+                let n = *self.agents.get(state.name())?;
+                (n > 0).then_some((state, n))
+            })
+            .collect()
     }
 }
+
+/// The order a session's agents count in: waiting for you, then still
+/// working, then finished. A session in which one agent still works is not
+/// finished because another is (it showed green while the other worked).
+pub const SESSION_ORDER: [AgentState; 4] = [
+    AgentState::Blocked,
+    AgentState::Working,
+    AgentState::Done,
+    AgentState::Idle,
+];
 
 /// This machine's name, as `hostname` prints it, or `$IMKR_HOSTNAME`,
 /// which tests use to play several machines on one.
@@ -713,6 +731,21 @@ pub fn sessions() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_session_with_one_agent_working_is_not_finished() {
+        let mut info = SessionInfo::default();
+        info.agents.insert("done".into(), 1);
+        info.agents.insert("working".into(), 1);
+        assert_eq!(info.urgent(), Some((AgentState::Working, 2)));
+        assert_eq!(
+            info.counts(),
+            [(AgentState::Working, 1), (AgentState::Done, 1)]
+        );
+        info.agents.insert("blocked".into(), 1);
+        assert_eq!(info.urgent(), Some((AgentState::Blocked, 3)));
+    }
+
     use super::*;
 
     #[test]

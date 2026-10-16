@@ -254,21 +254,16 @@ fn list_key_char(i: usize) -> char {
     }
 }
 
-/// How many agents are in each state, the urgent first: "◆1 ●2".
+/// How many agents are in each state, in `protocol::SESSION_ORDER`: "◆1 ●2".
 fn state_counts(states: &[AgentState]) -> String {
-    [
-        AgentState::Blocked,
-        AgentState::Done,
-        AgentState::Working,
-        AgentState::Idle,
-    ]
-    .into_iter()
-    .filter_map(|state| {
-        let n = states.iter().filter(|s| **s == state).count();
-        (n > 0).then(|| format!("{}{n}", state.symbol()))
-    })
-    .collect::<Vec<_>>()
-    .join(" ")
+    protocol::SESSION_ORDER
+        .into_iter()
+        .filter_map(|state| {
+            let n = states.iter().filter(|s| **s == state).count();
+            (n > 0).then(|| format!("{}{n}", state.symbol()))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// One thing found by the picker, and where Enter goes.
@@ -3614,6 +3609,7 @@ impl App {
             host,
             name: info.name.clone(),
             state: info.urgent(),
+            counts: info.counts(),
             problem: None,
             offline: false,
             dormant: info.dormant.is_some(),
@@ -3634,6 +3630,7 @@ impl App {
                         name: String::new(),
                         current: false,
                         state: None,
+                        counts: Vec::new(),
                         problem: Some("no session yet".into()),
                         offline: false,
                         dormant: false,
@@ -3649,6 +3646,7 @@ impl App {
                         name: String::new(),
                         current: false,
                         state: None,
+                        counts: Vec::new(),
                         problem: Some(short_problem(e)),
                         offline: true,
                         dormant: false,
@@ -3662,6 +3660,7 @@ impl App {
                             name,
                             current: false,
                             state: None,
+                            counts: Vec::new(),
                             problem: None,
                             offline: true,
                             dormant: false,
@@ -5668,25 +5667,17 @@ impl App {
                     };
                     return (place, item);
                 }
-                // What its agents do, the most urgent first, as the sidebar
-                // marks them: "◆1 ●2".
+                // What its agents do, as the sidebar marks them: "◆1 ●2".
                 let info = protocol::SessionInfo {
                     agents,
                     ..Default::default()
                 };
                 let urgent = info.urgent().map(|(state, _)| state);
-                let counts: Vec<String> = [
-                    AgentState::Blocked,
-                    AgentState::Done,
-                    AgentState::Working,
-                    AgentState::Idle,
-                ]
-                .into_iter()
-                .filter_map(|state| {
-                    let n = *info.agents.get(state.name())?;
-                    (n > 0).then(|| format!("{}{n}", state.symbol()))
-                })
-                .collect();
+                let counts: Vec<String> = info
+                    .counts()
+                    .into_iter()
+                    .map(|(state, n)| format!("{}{n}", state.symbol()))
+                    .collect();
                 // How long its agents have been quiet: "✓1 2h ago".
                 let mut counts = counts.join(" ");
                 if let Some(quiet) = quiet.filter(|&q| q >= 60) {
@@ -7713,8 +7704,11 @@ impl App {
         let (host, name) = (host.to_owned(), name.to_owned());
         self.flash = Some(format!("starting {name} here …"));
         thread::spawn(move || {
+            let taken = entry.clone();
             let request = match crate::client::start_from(&name, entry.layout) {
                 Ok(_) => {
+                    // Its machine drops it from its archive once it answers.
+                    let _ = persist::note_taken(&host, &taken);
                     let _ = persist::drop_from_replica(&host, &name);
                     Request::Go { target: name }
                 }

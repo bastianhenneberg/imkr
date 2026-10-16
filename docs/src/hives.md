@@ -23,7 +23,8 @@ or `a` in `Ctrl+B S` (`a` again goes back), the active hive's first, Enter bring
 forgets it. It shows the archive of every machine, grouped by hive and machine
 (`▣ kunde · codingmachine`): each machine gives its own along with the hives, so one that is off
 still shows. Enter brings a session back where it was archived; if that machine does not answer,
-imkr asks whether to start it here instead, from its archived layout. `imkr archive` lists them
+imkr asks whether to start it here instead, from its archived layout; once that machine answers
+again, it drops exactly that entry from its archive. `imkr archive` lists them
 all on the command line. Typing an archived name as a new session brings it
 back too. Sessions stopped by a crash or a reboot are not in `last` and always come back.
 

@@ -57,6 +57,8 @@ pub struct SessionRow {
     /// The state that needs attention most among its agents, and how many
     /// agents there are.
     pub state: Option<(AgentState, usize)>,
+    /// How many agents are in each state, each shown in its colour.
+    pub counts: Vec<(AgentState, usize)>,
     /// Why the host's sessions are unknown; the row is then about the host.
     pub problem: Option<String>,
     /// Last seen on a machine that is off now: shown, but not to go to.
@@ -270,10 +272,26 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             } else {
                 "  "
             };
-            let right = session
-                .state
-                .map(|(state, n)| format!("{} {n}", state.symbol()))
-                .unwrap_or_default();
+            // Every state with its count, "●1 ✦1": one agent done must not
+            // hide another still working.
+            let parts: Vec<(AgentState, String)> = if session.counts.is_empty() {
+                session
+                    .state
+                    .map(|(state, n)| (state, format!("{}{n}", state.symbol())))
+                    .into_iter()
+                    .collect()
+            } else {
+                session
+                    .counts
+                    .iter()
+                    .map(|&(state, n)| (state, format!("{}{n}", state.symbol())))
+                    .collect()
+            };
+            let right = parts
+                .iter()
+                .map(|(_, part)| part.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             let left = fit(
                 &format!("{indent}{marker}{}", session.name),
                 width.saturating_sub(right.chars().count() + 1),
@@ -287,8 +305,11 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 Style::new()
             };
             let mut spans = vec![Span::styled(left, style), Span::raw(" ".repeat(pad))];
-            if let Some((state, _)) = session.state {
-                spans.push(Span::styled(right, state_style(state)));
+            for (i, (state, part)) in parts.into_iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw(" "));
+                }
+                spans.push(Span::styled(part, state_style(state)));
             }
             let target = (!session.current && !session.offline).then_some(Target::Session(i));
             out.push((Line::from(spans), target));
@@ -887,13 +908,19 @@ mod tests {
             name: name.into(),
             current,
             state: None,
+            counts: Vec::new(),
             problem: None,
             offline: false,
             dormant: false,
         };
         let mut data = data();
         data.sessions = vec![
-            session(None, "default", true),
+            // One agent done, one still working: both show, working first.
+            SessionRow {
+                state: Some((AgentState::Working, 2)),
+                counts: vec![(AgentState::Working, 1), (AgentState::Done, 1)],
+                ..session(None, "default", true)
+            },
             session(Some("codingmachine"), "brain", false),
             SessionRow {
                 problem: Some("not reachable".into()),
@@ -908,6 +935,7 @@ mod tests {
         assert!(find("Sessions").is_some());
         // This session is not a target, the other machine's is.
         assert_eq!(find("▸ default").unwrap().1, None);
+        assert!(find("▸ default").unwrap().0.contains("●1 ✦1"));
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);

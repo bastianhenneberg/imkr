@@ -1142,6 +1142,18 @@ pub fn pull_hives(host: &str) -> Result<Vec<String>> {
 /// so the archive view shows the hive's sessions on every machine, also
 /// while one is off (#506). A machine with an older imkr has none.
 pub fn pull_archive(host: &str) -> Result<()> {
+    // First what was started elsewhere while it was off leaves its archive,
+    // exactly that entry; it stays noted until that worked.
+    for taken in crate::persist::taken()
+        .into_iter()
+        .filter(|t| t.host == host)
+    {
+        let saved_at = taken.saved_at.to_string();
+        let args = ["archive", "drop", taken.name.as_str(), saved_at.as_str()];
+        if remote_output(host, &args, "").is_ok() {
+            let _ = crate::persist::clear_taken(&taken);
+        }
+    }
     let output = Command::new("ssh")
         .args([
             "-T",

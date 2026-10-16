@@ -276,7 +276,11 @@ const COMMANDS: &[Command] = &[
         about: "ended sessions older than the ten in `last`",
         options: &[],
         words: Nothing,
-        subs: &[sub("ls", Nothing), sub("export", Nothing)],
+        subs: &[
+            sub("ls", Nothing),
+            sub("export", Nothing),
+            sub("drop", Nothing),
+        ],
     },
     cmd(
         "operator",

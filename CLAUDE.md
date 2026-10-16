@@ -222,7 +222,12 @@ Projekt-Slug: `imkr`
   `persist::store_replica` (`saves/.archive.<host>.json`, `Replica`), die Ansicht zeigt eigene +
   `replicas()` je `▣ HIVE · RECHNER`; Enter `revive_elsewhere` (antwortet → `imkr revive` dort,
   sonst `Action::StartArchivedHere` → `start_archived_here` mit `client::start_from`), `x` →
-  `forget_elsewhere`, danach `drop_from_replica`. Test: zwei Welten mit Schein-ssh, Datei `down`.
+  `forget_elsewhere`, danach `drop_from_replica`. Hier Gestartetes merkt `note_taken`
+  (`.archive-taken.json`); `pull_archive` schickt erst `imkr archive drop NAME SAVED_AT` (nur genau
+  der Eintrag, nie `forget`: der löschte auch eine dort neu laufende Session gleichen Namens).
+- Session-Zustand: `protocol::SESSION_ORDER` (blocked, working, done, idle) für `urgent()` (Farbe)
+  und `counts()`; Sidebar zeigt alle Zustände mit Zahl je in ihrer Farbe (`SessionRow::counts`).
+  Vorher stand done vor working: Session grün, obwohl ein Agent noch arbeitete. Test: zwei Welten mit Schein-ssh, Datei `down`.
   Aktiver Hive (#507): `persist::active_hive`/`set_active_hive` (`saves/.active`, je Rechner, nie
   `last`), gesetzt von `switch_hive` und Speichern unter einem Namen, folgt `rename`/`delete`;
   `client::switch_hive` speichert ihn vor dem Wechsel (`own` = Layout der aufrufenden Session).
