@@ -507,6 +507,28 @@ fn modified(meta: &std::fs::Metadata) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// When a window resets, in local time with the hour: `today 21:00`,
+/// `tomorrow 05:00`, `22.10. 05:00`.
+fn reset_label(at: u64, now: u64) -> String {
+    let local = |secs: u64| {
+        let t = secs as libc::time_t;
+        // SAFETY: localtime_r only writes the `tm` it is given.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        unsafe { libc::localtime_r(&t, &mut tm) };
+        tm
+    };
+    let (then, today, tomorrow) = (local(at), local(now), local(now + DAY));
+    let same = |a: &libc::tm, b: &libc::tm| a.tm_year == b.tm_year && a.tm_yday == b.tm_yday;
+    let time = format!("{:02}:{:02}", then.tm_hour, then.tm_min);
+    if same(&then, &today) {
+        format!("today {time}")
+    } else if same(&then, &tomorrow) {
+        format!("tomorrow {time}")
+    } else {
+        format!("{:02}.{:02}. {time}", then.tm_mday, then.tm_mon + 1)
+    }
+}
+
 /// `1234567` as `1.2 M`.
 pub fn short_count(n: u64) -> String {
     match n {
@@ -579,7 +601,7 @@ pub fn print(report: &Report, colour: bool) -> String {
                 };
                 let resets = window
                     .resets_at
-                    .and_then(crate::protocol::chrono_like)
+                    .map(|at| reset_label(at, crate::persist::now()))
                     .map(|at| format!("  resets {at}"))
                     .unwrap_or_default();
                 out.push_str(&format!(
@@ -635,6 +657,11 @@ mod tests {
         assert_eq!(short_count(950), "950");
         assert_eq!(short_count(31_200), "31 k");
         assert_eq!(short_count(18_400_000), "18.4 M");
+        let now = 1_792_177_200;
+        assert!(reset_label(now, now).starts_with("today "));
+        assert!(reset_label(now + DAY, now).starts_with("tomorrow "));
+        let later = reset_label(now + 5 * DAY, now);
+        assert!(later.contains('.') && later.contains(':'), "{later}");
     }
 
     #[test]

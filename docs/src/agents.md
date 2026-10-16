@@ -108,11 +108,11 @@ and red from 95 %, with when each resets; `imkr account usage` prints the same, 
 
 ```text
 Claude
-  henneberg (standard)  Max 20x   5h          █░░░░░░░░░  14 %  resets 21:00
-                                  week        ████░░░░░░  40 %  resets 22.10.
-  department            Max 20x   5h          ░░░░░░░░░░   0 %  resets 21:59
+  henneberg (standard)  Max 20x   5h          █░░░░░░░░░  14 %  resets today 21:00
+                                  week        ████░░░░░░  40 %  resets 22.10. 05:00
+  department            Max 20x   5h          ░░░░░░░░░░   0 %  resets today 21:59
 Codex
-  henneberg (standard)            week        ░░░░░░░░░░   0 %  resets 21.10.
+  henneberg (standard)            week        ░░░░░░░░░░   0 %  resets 21.10. 13:19
 Tokens
   Claude   5h    1.8 M   7 days   21.7 M
 ```
