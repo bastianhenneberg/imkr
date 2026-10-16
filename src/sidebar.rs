@@ -157,35 +157,31 @@ pub fn urgency(state: AgentState) -> u8 {
     }
 }
 
-/// At most this many agent dots after a session, then `+N`.
-const MAX_DOTS: usize = 6;
-
-/// One dot per agent in its state's colour, in `counts`' order (waiting
-/// first): one agent done must not hide another still working, and the dots
-/// say how many work. Quiet ones are dim, past `MAX_DOTS` a count. The
-/// sidebar and `Ctrl+B S` both show them.
+/// A dot per state of a session's agents, in its colour and with the count
+/// inside, in `counts`' order (waiting first): `❷❶` is two working and one
+/// waiting, so one agent done never hides another still working. Quiet ones
+/// are dim; past ten the count follows a plain dot. The sidebar and
+/// `Ctrl+B S` both show them.
 pub fn agent_dots(counts: &[(AgentState, usize)]) -> Vec<(Style, String)> {
     let dim = Style::new().fg(theme::current().muted);
-    let mut states: Vec<AgentState> = counts
+    counts
         .iter()
-        .flat_map(|&(state, n)| std::iter::repeat_n(state, n))
-        .collect();
-    let more = states.len().saturating_sub(MAX_DOTS);
-    states.truncate(MAX_DOTS);
-    let mut dots: Vec<(Style, String)> = states
-        .into_iter()
-        .map(|state| {
+        .filter(|&&(_, n)| n > 0)
+        .enumerate()
+        .map(|(i, &(state, n))| {
             let style = match state {
                 AgentState::Idle => dim,
                 state => state_style(state),
             };
-            (style, "●".to_owned())
+            // ❶ to ❿: dingbat negative circled digits.
+            let dot = match u32::try_from(n) {
+                Ok(n @ 1..=10) => char::from_u32(0x2775 + n).map(String::from),
+                _ => None,
+            };
+            let dot = dot.unwrap_or_else(|| format!("●{n}"));
+            (style, if i > 0 { format!(" {dot}") } else { dot })
         })
-        .collect();
-    if more > 0 {
-        dots.push((dim, format!("+{more}")));
-    }
-    dots
+        .collect()
 }
 
 pub fn state_style(state: AgentState) -> Style {
@@ -949,8 +945,11 @@ mod tests {
         assert!(find("Sessions").is_some());
         // This session is not a target, the other machine's is.
         assert_eq!(find("▸ default").unwrap().1, None);
-        // A dot per agent: one working, one done.
-        assert!(find("▸ default").unwrap().0.ends_with("●●"));
+        // A dot per state with its count inside: one working, one done.
+        assert!(find("▸ default").unwrap().0.ends_with("❶ ❶"));
+        let counts = [(AgentState::Working, 2), (AgentState::Done, 12)];
+        let dots: Vec<String> = agent_dots(&counts).into_iter().map(|(_, d)| d).collect();
+        assert_eq!(dots, ["❷", " ●12"]);
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);
