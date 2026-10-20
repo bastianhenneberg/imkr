@@ -74,6 +74,12 @@ Projekt-Slug: `imkr`
   `Pane::stop_foreground`, dann `finish_switches` tippt `imkr account run T:N -- <resume>`).
   `check_used_up` je Tick (nur nicht-working, `USED_UP_LINES`, `USED_UP_QUIET`), Einstellung
   `account_fallback` ask/auto/off. UI `Ctrl+B s c` (`Mode::Accounts`).
+  Logins: `src/login.rs` (`take_renewer` = `renew.lock`, ein imkr je Rechner meldet in
+  `App::watch_logins` alle `LOGINS_EVERY` einmal `dead` und `ending` (3 Tage vorher) per
+  `send_notification`; `renew` = Claude Code ein Wort antworten lassen, mit Sperre je Konto in
+  `accounts/locks/` und Neu-Lesen unter der Sperre; `claude_runs_in`). Refresh-Token-Ende ist fest
+  ab `/login` (~30 Tage), Erneuern verschiebt es nicht → keine Dauer-Erneuerung, nur Vorwarnung.
+  `Pane::spawn`: gespeichertes Konto abgemeldet → `default_of`.
   Agent mit Kontowahl: `Ctrl+B k` (`Command::NewAgent` → `new_agent`) und Vorlagen-Fenster mit
   `claude`/`codex` in `restore` (nur bei >1 eingeloggtem Konto) → `AgentStart` + `Mode::AgentAccount`
   (`agent_start_items`, `start_agent` tippt `imkr account run T:N -- <cmd>`, Esc startet Vorlagen

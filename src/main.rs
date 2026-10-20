@@ -15,6 +15,7 @@ mod graphics;
 mod keys;
 mod layout;
 mod links;
+mod login;
 mod mcp;
 mod menu;
 mod mouse;

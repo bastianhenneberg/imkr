@@ -287,7 +287,11 @@ subscription, so falling back never lands in the same limit.</p>
 <em>logged out</em>, also for <code>~/.claude</code> (<code>imkr account login claude:standard</code> logs it in again). Such
 an account is no subscription: it is not counted twice, not fallen back to, and new shells do
 not start in it: when the default is logged out, they start in the first account that is
-logged in.</p>
+logged in. A pane whose account is logged out starts in the default when it comes back.</p>
+<p>A Claude login lasts about 30 days from <code>/login</code>; Claude Code renewing its key does not move
+that end. So imkr says it ahead: three days before, <code>imkr account</code> and the account lists show
+<em>login ends …</em>, and one imkr on the machine sends a notification once, as it does when a login
+is logged out, each with the <code>imkr account login</code> that logs it in again.</p>
 <h4 id="how-much-each-account-has-used">How much each account has used</h4>
 <p><code>Ctrl+B s u</code> shows every account with its plan and limit windows, a bar each, yellow from 80 %
 and red from 95 %, with when each resets; <code>imkr account usage</code> prints the same, <code>--json</code> too.</p>

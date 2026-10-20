@@ -124,9 +124,10 @@ fn usage_of(store: &Store, account: &Account, default: bool, now: u64) -> Accoun
         _ => {
             // The plan is in the login, also when the windows are not known.
             usage.plan = claude_plan(&dir);
-            if key_expired(&dir, now) {
-                renew_key(account, &dir);
-            }
+            // An old key is renewed by Claude Code, see `login::renew`.
+            crate::login::renew(store, account, |login, now| {
+                !crate::account::login_spent(login, now) && crate::login::key_expired(login, now)
+            });
             claude_limits(&dir, now).map(|(plan, windows)| (plan.or(usage.plan.clone()), windows))
         }
     };
@@ -138,87 +139,6 @@ fn usage_of(store: &Store, account: &Account, default: bool, now: u64) -> Accoun
         Err(e) => usage.note = Some(format!("{e:#}")),
     }
     usage
-}
-
-/// Whether the access key of the Claude login in `dir` is out of date: it
-/// lasts some hours, Claude Code renews it with the login when it runs.
-fn key_expired(dir: &Path, now: u64) -> bool {
-    let Ok(text) = std::fs::read_to_string(dir.join(".credentials.json")) else {
-        return false;
-    };
-    let Ok(login) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return false;
-    };
-    login["claudeAiOauth"]["expiresAt"].as_u64().unwrap_or(0) / 1000 <= now
-}
-
-/// Has Claude Code renew the access key of `account` by answering one word
-/// with Haiku, without history, tools, MCP servers or hooks: imkr never
-/// renews it itself, as a renewal replaces the login, and one held by a
-/// Claude still running would then be spent. Not while Claude runs in it.
-fn renew_key(account: &Account, dir: &Path) {
-    if claude_runs_in(account, dir) {
-        return;
-    }
-    let mut claude = Command::new("timeout");
-    claude
-        .args([
-            "90",
-            "claude",
-            "-p",
-            "Answer with one word: ok",
-            "--model",
-            "haiku",
-        ])
-        .args([
-            "--no-session-persistence",
-            "--tools",
-            "",
-            "--strict-mcp-config",
-        ])
-        .args(["--setting-sources", ""])
-        .current_dir(std::env::temp_dir())
-        .env_remove("CLAUDE_CONFIG_DIR")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if !account.is_standard() {
-        claude.env("CLAUDE_CONFIG_DIR", dir);
-    }
-    let _ = claude.status();
-}
-
-/// Whether a Claude process uses `account` now: one with its
-/// `CLAUDE_CONFIG_DIR`, or for `standard` one without any.
-fn claude_runs_in(account: &Account, dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    let wanted = format!("CLAUDE_CONFIG_DIR={}", dir.display());
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        let Ok(argv) = std::fs::read(path.join("cmdline")) else {
-            return false;
-        };
-        let program = argv.split(|&b| b == 0).next().unwrap_or_default();
-        let is_claude = std::path::Path::new(std::str::from_utf8(program).unwrap_or_default())
-            .file_name()
-            .is_some_and(|name| name == "claude")
-            || argv.windows(7).any(|w| w == b"/claude");
-        // The helper of the Chrome extension runs for good and asks no model.
-        if !is_claude || argv.windows(18).any(|w| w == b"chrome-native-host") {
-            return false;
-        }
-        let Ok(env) = std::fs::read(path.join("environ")) else {
-            return false;
-        };
-        let vars: Vec<&[u8]> = env.split(|&b| b == 0).collect();
-        let configured = vars.iter().find(|v| v.starts_with(b"CLAUDE_CONFIG_DIR="));
-        match configured {
-            Some(var) => *var == wanted.as_bytes(),
-            None => account.is_standard(),
-        }
-    })
 }
 
 /// The plan of the Claude login in `dir`, e.g. `Max 20x`.
@@ -509,7 +429,7 @@ fn modified(meta: &std::fs::Metadata) -> u64 {
 
 /// When a window resets, in local time with the hour: `today 21:00`,
 /// `tomorrow 05:00`, `22.10. 05:00`.
-fn reset_label(at: u64, now: u64) -> String {
+pub fn reset_label(at: u64, now: u64) -> String {
     let local = |secs: u64| {
         let t = secs as libc::time_t;
         // SAFETY: localtime_r only writes the `tm` it is given.

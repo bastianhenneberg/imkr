@@ -200,12 +200,15 @@ impl Pane {
         cmd.env("IMKR_SOCKET", spawn.socket);
         // Each agent's account: the one chosen for this session, else the
         // default (`imkr account default`). Noted in the pane as it started,
-        // so a default set later does not rename what already runs.
+        // so a default set later does not rename what already runs. One
+        // logged out since gives way to the default, so that an agent
+        // resumed here does not start at a login screen.
         let mut accounts = spawn.accounts.clone();
         if let Ok(store) = crate::account::Store::here() {
             for tool in crate::account::TOOLS {
                 let name = accounts
                     .get(*tool)
+                    .filter(|name| !store.find(tool, name).is_some_and(|a| store.login_dead(&a)))
                     .cloned()
                     .unwrap_or_else(|| store.default_of(tool));
                 if let Some(account) = store.find(tool, &name) {
@@ -213,7 +216,9 @@ impl Pane {
                         cmd.env(key, value);
                     }
                 }
-                if name != crate::account::STANDARD {
+                if name == crate::account::STANDARD {
+                    accounts.remove(*tool);
+                } else {
                     accounts.insert((*tool).to_owned(), name);
                 }
             }

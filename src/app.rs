@@ -588,6 +588,9 @@ const LOCAL_EVERY: Duration = Duration::from_secs(2);
 const HOSTS_EVERY: Duration = Duration::from_secs(5);
 /// How often panes' frames look up which account their agent runs in.
 const ACCOUNTS_EVERY: Duration = Duration::from_secs(10);
+
+/// How often the logins are looked at, see `watch_logins`.
+const LOGINS_EVERY: Duration = Duration::from_secs(30 * 60);
 /// How often hives saved on other machines are fetched.
 const HIVES_EVERY: Duration = Duration::from_secs(60);
 /// How often messages from contacts through AI Brain are fetched.
@@ -708,6 +711,13 @@ pub struct App {
     carried_until: Option<Instant>,
     /// When `name_accounts` last looked.
     accounts_named: Option<Instant>,
+    /// Logins: held while this imkr is the one watching them on this
+    /// machine (`login::take_renewer`), when they were last looked at, and
+    /// those already said to be logged out or to end soon.
+    renewer: Option<std::fs::File>,
+    logins_checked: Option<Instant>,
+    dead_logins: HashSet<String>,
+    ending_logins: HashSet<String>,
     /// What the terminals showing a pane elsewhere were last told runs in
     /// it, see `tell_taps`.
     told: HashMap<PaneId, Option<(String, AgentState)>>,
@@ -898,6 +908,10 @@ impl App {
             carried: HashMap::new(),
             carried_until: None,
             accounts_named: None,
+            renewer: None,
+            logins_checked: None,
+            dead_logins: HashSet::new(),
+            ending_logins: HashSet::new(),
             told: HashMap::new(),
             hide_old: true,
             show_archive: false,
@@ -3279,6 +3293,62 @@ impl App {
         }
     }
 
+    /// Watches the Claude logins of the accounts, see `login`: the one imkr
+    /// on this machine holding `renew.lock` says once, every
+    /// `LOGINS_EVERY` at most, when a login ends soon or is logged out,
+    /// with the command that logs it in again.
+    fn watch_logins(&mut self) {
+        if self
+            .logins_checked
+            .is_some_and(|at| at.elapsed() < LOGINS_EVERY)
+        {
+            return;
+        }
+        self.logins_checked = Some(Instant::now());
+        let Ok(store) = crate::account::Store::here() else {
+            return;
+        };
+        if self.renewer.is_none() {
+            self.renewer = crate::login::take_renewer(&store);
+            if self.renewer.is_none() {
+                return;
+            }
+        }
+        let mut said = Vec::new();
+        let dead: HashSet<String> = crate::login::dead(&store)
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        let mut newly: Vec<&String> = dead.difference(&self.dead_logins).collect();
+        newly.sort();
+        for name in newly {
+            said.push((
+                format!("Claude account {name} is logged out"),
+                format!("imkr account login claude:{name}"),
+            ));
+        }
+        self.dead_logins = dead;
+        let ending = crate::login::ending(&store);
+        self.ending_logins
+            .retain(|name| ending.iter().any(|(a, _)| a.name == *name));
+        for (account, ends) in ending {
+            if self.ending_logins.insert(account.name.clone()) {
+                said.push((
+                    format!(
+                        "Claude login of {} ends {}",
+                        account.name,
+                        crate::usage::reset_label(ends, crate::persist::now())
+                    ),
+                    format!("imkr account login claude:{}", account.name),
+                ));
+            }
+        }
+        for (title, how) in said {
+            self.flash = Some(format!("{title}: {how}"));
+            self.send_notification(&title, &how);
+        }
+    }
+
     /// Looks at what every agent is doing. When one starts waiting for the
     /// user where the user is not looking, it rings the bell and says so.
     /// Names, for each pane's frame, the subscription or provider its agent
@@ -3325,6 +3395,7 @@ impl App {
             pane.refresh_meta();
         }
         self.name_accounts();
+        self.watch_logins();
         let now = Instant::now();
         if self.carried_until.is_some_and(|until| now > until) {
             self.carried.clear();
@@ -10235,6 +10306,10 @@ impl App {
                 if !store.logged_in(&account) {
                     hint.push_str(" · not logged in");
                 }
+                if let Some(ends) = crate::login::login_ends_soon(&store, &account) {
+                    let when = crate::usage::reset_label(ends, crate::persist::now());
+                    hint.push_str(&format!(" · login ends {when}"));
+                }
                 if let Some(until) = store.used_up_until(&account) {
                     hint.push_str(&format!(" · used up until {until}"));
                 }
@@ -10391,6 +10466,10 @@ impl App {
                     hint.push_str(" · logged out");
                 } else if !store.logged_in(&account) {
                     hint.push_str(" · not logged in");
+                }
+                if let Some(ends) = crate::login::login_ends_soon(&store, &account) {
+                    let when = crate::usage::reset_label(ends, crate::persist::now());
+                    hint.push_str(&format!(" · login ends {when}"));
                 }
                 if let Some(until) = store.used_up_until(&account) {
                     hint.push_str(&format!(" · used up until {until}"));

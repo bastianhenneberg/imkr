@@ -115,7 +115,12 @@ A login Claude Code has emptied, because the server refused its refresh token, s
 *logged out*, also for `~/.claude` (`imkr account login claude:standard` logs it in again). Such
 an account is no subscription: it is not counted twice, not fallen back to, and new shells do
 not start in it: when the default is logged out, they start in the first account that is
-logged in.
+logged in. A pane whose account is logged out starts in the default when it comes back.
+
+A Claude login lasts about 30 days from `/login`; Claude Code renewing its key does not move
+that end. So imkr says it ahead: three days before, `imkr account` and the account lists show
+*login ends …*, and one imkr on the machine sends a notification once, as it does when a login
+is logged out, each with the `imkr account login` that logs it in again.
 
 #### How much each account has used
 

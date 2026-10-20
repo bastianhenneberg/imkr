@@ -2137,6 +2137,14 @@ pub fn account(args: &[String]) -> Result<()> {
                             account.tool, account.name
                         ));
                     }
+                    if let Some(ends) = crate::login::login_ends_soon(&store, &account) {
+                        note.push_str(&format!(
+                            "  login ends {}: `imkr account login {}:{}`",
+                            crate::usage::reset_label(ends, crate::persist::now()),
+                            account.tool,
+                            account.name
+                        ));
+                    }
                     if let Some(until) = store.used_up_until(&account) {
                         note.push_str(&format!("  used up until {until}"));
                     }
