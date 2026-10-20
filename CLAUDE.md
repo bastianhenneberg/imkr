@@ -74,6 +74,10 @@ Projekt-Slug: `imkr`
   `Pane::stop_foreground`, dann `finish_switches` tippt `imkr account run T:N -- <resume>`).
   `check_used_up` je Tick (nur nicht-working, `USED_UP_LINES`, `USED_UP_QUIET`), Einstellung
   `account_fallback` ask/auto/off. UI `Ctrl+B s c` (`Mode::Accounts`).
+  Agent mit Kontowahl: `Ctrl+B k` (`Command::NewAgent` → `new_agent`) und Vorlagen-Fenster mit
+  `claude`/`codex` in `restore` (nur bei >1 eingeloggtem Konto) → `AgentStart` + `Mode::AgentAccount`
+  (`agent_start_items`, `start_agent` tippt `imkr account run T:N -- <cmd>`, Esc startet Vorlagen
+  im Standardkonto); `attach` lässt eine wartende Frage stehen. Befehl je Agent: `agent_commands`.
   Identität je Konto (`Store::identity`: Claude `oauthAccount` in `.claude.json`, Codex `id_token`
   in `auth.json`), `same_login` warnt bei doppelten Abos nach `add`/`login` (löscht nie); `login_dead`/`login_spent`: leerer oder abgelaufener Refresh-Token = abgemeldet → keine Identität, nicht `logged_in`, `default_of` nimmt dann das erste eingeloggte, `used_up_for` gilt je Abo.
   Pane-Rahmen: `App::name_accounts` (alle `ACCOUNTS_EVERY`) → `Pane::shown_account`

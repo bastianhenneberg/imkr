@@ -76,6 +76,8 @@ pub enum Command {
     Inbox,
     /// A new window in a session chosen from all, on any machine.
     NewWindowElsewhere,
+    /// A new window with an agent, asking for its account.
+    NewAgent,
     /// Mark the focused pane for Alt+1 … Alt+9, like Harpoon.
     Mark,
     /// The marks, to jump to, reorder and remove.
@@ -585,6 +587,12 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Char('s')), C::Open(Menu::Session))],
     },
     Binding {
+        label: "k",
+        description: "new agent…",
+        group: Group::Session,
+        keys: &[(Key::plain(Char('k')), C::NewAgent)],
+    },
+    Binding {
         label: "c",
         description: "commands…",
         group: Group::Session,
@@ -997,6 +1005,16 @@ pub const ACCOUNT_LIST_KEYS: &[KeyHint] = &[
     ("Esc", "cancel"),
 ];
 
+/// The keys of the account choice for a new agent (`Ctrl+B k`, templates).
+pub const AGENT_START_KEYS: &[KeyHint] = &[
+    ("↑↓", "select"),
+    ("Enter 1-9", "start the agent in this account"),
+    (
+        "Esc",
+        "cancel; a template's agent starts in the default account",
+    ),
+];
+
 /// The keys of the marks (`Ctrl+B M`).
 pub const MARK_LIST_KEYS: &[KeyHint] = &[
     ("↑↓", "select"),
@@ -1099,6 +1117,7 @@ pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
     ("Session list", "S", SESSION_LIST_KEYS),
     ("Hives", "H", HIVE_LIST_KEYS),
     ("Accounts", "s c", ACCOUNT_LIST_KEYS),
+    ("New agent", "k", AGENT_START_KEYS),
     ("Move window", "w m", MOVE_LIST_KEYS),
     ("Agents", "A", AGENT_LIST_KEYS),
     ("Inbox (answer waiting agents)", "i", INBOX_KEYS),
@@ -1302,7 +1321,10 @@ mod tests {
             Some(C::CopyMode)
         );
         assert_eq!(lookup(Menu::Root, event(Char('j'), none)), Some(C::Jump));
-        assert_eq!(lookup(Menu::Root, event(Char('k'), none)), None);
+        assert_eq!(
+            lookup(Menu::Root, event(Char('k'), none)),
+            Some(C::NewAgent)
+        );
         assert_eq!(
             lookup(Menu::Root, event(Char(';'), none)),
             Some(C::LastPane)

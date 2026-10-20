@@ -228,6 +228,10 @@ pub struct Config {
     /// off.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub resume_commands: BTreeMap<String, String>,
+    /// What `Ctrl+B k` starts for each agent with accounts, e.g.
+    /// `claude = "claude --dangerously-skip-permissions"`; else its name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub agent_commands: BTreeMap<String, String>,
     /// Programs to treat as coding agents besides those imkr knows, by the
     /// name they run under, e.g. `my-agent`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -360,6 +364,15 @@ impl Config {
         all
     }
 
+    /// The command that starts `tool` in a new window (`Ctrl+B k`).
+    pub fn agent_command(&self, tool: &str) -> String {
+        self.agent_commands
+            .get(tool)
+            .filter(|command| !command.trim().is_empty())
+            .cloned()
+            .unwrap_or_else(|| tool.to_owned())
+    }
+
     /// Hooks on events there are none of, e.g. misspelt, as a note.
     pub fn hook_problems(&self) -> Option<String> {
         let unknown: Vec<&str> = self
@@ -458,6 +471,7 @@ impl Default for Config {
             question_phrases: Vec::new(),
             resume: Resume::default(),
             resume_commands: BTreeMap::new(),
+            agent_commands: BTreeMap::new(),
             images: true,
             renumber_windows: false,
             marks_on_alt: true,
@@ -816,6 +830,20 @@ pub const SETTINGS: &[Setting] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_commands_default_to_the_agent() {
+        assert_eq!(Config::default().agent_command("codex"), "codex");
+        let config = Config::parse(
+            "[agent_commands]\nclaude = \"claude --dangerously-skip-permissions\"\ncodex = \"\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.agent_command("claude"),
+            "claude --dangerously-skip-permissions"
+        );
+        assert_eq!(config.agent_command("codex"), "codex");
+    }
 
     #[test]
     fn spacing_defaults_to_none_and_parses() {

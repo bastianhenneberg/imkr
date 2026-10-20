@@ -110,7 +110,9 @@ After the template, `Ctrl+B s n` asks for the session's directory: suggested is 
 `root`, without one the directory of the focused pane. The directories that fit what is typed
 are listed under it, on the machine the session starts on (another one through ssh): `↑`/`↓`
 choose one, Tab takes it or completes like a shell, `Ctrl+W` goes up one; relative `cwd`s of the template start there. Commands are typed
-into a fresh shell, so the shell stays when they end. Templates come along to other machines
+into a fresh shell, so the shell stays when they end. A window that starts `claude` or `codex` asks first which
+account it runs in, when more than one is logged in (Esc: the default); it starts as
+`imkr account run claude:NAME -- <command>`. Templates come along to other machines
 like plugins, and `~` is that machine's home.
 
 ```bash

@@ -306,7 +306,9 @@ cwd = &quot;src&quot;       # relative to root
 <code>root</code>, without one the directory of the focused pane. The directories that fit what is typed
 are listed under it, on the machine the session starts on (another one through ssh): <code>↑</code>/<code>↓</code>
 choose one, Tab takes it or completes like a shell, <code>Ctrl+W</code> goes up one; relative <code>cwd</code>s of the template start there. Commands are typed
-into a fresh shell, so the shell stays when they end. Templates come along to other machines
+into a fresh shell, so the shell stays when they end. A window that starts <code>claude</code> or <code>codex</code> asks first which
+account it runs in, when more than one is logged in (Esc: the default); it starts as
+<code>imkr account run claude:NAME -- &lt;command&gt;</code>. Templates come along to other machines
 like plugins, and <code>~</code> is that machine's home.</p>
 <pre><code class="language-bash">imkr template save coding          # this session's windows, splits and agents as `coding`
 imkr template ls

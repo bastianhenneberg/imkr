@@ -125,6 +125,8 @@ enum Mode {
     Hives(usize),
     /// The agents' accounts, see `account_items`.
     Accounts(usize),
+    /// The account to start an agent in, see `AgentStart`.
+    AgentAccount(usize),
     /// A jump like flash.nvim's, see `Jump`.
     Jump,
     /// Choosing the session to move this window to, that entry selected.
@@ -838,6 +840,10 @@ pub struct App {
     /// Agents ending to start again in another account: the command to
     /// type once the shell is back in front, and since when it waits.
     switching: HashMap<PaneId, (String, Instant)>,
+    /// Agents waiting for the account they start in (`Mode::AgentAccount`).
+    agent_start: Option<AgentStart>,
+    /// The template's agents of another kind, asked for after `agent_start`.
+    waiting_agents: Option<AgentStart>,
     /// When an agent's used up account was last noticed, so that the
     /// message still on its screen does not count again.
     used_up_seen: HashMap<PaneId, Instant>,
@@ -960,6 +966,8 @@ impl App {
             dir_lists: Arc::default(),
             accounts: BTreeMap::new(),
             switching: HashMap::new(),
+            agent_start: None,
+            waiting_agents: None,
             used_up_seen: HashMap::new(),
             dir_pick: None,
             picker: None,
@@ -1055,6 +1063,23 @@ impl App {
 
         let template = saved.template.clone();
         let resume_commands = self.config.resume_commands();
+        // A template's agents ask for their account first, by agent, when
+        // more than one is logged in (`ask_agent_account`).
+        let ask_for = |command: &str| -> Option<String> {
+            template.as_ref()?;
+            let tool = command.split_whitespace().next()?;
+            if !crate::account::TOOLS.contains(&tool) {
+                return None;
+            }
+            let store = crate::account::Store::here().ok()?;
+            let logged_in = store
+                .of_tool(tool)
+                .iter()
+                .filter(|a| store.logged_in(a))
+                .count();
+            (logged_in > 1).then(|| tool.to_owned())
+        };
+        let mut asking: BTreeMap<String, Vec<(PaneId, String)>> = BTreeMap::new();
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
             for (id, rect) in ws.rects(self.body) {
@@ -1087,7 +1112,12 @@ impl App {
                         };
                         // A template's command always starts; a resume only
                         // with the user's Enter when they asked for that.
-                        if let Some(command) = resume.clone().or(spec.command.clone()) {
+                        if resume.is_none()
+                            && let Some(command) = &spec.command
+                            && let Some(tool) = ask_for(command)
+                        {
+                            asking.entry(tool).or_default().push((id, command.clone()));
+                        } else if let Some(command) = resume.clone().or(spec.command.clone()) {
                             let enter =
                                 resume.is_none() || self.config.resume == config::Resume::Auto;
                             let line = if enter {
@@ -1112,6 +1142,14 @@ impl App {
         persist::prune_scrollback(&path, &kept);
         if !self.install(workspaces, saved.active) {
             return;
+        }
+        let mut asking = asking.into_iter().map(|(tool, panes)| AgentStart {
+            tools: vec![tool],
+            panes,
+        });
+        if let Some(first) = asking.next() {
+            self.waiting_agents = asking.next();
+            self.ask_agent_account(first);
         }
         let count = self.panes.len();
         let panes = if count == 1 { "pane" } else { "panes" };
@@ -1781,7 +1819,8 @@ impl App {
                 self.detach(other);
             }
         }
-        if self.clients.is_empty() {
+        // A template's agents waiting for their account still ask.
+        if self.clients.is_empty() && self.agent_start.is_none() {
             self.mode = Mode::Normal;
         }
         let terminal = Client::terminal_for(&stream, self.screen)?;
@@ -4011,6 +4050,10 @@ impl App {
                 self.accounts_key(key, selected);
                 Ok(())
             }
+            Mode::AgentAccount(selected) => {
+                self.agent_account_key(key, selected);
+                Ok(())
+            }
             Mode::Jump => {
                 self.jump_key(key);
                 Ok(())
@@ -4401,6 +4444,7 @@ impl App {
             }
             Command::Hives => self.mode = Mode::Hives(0),
             Command::Accounts => self.mode = Mode::Accounts(0),
+            Command::NewAgent => self.new_agent(),
             Command::Jump => {
                 self.enter_copy();
                 self.start_jump();
@@ -10083,6 +10127,23 @@ impl App {
                     bindings::ACCOUNT_LIST_KEYS,
                 );
             }
+            Mode::AgentAccount(selected) => {
+                let title = match &self.agent_start {
+                    Some(start) if !start.panes.is_empty() => {
+                        format!(" ⬢ {} of the template: which account? ", start.tools[0])
+                    }
+                    _ => " ⬢ New agent: which account? ".to_owned(),
+                };
+                let (_, items) = self.agent_start_items();
+                self.draw_list(
+                    frame,
+                    body,
+                    &title,
+                    &items,
+                    selected.min(items.len().saturating_sub(1)),
+                    bindings::AGENT_START_KEYS,
+                );
+            }
             Mode::Prefix(_) | Mode::Normal | Mode::Repeat(..) | Mode::Copy | Mode::Sidebar(_) => {}
         }
         self.draw_banner(frame);
@@ -10263,6 +10324,184 @@ impl App {
             ),
             Err(e) => e,
         });
+    }
+
+    /// `Ctrl+B k`: a new window with an agent. With more than one account
+    /// logged in, asks which one; with one, starts it right away.
+    fn new_agent(&mut self) {
+        let tools: Vec<String> = crate::account::TOOLS
+            .iter()
+            .filter(|tool| on_path(tool))
+            .map(|tool| (*tool).to_owned())
+            .collect();
+        if tools.is_empty() {
+            self.flash = Some("neither claude nor codex is installed here".into());
+            return;
+        }
+        self.ask_agent_account(AgentStart {
+            tools,
+            panes: Vec::new(),
+        });
+    }
+
+    /// Asks which account `start` begins in (`Mode::AgentAccount`), with
+    /// the default of its first agent selected; with only one account
+    /// logged in, starts in it without asking.
+    fn ask_agent_account(&mut self, start: AgentStart) {
+        self.agent_start = Some(start);
+        let (accounts, _) = self.agent_start_items();
+        let Ok(store) = crate::account::Store::here() else {
+            self.agent_start = None;
+            return;
+        };
+        let usable: Vec<usize> = (0..accounts.len())
+            .filter(|&i| store.logged_in(&accounts[i]))
+            .collect();
+        if let [only] = usable.as_slice() {
+            let account = accounts[*only].clone();
+            self.start_agent(&account);
+            return;
+        }
+        let tool = self.agent_start.as_ref().map(|s| s.tools[0].clone());
+        let default = tool.as_deref().map(|tool| store.default_of(tool));
+        let selected = accounts
+            .iter()
+            .position(|a| Some(&a.tool) == tool.as_ref() && Some(&a.name) == default.as_ref())
+            .unwrap_or(0);
+        self.mode = Mode::AgentAccount(selected);
+    }
+
+    /// The accounts a waiting agent can start in, by agent: logged in ones
+    /// as they are, the others with why not.
+    fn agent_start_items(&self) -> (Vec<crate::account::Account>, Vec<menu::MenuItem>) {
+        let (Some(start), Ok(store)) = (&self.agent_start, crate::account::Store::here()) else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut accounts = Vec::new();
+        let mut items = Vec::new();
+        for tool in &start.tools {
+            let default = store.default_of(tool);
+            for account in store.of_tool(tool) {
+                let mut hint = match (&account.url, store.identity(&account)) {
+                    (None, Some(who)) => who.shown,
+                    (None, None) if account.is_standard() => format!("~/.{tool}"),
+                    _ => account.kind(),
+                };
+                if store.login_dead(&account) {
+                    hint.push_str(" · logged out");
+                } else if !store.logged_in(&account) {
+                    hint.push_str(" · not logged in");
+                }
+                if let Some(until) = store.used_up_until(&account) {
+                    hint.push_str(&format!(" · used up until {until}"));
+                }
+                let name = if account.url.is_some() {
+                    account.name.clone()
+                } else {
+                    crate::account::shown(&store, &account)
+                };
+                items.push(menu::MenuItem {
+                    key: char::from_digit((items.len() as u32 + 1) % 10, 10).unwrap_or(' '),
+                    title: format!(
+                        "{name}{}",
+                        if account.name == default {
+                            " (standard)"
+                        } else {
+                            ""
+                        }
+                    ),
+                    hint,
+                    danger: false,
+                    apart: false,
+                    color: None,
+                    group: Some(tool.clone()),
+                    marks: Vec::new(),
+                });
+                accounts.push(account);
+            }
+        }
+        (accounts, items)
+    }
+
+    /// The account choice for a waiting agent: Enter or its number starts
+    /// it there; Esc drops a new window's, and starts a template's as the
+    /// template says, in the default account.
+    fn agent_account_key(&mut self, key: KeyEvent, selected: usize) {
+        let (accounts, _) = self.agent_start_items();
+        let count = accounts.len().max(1);
+        let selected = selected.min(count - 1);
+        let chosen = match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                if let Some(start) = self.agent_start.take() {
+                    for (id, command) in start.panes {
+                        let _ = self.type_into(id, &command, true);
+                    }
+                }
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.mode = Mode::AgentAccount((selected + count - 1) % count);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                self.mode = Mode::AgentAccount((selected + 1) % count);
+                return;
+            }
+            KeyCode::Enter => accounts.get(selected).cloned(),
+            KeyCode::Char(c) => c
+                .to_digit(10)
+                .and_then(|d| accounts.get((d as usize + 9) % 10).cloned()),
+            _ => None,
+        };
+        if let Some(account) = chosen {
+            self.mode = Mode::Normal;
+            self.start_agent(&account);
+        }
+    }
+
+    /// Starts the waiting agent in `account`: in a new window named after
+    /// it, or in the template's panes of that agent. Typed into the shell
+    /// as `imkr account run`, like a switch, so the pane notes the account.
+    fn start_agent(&mut self, account: &crate::account::Account) {
+        let Some(start) = self.agent_start.take() else {
+            return;
+        };
+        let tool = account.tool.clone();
+        let mut panes = start.panes;
+        if panes.is_empty() {
+            let Some(n) = self.free_workspace() else {
+                self.flash = Some("all 9 windows are in use".into());
+                return;
+            };
+            self.switch_workspace(n);
+            if self.workspace != n {
+                return;
+            }
+            let _ = self.rename(RenameTarget::Workspace(n), Some(tool.clone()));
+            panes.push((self.ws.focus, self.config.agent_command(&tool)));
+        }
+        for (id, command) in panes {
+            if let Some(pane) = self.panes.get_mut(&id) {
+                set_account(&mut pane.accounts, &tool, &account.name);
+            }
+            let line = format!(
+                "{} account run {} -- {command}",
+                crate::client::sh_quote(&imkr_path()),
+                crate::client::sh_quote(&format!("{tool}:{}", account.name)),
+            );
+            let _ = self.type_into(id, &line, true);
+        }
+        self.flash = Some(format!(
+            "{tool} starts in account {}",
+            crate::account::Store::here()
+                .map(|store| crate::account::shown(&store, account))
+                .unwrap_or_else(|_| account.name.clone())
+        ));
+        // A template with another agent waiting: its account next.
+        if let Some(rest) = self.waiting_agents.take() {
+            self.ask_agent_account(rest);
+        }
     }
 
     /// The list shown now, if one is: its items and the one selected.
@@ -11102,6 +11341,11 @@ impl App {
                 t.accent,
                 "↑↓ choose · Enter focused agent goes on in it · u new shells here · Esc cancel",
             ),
+            Mode::AgentAccount(_) => (
+                "NEW AGENT",
+                t.accent,
+                "↑↓ choose · Enter or 1-9 start it in that account · Esc cancel",
+            ),
             Mode::Picker => ("GO TO", t.cyan, "type to filter · Enter go · Esc cancel"),
             Mode::Sidebar(_) => (
                 "SIDEBAR",
@@ -11726,6 +11970,23 @@ const USED_UP_QUIET: Duration = Duration::from_secs(600);
 
 /// How long `switch_account` waits for an agent to end.
 const SWITCH_WAIT: Duration = Duration::from_secs(15);
+
+/// An agent waiting for the account it starts in: a new window of one of
+/// `tools` (`Ctrl+B k`, `panes` empty), or the panes of a template that
+/// start `tools[0]`, with the command each would have run.
+struct AgentStart {
+    tools: Vec<String>,
+    panes: Vec<(PaneId, String)>,
+}
+
+/// Whether `program` is on the PATH.
+fn on_path(program: &str) -> bool {
+    std::process::Command::new("sh")
+        .args(["-c", "command -v \"$0\" >/dev/null", program])
+        .stdin(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
 
 /// Notes account `name` of `tool` in `accounts`: `standard` is no entry.
 fn set_account(accounts: &mut BTreeMap<String, String>, tool: &str, name: &str) {

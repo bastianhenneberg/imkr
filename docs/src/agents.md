@@ -85,6 +85,16 @@ Every agent's frame says what it runs on, after its state: `claude ● working �
 (the subscription by its address before the @, then the model), or `· Ollama · qwen3-coder` for a
 provider.
 
+`Ctrl+B k` opens a new window with an agent and asks which account it runs in: every account
+of Claude Code and Codex (those installed), logged out ones marked, the default selected; Enter
+or its number starts it. With only one account logged in, it starts right away. What it starts
+is `[agent_commands]` in the config, else the agent's name:
+
+```toml
+[agent_commands]
+claude = "claude --dangerously-skip-permissions --chrome"
+```
+
 `Ctrl+B s c` lists them: Enter puts the focused agent into the chosen account, `u` new shells of
 this session. Switching ends the agent and starts it again in the same conversation, typed into
 its shell as `imkr account run claude:privat -- claude --resume <id>`, so no key shows on the
