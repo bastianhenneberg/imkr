@@ -97,9 +97,15 @@ itself (`auto`), or does nothing (`off`). The next one is the next in the list t
 and not used up, round. Accounts and keys live in `~/.local/state/imkr/accounts/` (0600).
 
 Limits belong to the subscription, not to the account's name. `imkr account` shows who each one
-is logged in as, and an account logged in to a subscription that has one already is removed again
-right after `add` (`login` warns). One used up counts for every account of the same subscription,
-so falling back never lands in the same limit.
+is logged in as, and `add` and `login` warn when an account is logged in to a subscription that
+has one already; nothing is removed for it. One used up counts for every account of the same
+subscription, so falling back never lands in the same limit.
+
+A login Claude Code has emptied, because the server refused its refresh token, shows as
+*logged out*, also for `~/.claude` (`imkr account login claude:standard` logs it in again). Such
+an account is no subscription: it is not counted twice, not fallen back to, and new shells do
+not start in it: when the default is logged out, they start in the first account that is
+logged in.
 
 #### How much each account has used
 

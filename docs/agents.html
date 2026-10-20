@@ -273,9 +273,14 @@ in the settings says, tells you which account is next (<code>ask</code>, the def
 itself (<code>auto</code>), or does nothing (<code>off</code>). The next one is the next in the list that is logged in
 and not used up, round. Accounts and keys live in <code>~/.local/state/imkr/accounts/</code> (0600).</p>
 <p>Limits belong to the subscription, not to the account's name. <code>imkr account</code> shows who each one
-is logged in as, and an account logged in to a subscription that has one already is removed again
-right after <code>add</code> (<code>login</code> warns). One used up counts for every account of the same subscription,
-so falling back never lands in the same limit.</p>
+is logged in as, and <code>add</code> and <code>login</code> warn when an account is logged in to a subscription that
+has one already; nothing is removed for it. One used up counts for every account of the same
+subscription, so falling back never lands in the same limit.</p>
+<p>A login Claude Code has emptied, because the server refused its refresh token, shows as
+<em>logged out</em>, also for <code>~/.claude</code> (<code>imkr account login claude:standard</code> logs it in again). Such
+an account is no subscription: it is not counted twice, not fallen back to, and new shells do
+not start in it: when the default is logged out, they start in the first account that is
+logged in.</p>
 <h4 id="how-much-each-account-has-used">How much each account has used</h4>
 <p><code>Ctrl+B s u</code> shows every account with its plan and limit windows, a bar each, yellow from 80 %
 and red from 95 %, with when each resets; <code>imkr account usage</code> prints the same, <code>--json</code> too.</p>

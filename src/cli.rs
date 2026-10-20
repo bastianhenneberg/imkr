@@ -2126,7 +2126,12 @@ pub fn account(args: &[String]) -> Result<()> {
                     if let Some(who) = store.identity(&account) {
                         note.push_str(&format!("  {}", who.shown));
                     }
-                    if !store.logged_in(&account) {
+                    if store.login_dead(&account) {
+                        note.push_str(&format!(
+                            "  logged out (the login was refused): `imkr account login {}:{}`",
+                            account.tool, account.name
+                        ));
+                    } else if !store.logged_in(&account) {
                         note.push_str(&format!(
                             "  not logged in: `imkr account login {}:{}`",
                             account.tool, account.name
@@ -2169,16 +2174,18 @@ pub fn account(args: &[String]) -> Result<()> {
             if !provider {
                 login(&store, &account)?;
                 // Logged in to a subscription that has an account already:
-                // a second one shares its limit and gains nothing.
+                // a second one shares its limit and gains nothing. Only
+                // said: removing it would throw away a login agents may
+                // already use.
                 if let Some(other) = store.same_login(&account) {
-                    store.remove(&account.tool, &account.name)?;
-                    bail!(
-                        "{} is logged in as {}, the same as account {}: removed it again. \
-                         Log in with another subscription, or use {}",
+                    println!(
+                        "careful: {} is logged in as {}, the same as account {}: its limit \
+                         is shared; `imkr account rm {}:{}` if you do not need both",
                         account.name,
                         store.identity(&other).map(|i| i.shown).unwrap_or_default(),
                         other.name,
-                        other.name
+                        account.tool,
+                        account.name
                     );
                 }
             }
@@ -2305,7 +2312,7 @@ pub fn account(args: &[String]) -> Result<()> {
 
 /// Logs a subscription in: its agent in this terminal, with its directory.
 fn login(store: &crate::account::Store, account: &crate::account::Account) -> Result<()> {
-    if account.url.is_some() || account.is_standard() {
+    if account.url.is_some() || (account.is_standard() && account.tool != "claude") {
         println!("{} needs no login", account.name);
         return Ok(());
     }
@@ -2321,8 +2328,13 @@ fn login(store: &crate::account::Store, account: &crate::account::Account) -> Re
     if account.tool == "claude" {
         println!("Claude Code starts in this account: log in, then leave it with /exit.");
     }
-    let status = Command::new(&command[0])
-        .args(&command[1..])
+    let mut run = Command::new(&command[0]);
+    run.args(&command[1..]);
+    // Into this account's directory, not the one the shell started with.
+    for name in crate::account::variables(&account.tool) {
+        run.env_remove(name);
+    }
+    let status = run
         .envs(store.env(account))
         .status()
         .with_context(|| format!("could not run {}", command[0]))?;

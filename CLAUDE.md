@@ -75,7 +75,7 @@ Projekt-Slug: `imkr`
   `check_used_up` je Tick (nur nicht-working, `USED_UP_LINES`, `USED_UP_QUIET`), Einstellung
   `account_fallback` ask/auto/off. UI `Ctrl+B s c` (`Mode::Accounts`).
   Identität je Konto (`Store::identity`: Claude `oauthAccount` in `.claude.json`, Codex `id_token`
-  in `auth.json`), `same_login` lehnt doppelte Abos nach `add` ab, `used_up_for` gilt je Abo.
+  in `auth.json`), `same_login` warnt bei doppelten Abos nach `add`/`login` (löscht nie); `login_dead`/`login_spent`: leerer oder abgelaufener Refresh-Token = abgemeldet → keine Identität, nicht `logged_in`, `default_of` nimmt dann das erste eingeloggte, `used_up_for` gilt je Abo.
   Pane-Rahmen: `App::name_accounts` (alle `ACCOUNTS_EVERY`) → `Pane::shown_account`
   (`account::shown`: Adresse vor dem @, bei Anbietern `provider_name` + Modell), dahinter das
   Modell aus `Meta`. Test: Fake-`claude` im

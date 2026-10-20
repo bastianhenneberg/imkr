@@ -102,13 +102,20 @@ impl Store {
 
     /// The account new shells of `tool` start in: the one set with
     /// `imkr account default`, else `standard`. One not logged in here
-    /// (synced from another machine, see `merge_in`) does not count yet.
+    /// (synced from another machine, see `merge_in`, or logged out) does not
+    /// count: then the first that is logged in, so that a new agent does
+    /// not start at a login screen.
     pub fn default_of(&self, tool: &str) -> String {
-        self.read()
-            .default
-            .get(tool)
-            .filter(|name| self.find(tool, name).is_some_and(|a| self.logged_in(&a)))
-            .cloned()
+        let set = self.read().default.get(tool).cloned();
+        if let Some(name) = &set
+            && self.find(tool, name).is_some_and(|a| self.logged_in(&a))
+        {
+            return name.clone();
+        }
+        self.of_tool(tool)
+            .into_iter()
+            .find(|a| self.logged_in(a))
+            .map(|a| a.name)
             .unwrap_or_else(|| STANDARD.to_owned())
     }
 
@@ -457,7 +464,7 @@ impl Store {
     /// token in Codex' `auth.json`. `None` for providers and accounts not
     /// logged in.
     pub fn identity(&self, account: &Account) -> Option<Identity> {
-        if account.url.is_some() {
+        if account.url.is_some() || self.login_dead(account) {
             return None;
         }
         match account.tool.as_str() {
@@ -508,10 +515,42 @@ impl Store {
             .find(|other| self.identity(other).is_some_and(|i| i.key == identity.key))
     }
 
+    /// The file holding the Claude login of `account`, `standard`'s too.
+    pub fn claude_credentials(&self, account: &Account) -> PathBuf {
+        self.dir_of(account)
+            .unwrap_or_else(|| self.usual_dir("claude"))
+            .join(".credentials.json")
+    }
+
+    /// Whether the Claude login of `account` is there but spent: Claude
+    /// Code empties it when the server refuses its refresh token, and
+    /// `.claude.json` still names who was logged in. Such a login needs
+    /// `/login` again; it is no subscription to fall back to or to count
+    /// twice. A login file it cannot read is not called dead.
+    pub fn login_dead(&self, account: &Account) -> bool {
+        if account.url.is_some() || account.tool != "claude" {
+            return false;
+        }
+        let Ok(text) = std::fs::read_to_string(self.claude_credentials(account)) else {
+            return false;
+        };
+        let Ok(login) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return false;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        login_spent(&login, now)
+    }
+
     /// Whether the account can be used: a subscription needs its login.
     pub fn logged_in(&self, account: &Account) -> bool {
         if account.url.is_some() {
             return true;
+        }
+        if self.login_dead(account) {
+            return false;
         }
         let Some(dir) = self.dir_of(account) else {
             return true;
@@ -597,6 +636,18 @@ fn base64url(text: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+/// Whether a Claude login (`.credentials.json`) can no longer renew
+/// itself at `now` (seconds): no refresh token, or one past its end.
+pub fn login_spent(login: &serde_json::Value, now: u64) -> bool {
+    let oauth = &login["claudeAiOauth"];
+    if !oauth.is_object() {
+        return false;
+    }
+    let refresh = oauth["refreshToken"].as_str().unwrap_or_default();
+    let ends = oauth["refreshTokenExpiresAt"].as_u64().unwrap_or(0) / 1000;
+    refresh.is_empty() || (ends > 0 && ends <= now)
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -785,6 +836,59 @@ mod tests {
         assert!(store.used_up_until(&find("twin")).is_some());
         assert_eq!(store.next_free("claude", STANDARD).unwrap().name, "other");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `~/.claude` logged out by Claude Code (refresh token emptied) while
+    /// `.claude.json` still names the address: no second subscription to
+    /// `stelljes`, not a default to start in, and not shown by the address
+    /// (2026-10-20: `account add` removed the fresh `stelljes` for it).
+    #[test]
+    fn a_spent_login_is_no_subscription() {
+        let base = std::env::temp_dir().join(format!("imkr-spent-login-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        claude_login(&store.home, "me@x", "org1");
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        let spent = r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,
+            "refreshTokenExpiresAt":4102444800000}}"#;
+        std::fs::write(store.usual_dir("claude").join(".credentials.json"), spent).unwrap();
+        store
+            .add(Account {
+                name: "me".into(),
+                tool: "claude".into(),
+                ..Account::default()
+            })
+            .unwrap();
+        claude_login(&store.root.join("claude/me"), "me@x", "org1");
+        let find = |name: &str| store.find("claude", name).unwrap();
+
+        assert!(store.login_dead(&find(STANDARD)));
+        assert!(!store.logged_in(&find(STANDARD)));
+        assert!(store.identity(&find(STANDARD)).is_none());
+        assert_eq!(shown(&store, &find(STANDARD)), STANDARD);
+        assert!(store.same_login(&find("me")).is_none());
+        // No default set: the first logged in, not the logged out standard.
+        assert_eq!(store.default_of("claude"), "me");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn spent_logins_are_told_from_old_keys() {
+        let login = |refresh: &str, ends: u64| {
+            serde_json::json!({"claudeAiOauth": {
+                "accessToken": "a", "refreshToken": refresh, "expiresAt": 0,
+                "refreshTokenExpiresAt": ends * 1000}})
+        };
+        // An old access key alone is no logout: Claude Code renews it.
+        assert!(!login_spent(&login("r", 2000), 1000));
+        assert!(login_spent(&login("", 2000), 1000));
+        assert!(login_spent(&login("r", 1000), 2000));
+        // Without an end date the refresh token counts as good.
+        assert!(!login_spent(&login("r", 0), 1000));
+        assert!(!login_spent(&serde_json::json!("secret"), 1000));
     }
 
     #[test]
