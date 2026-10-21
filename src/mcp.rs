@@ -67,7 +67,7 @@ fn tools() -> Value {
             "description": "Waits for a pane: with until (working, blocked, idle, done or ready) for its agent to reach that state, without until for the command running in its shell to end (then returns its output).",
             "inputSchema": { "type": "object", "required": ["pane"], "properties": {
                 "pane": pane,
-                "until": { "type": "string", "enum": ["working", "blocked", "idle", "done", "ready"] },
+                "until": { "type": "string", "enum": ["working", "blocked", "idle", "done", "failed", "ready"] },
                 "timeout": { "type": "integer", "description": "Seconds to wait at most." }
             }}
         },

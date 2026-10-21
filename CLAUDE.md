@@ -99,6 +99,11 @@ Projekt-Slug: `imkr`
   `sessions/**/*.jsonl`; Tokens je Agent aus den geteilten Transkripten, Claude je `message.id`
   einmal, ohne Cache-Lesen). CLI `imkr account usage [--json] [--wait]`, `Ctrl+B s u` =
   `Command::Usage` → Popup mit `--wait`.
+- Zustand `AgentState::Failed` (✗, magenta, Rang nach Blocked): Hook `StopFailure` → `imkr status
+  failed`, Grund aus `error` per `agent::failure_reason` → `Request::Status.reason` → `Pane::failure`.
+  Ohne Hook: `agent::failure` (Fehlertexte `FAILURES` in den untersten 8 Zeilen) + `QUIET_ERROR`
+  (5 s still) macht Working/geraten zu Failed; Idle/Blocked vom Hook bleiben. Meldung + Flash in
+  `update_agents`, auch im Blick. `Pane::failure_reason` für Liste/Meldung.
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
   (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). pi: Erweiterung
   `integrations/pi/imkr-agent-state.ts` (`PI_EXTENSION`, `install_pi_extension` nach

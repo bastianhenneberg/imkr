@@ -102,6 +102,9 @@ pub struct HandoverPane {
     pub history: String,
     pub screen: Vec<u8>,
     pub reported: Option<AgentState>,
+    /// Why the agent failed, see `Pane::failure`.
+    #[serde(default)]
+    pub failure: Option<String>,
     /// The agent's transcript, see `Pane::transcript`.
     #[serde(default)]
     pub transcript: Option<PathBuf>,

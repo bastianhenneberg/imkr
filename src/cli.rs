@@ -13,7 +13,7 @@ use crate::client;
 use crate::layout::PaneId;
 use crate::protocol::{self, RenameTarget, Request};
 
-/// `imkr status <working|blocked|idle|clear> [--pane N]`
+/// `imkr status <working|blocked|idle|failed|clear> [--pane N]`
 ///
 /// Meant for agent hooks, so it stays quiet and succeeds when it runs
 /// outside imkr or the server is gone: a hook must never break the agent.
@@ -21,14 +21,15 @@ pub fn status(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?;
     let [state] = rest.as_slice() else {
-        bail!("usage: imkr status <working|blocked|idle|clear> [--pane N]");
+        bail!("usage: imkr status <working|blocked|idle|failed|clear> [--pane N]");
     };
     let state = match state.as_str() {
         "working" => Some(AgentState::Working),
         "blocked" => Some(AgentState::Blocked),
         "idle" => Some(AgentState::Idle),
+        "failed" => Some(AgentState::Failed),
         "clear" => None,
-        other => bail!("unknown state {other:?}, use working, blocked, idle or clear"),
+        other => bail!("unknown state {other:?}, use working, blocked, idle, failed or clear"),
     };
     let Some(pane) = pane else {
         return Ok(());
@@ -48,6 +49,9 @@ pub fn status(args: &[String]) -> Result<()> {
         state,
         session: field("session_id"),
         transcript: field("transcript_path").map(std::path::PathBuf::from),
+        // `StopFailure` names the error, e.g. `rate_limit`.
+        reason: (state == Some(AgentState::Failed))
+            .then(|| crate::agent::failure_reason(&field("error").unwrap_or_default()).to_owned()),
     });
     Ok(())
 }
@@ -74,7 +78,7 @@ fn ignore_hook(hook: &serde_json::Value, state: Option<AgentState>) -> bool {
         return true;
     }
     let subagent = hook.get("agent_id").is_some_and(|id| !id.is_null());
-    subagent && matches!(state, Some(AgentState::Idle) | None)
+    subagent && matches!(state, Some(AgentState::Idle | AgentState::Failed) | None)
 }
 
 /// `imkr ls`: the running sessions with their panes and agents, then
@@ -119,6 +123,7 @@ pub fn ls(args: &[String]) -> Result<()> {
         let mut agents = String::new();
         for state in [
             AgentState::Blocked,
+            AgentState::Failed,
             AgentState::Done,
             AgentState::Working,
             AgentState::Idle,
@@ -555,6 +560,9 @@ fn wait_for_answer(socket: &std::path::Path, pane: PaneId) -> Result<()> {
                 println!("pane {pane} is asking something, see it with `imkr read --pane {pane}`");
                 break;
             }
+            Some("failed") if started => {
+                bail!("pane {pane} stopped with an error, see it with `imkr read --pane {pane}`")
+            }
             // Never an agent, or done with it.
             None if start.elapsed() > std::time::Duration::from_secs(5) => break,
             Some("idle" | "done") if started => break,
@@ -869,15 +877,18 @@ pub fn wait(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
     let until = take_value(&mut rest, "--until")?.context(
-        "usage: imkr wait [--pane N] --until <working|blocked|idle|done|ready> [--timeout S]",
+        "usage: imkr wait [--pane N] --until <working|blocked|idle|done|failed|ready> [--timeout S]",
     )?;
     let wanted: &[&str] = match until.as_str() {
-        "ready" => &["idle", "done"],
+        "ready" => &["idle", "done", "failed"],
         "working" => &["working"],
         "blocked" => &["blocked"],
         "idle" => &["idle"],
         "done" => &["done"],
-        other => bail!("unknown state {other:?}, use working, blocked, idle, done or ready"),
+        "failed" => &["failed"],
+        other => {
+            bail!("unknown state {other:?}, use working, blocked, idle, done, failed or ready")
+        }
     };
     let timeout = take_value(&mut rest, "--timeout")?
         .map(|s| s.parse::<f64>().context("--timeout takes seconds"))
@@ -1628,6 +1639,7 @@ const HOOKS: &[(&str, &str, &str)] = &[
         "blocked",
     ),
     ("Stop", "*", "idle"),
+    ("StopFailure", "*", "failed"),
     ("SessionEnd", "*", "clear"),
 ];
 

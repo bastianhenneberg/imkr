@@ -318,6 +318,7 @@ pub struct Hook {
 /// The events a `Hook` can be `on`.
 pub const HOOK_EVENTS: &[&str] = &[
     "blocked",
+    "failed",
     "done",
     "working",
     "idle",

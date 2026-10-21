@@ -63,7 +63,7 @@ stateDiagram-v2
     idle --> working: next prompt
 ```
 
-`● working`, `◆ blocked`, `✦ done`, `✓ idle`. Without help imkr guesses from the screen. For
+`● working`, `◆ blocked`, `✦ done`, `✓ idle`, `✗ failed` (limit reached, API error). Without help imkr guesses from the screen. For
 exact states let Claude Code tell it:
 
 ```bash

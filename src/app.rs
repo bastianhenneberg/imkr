@@ -2175,6 +2175,7 @@ impl App {
                 state,
                 session,
                 transcript,
+                reason,
             } => {
                 // An agent in a pane that moved on still reports here.
                 if let Some((socket, there)) = self.moved.get(&pane).cloned() {
@@ -2183,12 +2184,14 @@ impl App {
                         state,
                         session,
                         transcript,
+                        reason,
                     };
                     thread::spawn(move || crate::client::request_at(&socket, request));
                     return Ok(serde_json::json!({ "pane": pane, "moved": true }));
                 }
                 let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
                 p.reported = state;
+                p.failure = reason;
                 if session.is_some() {
                     p.session = session;
                 }
@@ -2412,7 +2415,7 @@ impl App {
                     "account": pane.account(),
                     "tail": matches!(
                         self.shown_state(id),
-                        Some(AgentState::Blocked | AgentState::Done)
+                        Some(AgentState::Blocked | AgentState::Done | AgentState::Failed)
                     )
                     .then(|| agent::tail(pane.screen().screen(), INBOX_LINES)),
                 }));
@@ -2493,7 +2496,7 @@ impl App {
             }
             let ready = matches!(
                 self.shown_state(id),
-                None | Some(AgentState::Idle | AgentState::Done)
+                None | Some(AgentState::Idle | AgentState::Done | AgentState::Failed)
             );
             // One at a time: after a message the agent gets a few seconds to
             // start on it, and older messages for it go first.
@@ -3429,7 +3432,11 @@ impl App {
                 {
                     Some(AgentState::Done)
                 }
-                AgentState::Working | AgentState::Blocked if was != Some(state) => Some(state),
+                AgentState::Working | AgentState::Blocked | AgentState::Failed
+                    if was != Some(state) =>
+                {
+                    Some(state)
+                }
                 _ => None,
             };
             if kept == Some(AgentState::Done) && self.config.checkpoints {
@@ -3454,6 +3461,16 @@ impl App {
                 self.flash = Some(format!("pane {id} needs you · ^B a"));
                 self.broadcast(b"\x07");
                 self.notify(id, "needs you");
+            }
+            // Said even in view: it looked busy, and the user waits for it.
+            if state == AgentState::Failed && was != Some(AgentState::Failed) {
+                let reason = self
+                    .panes
+                    .get(&id)
+                    .map_or_else(|| "error".to_owned(), |p| p.failure_reason().to_owned());
+                self.flash = Some(format!("pane {id} stopped: {reason} · ^B a"));
+                self.broadcast(b"\x07");
+                self.notify(id, &format!("stopped: {reason}"));
             }
         }
         self.unseen.retain(|id| seen.contains_key(id));
@@ -4010,12 +4027,14 @@ impl App {
             .agents
             .iter()
             .filter(|(id, (state, _))| {
-                *state == AgentState::Blocked || self.shown_state(**id) == Some(AgentState::Done)
+                matches!(state, AgentState::Blocked | AgentState::Failed)
+                    || self.shown_state(**id) == Some(AgentState::Done)
             })
             .map(|(&id, &(_, since))| (id, since))
             .collect();
         waiting.sort_by_key(|&(id, since)| {
-            (self.shown_state(id) != Some(AgentState::Blocked), since, id)
+            let urgency = self.shown_state(id).map_or(9, sidebar::urgency);
+            (urgency, since, id)
         });
         let Some(&(target, _)) = waiting
             .iter()
@@ -6747,7 +6766,14 @@ impl App {
                         ' '
                     },
                     title: format!("{} {program}", state.symbol()),
-                    hint: format!("{place} · {}", sidebar::age(since)),
+                    hint: match (state, &at) {
+                        (AgentState::Failed, AgentAt::Here(id)) => format!(
+                            "{place} · {} · {}",
+                            self.panes.get(id).map_or("error", Pane::failure_reason),
+                            sidebar::age(since)
+                        ),
+                        _ => format!("{place} · {}", sidebar::age(since)),
+                    },
                     danger: state == AgentState::Blocked,
                     apart: false,
                     color: sidebar::state_style(state).fg,
@@ -6796,7 +6822,12 @@ impl App {
         let mut entries: Vec<_> = self
             .agent_entries()
             .into_iter()
-            .filter(|(state, ..)| matches!(state, AgentState::Blocked | AgentState::Done))
+            .filter(|(state, ..)| {
+                matches!(
+                    state,
+                    AgentState::Blocked | AgentState::Done | AgentState::Failed
+                )
+            })
             .collect();
         // Machines in the order of `agent_entries`, those waiting first in
         // each.
@@ -6809,7 +6840,7 @@ impl App {
         entries.sort_by_key(|(state, _, item)| {
             (
                 groups.iter().position(|g| *g == item.group),
-                *state != AgentState::Blocked,
+                sidebar::urgency(*state),
             )
         });
         entries
@@ -9822,6 +9853,7 @@ impl App {
             // the tiling even without focus.
             let border = match (focused, state) {
                 (_, Some(AgentState::Blocked)) => Style::new().fg(t.danger),
+                (_, Some(AgentState::Failed)) => Style::new().fg(t.magenta),
                 (true, _) => Style::new().fg(t.accent),
                 (false, _) if floating => Style::new().fg(t.cyan),
                 (false, _) => Style::new().fg(t.subtle),
@@ -11297,10 +11329,9 @@ impl App {
                 } else {
                     &self.hidden[&n]
                 };
-                let waiting = self
-                    .agents
-                    .iter()
-                    .any(|(id, (state, _))| *state == AgentState::Blocked && ws.contains(*id));
+                let waiting = self.agents.iter().any(|(id, (state, _))| {
+                    matches!(state, AgentState::Blocked | AgentState::Failed) && ws.contains(*id)
+                });
                 if waiting {
                     Span::styled(
                         tab_label(n, ws),
@@ -11494,7 +11525,14 @@ impl App {
                 let text = self.flash.as_deref().unwrap_or_default();
                 // Messages about waiting agents are warnings, the rest are
                 // confirmations like "copied".
-                if self.agents.values().any(|(s, _)| *s == AgentState::Blocked)
+                if self.agents.values().any(|(s, _)| *s == AgentState::Failed)
+                    && text.contains("stopped:")
+                {
+                    spans.push(Span::styled(
+                        format!("{} {text}", AgentState::Failed.symbol()),
+                        state_style(AgentState::Failed),
+                    ));
+                } else if self.agents.values().any(|(s, _)| *s == AgentState::Blocked)
                     && text.contains("needs you")
                 {
                     spans.push(Span::styled(
@@ -11511,6 +11549,7 @@ impl App {
             Mode::Normal => {
                 for state in [
                     AgentState::Blocked,
+                    AgentState::Failed,
                     AgentState::Done,
                     AgentState::Working,
                     AgentState::Idle,
@@ -11817,6 +11856,7 @@ fn remote_change(before: Option<&String>, now: &str) -> Option<&'static str> {
     let before = before?;
     match (before.as_str(), now) {
         (old, "blocked") if old != "blocked" => Some("needs you"),
+        (old, "failed") if old != "failed" => Some("stopped with an error"),
         ("working" | "blocked", "idle" | "done") => Some("is done"),
         _ => None,
     }
@@ -12424,6 +12464,11 @@ mod tests {
         );
         // Still waiting, just busy, or seen for the first time: quiet.
         assert_eq!(remote_change(was("blocked").as_ref(), "blocked"), None);
+        assert_eq!(
+            remote_change(was("working").as_ref(), "failed"),
+            Some("stopped with an error")
+        );
+        assert_eq!(remote_change(was("failed").as_ref(), "failed"), None);
         assert_eq!(remote_change(was("idle").as_ref(), "working"), None);
         assert_eq!(remote_change(None, "blocked"), None);
     }

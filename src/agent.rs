@@ -21,6 +21,9 @@ pub enum AgentState {
     /// Finished while the user was elsewhere and not looked at since. Only
     /// shown, never reported: it is `Idle` the user has not seen yet.
     Done,
+    /// Stopped by an error: a used up limit, a refused login, an API error.
+    /// It waits for the user like `Blocked`, but nothing will answer it.
+    Failed,
 }
 
 impl AgentState {
@@ -30,14 +33,21 @@ impl AgentState {
             AgentState::Blocked => "◆",
             AgentState::Idle => "✓",
             AgentState::Done => "✦",
+            AgentState::Failed => "✗",
         }
     }
 
     /// The state `name` names, as `name` gives it.
     pub fn from_name(name: &str) -> Option<Self> {
-        [Self::Working, Self::Blocked, Self::Idle, Self::Done]
-            .into_iter()
-            .find(|state| state.name() == name)
+        [
+            Self::Working,
+            Self::Blocked,
+            Self::Idle,
+            Self::Done,
+            Self::Failed,
+        ]
+        .into_iter()
+        .find(|state| state.name() == name)
     }
 
     pub fn name(self) -> &'static str {
@@ -46,6 +56,7 @@ impl AgentState {
             AgentState::Blocked => "blocked",
             AgentState::Idle => "idle",
             AgentState::Done => "done",
+            AgentState::Failed => "failed",
         }
     }
 }
@@ -71,6 +82,10 @@ const SHELLS: &[&str] = &["bash", "zsh", "fish", "sh", "dash", "nu", "elvish", "
 
 /// Output within this time counts as working.
 pub const ACTIVE: Duration = Duration::from_millis(1500);
+
+/// How long an agent with an error on its screen is quiet before it counts
+/// as stopped by it: a working agent keeps drawing its spinner.
+pub const QUIET_ERROR: Duration = Duration::from_secs(5);
 
 /// The user's own additions from the config: programs that are agents,
 /// and phrases that mean a question waits. See `configure`.
@@ -235,6 +250,51 @@ pub fn question_phrase(screen: &crate::term::Parser) -> Option<String> {
         .cloned()
 }
 
+/// What agents print when a turn ends in an error, with the reason shown
+/// for it. Looked for only at the bottom of a quiet agent's screen.
+const FAILURES: &[(&str, &str)] = &[
+    ("usage limit", "limit reached"),
+    ("hit your limit", "limit reached"),
+    ("session limit", "limit reached"),
+    ("weekly limit", "limit reached"),
+    ("limit reached", "limit reached"),
+    ("rate limit", "limit reached"),
+    ("Rate limit", "limit reached"),
+    ("rate_limit", "limit reached"),
+    ("credit balance is too low", "no credit"),
+    ("Please run /login", "login refused"),
+    ("OAuth token has expired", "login refused"),
+    ("authentication_error", "login refused"),
+    ("overloaded", "overloaded"),
+    ("Overloaded", "overloaded"),
+    ("API Error", "API error"),
+    ("stream error", "API error"),
+    ("stream disconnected", "API error"),
+];
+
+/// Why the agent stopped, when the bottom of its screen shows an error.
+pub fn failure(screen: &crate::term::Parser) -> Option<&'static str> {
+    let (_, cols) = screen.size();
+    let last = last_row(screen);
+    let text = screen.contents_between(last.saturating_sub(7), 0, last, cols);
+    FAILURES
+        .iter()
+        .find(|(phrase, _)| text.contains(phrase))
+        .map(|(_, reason)| *reason)
+}
+
+/// The reason shown for an error Claude Code's `StopFailure` hook names.
+pub fn failure_reason(error: &str) -> &'static str {
+    match error {
+        "rate_limit" => "limit reached",
+        "overloaded" => "overloaded",
+        "authentication_failed" | "oauth_org_not_allowed" => "login refused",
+        "billing_error" => "no credit",
+        "max_output_tokens" => "answer too long",
+        _ => "API error",
+    }
+}
+
 /// The last row of the screen with text on it.
 fn last_row(screen: &crate::term::Parser) -> u16 {
     let (rows, cols) = screen.size();
@@ -272,6 +332,7 @@ pub fn state(
     reported: Option<AgentState>,
     since_output: Duration,
     asking: bool,
+    failed: bool,
 ) -> Option<AgentState> {
     // A script run by a shell, like `bash /usr/bin/claude`, is the agent,
     // not the shell.
@@ -279,12 +340,19 @@ pub fn state(
     if argv.is_empty() || (agent.is_none() && is_shell(argv)) {
         return None;
     }
-    if reported.is_some() {
-        return reported;
+    // Working, said or guessed, but quiet with an error at the bottom: the
+    // turn ended in it, and no hook says so (Codex, or an older Claude).
+    let quiet_error = failed && since_output >= QUIET_ERROR;
+    match reported {
+        Some(AgentState::Working) if quiet_error => return Some(AgentState::Failed),
+        Some(_) => return reported,
+        None => {}
     }
     agent?;
     Some(if since_output < ACTIVE {
         AgentState::Working
+    } else if quiet_error {
+        AgentState::Failed
     } else if asking {
         AgentState::Blocked
     } else {
@@ -395,12 +463,13 @@ mod tests {
                 &argv(&["-zsh"]),
                 Some(AgentState::Working),
                 Duration::ZERO,
+                false,
                 false
             ),
             None
         );
         assert_eq!(
-            state(&argv(&["/bin/bash"]), None, Duration::ZERO, false),
+            state(&argv(&["/bin/bash"]), None, Duration::ZERO, false, false),
             None
         );
     }
@@ -409,7 +478,7 @@ mod tests {
     fn agents_run_as_shell_scripts_are_agents() {
         let script = argv(&["/bin/bash", "/home/me/bin/claude"]);
         assert_eq!(
-            state(&script, None, Duration::ZERO, false),
+            state(&script, None, Duration::ZERO, false, false),
             Some(AgentState::Working)
         );
     }
@@ -418,7 +487,7 @@ mod tests {
     fn reported_state_wins_for_any_program() {
         let reported = Some(AgentState::Blocked);
         assert_eq!(
-            state(&argv(&["my-tool"]), reported, Duration::ZERO, false),
+            state(&argv(&["my-tool"]), reported, Duration::ZERO, false, false),
             reported
         );
     }
@@ -428,13 +497,65 @@ mod tests {
         let quiet = Duration::from_secs(5);
         let claude = argv(&["claude"]);
         assert_eq!(
-            state(&claude, None, Duration::ZERO, false),
+            state(&claude, None, Duration::ZERO, false, false),
             Some(AgentState::Working)
         );
-        assert_eq!(state(&claude, None, quiet, false), Some(AgentState::Idle));
+        assert_eq!(
+            state(&claude, None, quiet, false, false),
+            Some(AgentState::Idle)
+        );
 
-        assert_eq!(state(&claude, None, quiet, true), Some(AgentState::Blocked));
+        assert_eq!(
+            state(&claude, None, quiet, true, false),
+            Some(AgentState::Blocked)
+        );
 
-        assert_eq!(state(&argv(&["htop"]), None, quiet, true), None);
+        assert_eq!(state(&argv(&["htop"]), None, quiet, true, false), None);
+    }
+
+    #[test]
+    fn a_quiet_agent_with_an_error_at_the_bottom_failed() {
+        let claude = argv(&["claude"]);
+        let quiet = QUIET_ERROR;
+        let working = Some(AgentState::Working);
+        // Its hook said working, then the turn died: no hook said more.
+        assert_eq!(
+            state(&claude, working, quiet, false, true),
+            Some(AgentState::Failed)
+        );
+        // Still drawing: working, whatever the screen says.
+        assert_eq!(
+            state(&claude, working, Duration::ZERO, false, true),
+            working
+        );
+        // Done or waiting as its hook says: an old error does not count.
+        for said in [AgentState::Idle, AgentState::Blocked] {
+            assert_eq!(state(&claude, Some(said), quiet, false, true), Some(said));
+        }
+        // Without hooks, like Codex.
+        assert_eq!(
+            state(&argv(&["codex"]), None, quiet, false, true),
+            Some(AgentState::Failed)
+        );
+    }
+
+    #[test]
+    fn errors_are_read_from_the_bottom_of_the_screen() {
+        let limit = screen("> fix it\r\n\r\n  ⎿  You've hit your session limit · resets 5pm\r\n");
+        assert_eq!(failure(&limit), Some("limit reached"));
+        let api = screen("  ⎿  API Error: 529 {\"type\":\"error\"}\r\n");
+        assert_eq!(failure(&api), Some("API error"));
+        assert_eq!(failure(&screen("all good\r\n> ")), None);
+        // Far above the bottom it is history, not the end of the turn.
+        let old = format!("API Error: 500\r\n{}", "line\r\n".repeat(9));
+        assert_eq!(failure(&screen(&old)), None);
+    }
+
+    #[test]
+    fn hook_errors_get_short_reasons() {
+        assert_eq!(failure_reason("rate_limit"), "limit reached");
+        assert_eq!(failure_reason("authentication_failed"), "login refused");
+        assert_eq!(failure_reason("server_error"), "API error");
+        assert_eq!(failure_reason(""), "API error");
     }
 }

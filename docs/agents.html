@@ -195,8 +195,11 @@ main { min-width: 0; }
 <main class="">
 <article class="doc"><h1 id="agents">Agents</h1>
 <p>Every pane running a coding agent shows what it is doing: <code>● working</code>, <code>◆ blocked</code> (it waits
-for you), <code>✦ done</code> (finished while you were elsewhere) or <code>✓ idle</code>. A window tab turns red when an agent there waits, the bell rings, and
-<code>Ctrl+B a</code> takes you to it. You also get a desktop notification when an agent waits or finishes
+for you), <code>✦ done</code> (finished while you were elsewhere), <code>✓ idle</code> or <code>✗ failed</code> (its turn ended
+in an error: a used up limit, a refused login, an API error; magenta, with the reason). A window
+tab turns red when an agent there waits or failed, the bell rings, and <code>Ctrl+B a</code> takes you to it.
+An agent counts as failed when its <code>StopFailure</code> hook says so, or, without hooks (Codex), when it
+is quiet for 5 seconds with an error like „usage limit“ or „API Error“ at the bottom of its screen. You also get a desktop notification when an agent waits or finishes
 while you look elsewhere or are detached: through <code>notify-send</code>, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting <code>notifications = "system" | "terminal" | "off"</code>).</p>
 <p>imkr recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen,

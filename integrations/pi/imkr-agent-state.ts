@@ -1,4 +1,4 @@
-// imkr: reports pi's state (working, blocked, idle) to the imkr pane it runs
+// imkr: reports pi's state (working, blocked, failed, idle) to the imkr pane it runs
 // in, as the hooks do for Claude Code. Installed by `imkr hooks --install`,
 // which overwrites this file; does nothing outside imkr.
 // @ts-nocheck
@@ -77,7 +77,7 @@ export default function (pi) {
     // An error pi retries by itself starts the next turn soon: only one
     // that stays needs the user.
     const error = failed(event);
-    later = setTimeout(() => report(error ? "blocked" : "idle", session), error ? 3000 : 250);
+    later = setTimeout(() => report(error ? "failed" : "idle", session), error ? 3000 : 250);
     later.unref?.();
   });
 

@@ -37,6 +37,8 @@ pub struct Pane {
     shell: Arc<Mutex<Shell>>,
     /// The agent state the program reported with `imkr status`.
     pub reported: Option<AgentState>,
+    /// Why its hook said the agent failed, e.g. "limit reached".
+    pub failure: Option<String>,
     /// The agent's session id from its hooks, e.g. for `claude --resume`.
     pub session: Option<String>,
     /// The agent's transcript, from its hooks, and what it tells (read
@@ -279,6 +281,7 @@ impl Pane {
         let before = replay(&from.history, &from.screen, size.0);
         let mut pane = Self::start(id, size, Box::new(master), child, &before, events)?;
         pane.reported = from.reported;
+        pane.failure = from.failure.clone();
         pane.transcript = from.transcript.clone();
         *pane.remote.lock().unwrap() = from.remote.clone();
         // What it wrote was read before the handover: the pane is not busy
@@ -314,6 +317,7 @@ impl Pane {
             history,
             screen,
             reported: self.reported,
+            failure: self.failure.clone(),
             transcript: self.transcript.clone(),
             remote: self.remote_agent(),
         })
@@ -353,6 +357,7 @@ impl Pane {
             links: Arc::new(Mutex::new(Vec::new())),
             shell: Arc::new(Mutex::new(Shell::default())),
             reported: None,
+            failure: None,
             session: None,
             transcript: None,
             meta: None,
@@ -646,7 +651,15 @@ impl Pane {
         if !asking {
             self.answered.set(false);
         }
-        agent::state(&argv, self.reported, since, asking && !self.answered.get())
+        let failed =
+            since >= agent::QUIET_ERROR && agent::failure(self.screen().screen()).is_some();
+        agent::state(
+            &argv,
+            self.reported,
+            since,
+            asking && !self.answered.get(),
+            failed,
+        )
     }
 
     /// The shell's commands as its integration tells them: whether it has
@@ -793,6 +806,15 @@ impl Pane {
                 .trim_start_matches('-')
                 .to_owned(),
         )
+    }
+
+    /// Why the agent stopped: what its hook said, or the error at the
+    /// bottom of its screen.
+    pub fn failure_reason(&self) -> &str {
+        self.failure
+            .as_deref()
+            .or_else(|| agent::failure(self.screen().screen()))
+            .unwrap_or("error")
     }
 
     /// The working directory of the program in the foreground of this pane,

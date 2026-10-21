@@ -1,8 +1,11 @@
 # Agents
 
 Every pane running a coding agent shows what it is doing: `● working`, `◆ blocked` (it waits
-for you), `✦ done` (finished while you were elsewhere) or `✓ idle`. A window tab turns red when an agent there waits, the bell rings, and
-`Ctrl+B a` takes you to it. You also get a desktop notification when an agent waits or finishes
+for you), `✦ done` (finished while you were elsewhere), `✓ idle` or `✗ failed` (its turn ended
+in an error: a used up limit, a refused login, an API error; magenta, with the reason). A window
+tab turns red when an agent there waits or failed, the bell rings, and `Ctrl+B a` takes you to it.
+An agent counts as failed when its `StopFailure` hook says so, or, without hooks (Codex), when it
+is quiet for 5 seconds with an error like „usage limit“ or „API Error“ at the bottom of its screen. You also get a desktop notification when an agent waits or finishes
 while you look elsewhere or are detached: through `notify-send`, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting `notifications = "system" | "terminal" | "off"`).
 

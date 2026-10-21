@@ -148,9 +148,10 @@ pub enum Target {
 pub fn urgency(state: AgentState) -> u8 {
     match state {
         AgentState::Blocked => 0,
-        AgentState::Done => 1,
-        AgentState::Working => 2,
-        AgentState::Idle => 3,
+        AgentState::Failed => 1,
+        AgentState::Done => 2,
+        AgentState::Working => 3,
+        AgentState::Idle => 4,
     }
 }
 
@@ -205,6 +206,7 @@ pub fn state_style(state: AgentState) -> Style {
         AgentState::Blocked => Style::new().fg(t.danger).add_modifier(Modifier::BOLD),
         AgentState::Done => Style::new().fg(t.success).add_modifier(Modifier::BOLD),
         AgentState::Idle => Style::new().fg(t.success),
+        AgentState::Failed => Style::new().fg(t.magenta).add_modifier(Modifier::BOLD),
     }
 }
 

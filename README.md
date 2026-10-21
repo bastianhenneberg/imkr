@@ -31,7 +31,7 @@ sessions across machines, is imkr's own.
 ## What it does
 
 - **Knows your agents.** Claude Code, Codex, opencode, aider, gemini, pi and more show as
-  `● working`, `◆ blocked` or `✦ done`. One key (`Ctrl+B a`) takes you to the one that waited
+  `● working`, `◆ blocked`, `✦ done` or `✗ failed` (limit reached, API error). One key (`Ctrl+B a`) takes you to the one that waited
   longest; the inbox (`Ctrl+B i`) answers them without going there.
 - **Every machine in one place.** The sessions and agents of all your machines in one sidebar,
   one search (`Ctrl+B /`) and one inbox. Switching goes over ssh, your terminal stays local.

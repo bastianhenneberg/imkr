@@ -279,8 +279,9 @@ pub fn sort_dots(dots: &mut [(AgentState, Option<u8>)]) {
 /// The order a session's agents count in: waiting for you, then still
 /// working, then finished. A session in which one agent still works is not
 /// finished because another is (it showed green while the other worked).
-pub const SESSION_ORDER: [AgentState; 4] = [
+pub const SESSION_ORDER: [AgentState; 5] = [
     AgentState::Blocked,
+    AgentState::Failed,
     AgentState::Working,
     AgentState::Done,
     AgentState::Idle,
@@ -371,6 +372,9 @@ pub enum Request {
         /// Its transcript, for the model and context shown.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transcript: Option<PathBuf>,
+        /// Why the agent failed, with `state` failed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     /// All panes.
     List,
@@ -826,6 +830,14 @@ mod tests {
                 state: Some(AgentState::Blocked),
                 session: Some("abc".into()),
                 transcript: Some("/tmp/t.jsonl".into()),
+                reason: None,
+            }),
+            ClientMsg::Request(Request::Status {
+                pane: 4,
+                state: Some(AgentState::Failed),
+                session: None,
+                transcript: None,
+                reason: Some("limit reached".into()),
             }),
             ClientMsg::Request(Request::Notify {
                 text: "build finished".into(),
