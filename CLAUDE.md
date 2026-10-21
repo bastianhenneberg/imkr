@@ -80,7 +80,9 @@ Projekt-Slug: `imkr`
   `accounts/locks/` und Neu-Lesen unter der Sperre; `claude_runs_in`). Refresh-Token-Ende ist fest
   ab `/login` (~30 Tage), Erneuern verschiebt es nicht → keine Dauer-Erneuerung, nur Vorwarnung.
   `Pane::spawn`: gespeichertes Konto abgemeldet → `default_of`.
-  Agent mit Kontowahl: `Ctrl+B k` (`Command::NewAgent` → `new_agent`) und Vorlagen-Fenster mit
+  Agent mit Kontowahl: `Ctrl+B k` (`Command::NewAgent` → `new_agent`; Ziel `Config::new_agent_in`
+  pane|window, `p` in der Liste schaltet um, `pane_for_agent`: Shell vorn → dieses Pane, sonst
+  `split(Row)`, kein Platz/Popup → neues Fenster) und Vorlagen-Fenster mit
   `claude`/`codex` in `restore` (nur bei >1 eingeloggtem Konto) → `AgentStart` + `Mode::AgentAccount`
   (`agent_start_items`, `start_agent` tippt `imkr account run T:N -- <cmd>`, Esc startet Vorlagen
   im Standardkonto); `attach` lässt eine wartende Frage stehen. Befehl je Agent: `agent_commands`.

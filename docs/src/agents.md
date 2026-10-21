@@ -88,9 +88,11 @@ Every agent's frame says what it runs on, after its state: `claude ● working �
 (the subscription by its address before the @, then the model), or `· Ollama · qwen3-coder` for a
 provider.
 
-`Ctrl+B k` opens a new window with an agent and asks which account it runs in: every account
-of Claude Code and Codex (those installed), logged out ones marked, the default selected; Enter
-or its number starts it. With only one account logged in, it starts right away. What it starts
+`Ctrl+B k` starts an agent and asks which account it runs in: every account of Claude Code and
+Codex (those installed), logged out ones marked, the default selected; Enter or its number starts
+it. With only one account logged in, it starts right away. It starts in the focused pane, or in a
+new pane beside it when a program runs there; `p` in the list switches to a new window instead
+(until imkr ends). `new_agent_in = "window"` in the config makes the new window the default. What it starts
 is `[agent_commands]` in the config, else the agent's name:
 
 ```toml

@@ -232,6 +232,10 @@ pub struct Config {
     /// `claude = "claude --dangerously-skip-permissions"`; else its name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub agent_commands: BTreeMap<String, String>,
+    /// Where `Ctrl+B k` starts an agent: `pane`, the focused one (a pane
+    /// beside it when a program runs there), or `window`, a new one. `p` in
+    /// its list switches for the time imkr runs.
+    pub new_agent_in: String,
     /// Programs to treat as coding agents besides those imkr knows, by the
     /// name they run under, e.g. `my-agent`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -473,6 +477,7 @@ impl Default for Config {
             resume: Resume::default(),
             resume_commands: BTreeMap::new(),
             agent_commands: BTreeMap::new(),
+            new_agent_in: "pane".into(),
             images: true,
             renumber_windows: false,
             marks_on_alt: true,
@@ -835,6 +840,13 @@ mod tests {
     #[test]
     fn agent_commands_default_to_the_agent() {
         assert_eq!(Config::default().agent_command("codex"), "codex");
+        assert_eq!(Config::default().new_agent_in, "pane");
+        assert_eq!(
+            Config::parse("new_agent_in = \"window\"\n")
+                .unwrap()
+                .new_agent_in,
+            "window"
+        );
         let config = Config::parse(
             "[agent_commands]\nclaude = \"claude --dangerously-skip-permissions\"\ncodex = \"\"\n",
         )

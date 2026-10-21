@@ -10251,7 +10251,10 @@ impl App {
                     Some(start) if !start.panes.is_empty() => {
                         format!(" ⬢ {} of the template: which account? ", start.tools[0])
                     }
-                    _ => " ⬢ New agent: which account? ".to_owned(),
+                    _ if self.agent_in_pane() => {
+                        " ⬢ New agent in this pane: which account? ".to_owned()
+                    }
+                    _ => " ⬢ New agent in a new window: which account? ".to_owned(),
                 };
                 let (_, items) = self.agent_start_items();
                 self.draw_list(
@@ -10575,6 +10578,22 @@ impl App {
                 self.mode = Mode::AgentAccount((selected + 1) % count);
                 return;
             }
+            // This pane or a new window, for a new agent; until imkr ends.
+            KeyCode::Char('p') => {
+                if self
+                    .agent_start
+                    .as_ref()
+                    .is_some_and(|s| s.panes.is_empty())
+                {
+                    let other = if self.agent_in_pane() {
+                        "window"
+                    } else {
+                        "pane"
+                    };
+                    self.config.new_agent_in = other.into();
+                }
+                return;
+            }
             KeyCode::Enter => accounts.get(selected).cloned(),
             KeyCode::Char(c) => c
                 .to_digit(10)
@@ -10596,6 +10615,12 @@ impl App {
         };
         let tool = account.tool.clone();
         let mut panes = start.panes;
+        if panes.is_empty()
+            && self.agent_in_pane()
+            && let Some(id) = self.pane_for_agent()
+        {
+            panes.push((id, self.config.agent_command(&tool)));
+        }
         if panes.is_empty() {
             let Some(n) = self.free_workspace() else {
                 self.flash = Some("all 9 windows are in use".into());
@@ -10629,6 +10654,29 @@ impl App {
         if let Some(rest) = self.waiting_agents.take() {
             self.ask_agent_account(rest);
         }
+    }
+
+    /// Whether `Ctrl+B k` starts in the focused pane, see
+    /// `Config::new_agent_in`.
+    fn agent_in_pane(&self) -> bool {
+        self.config.new_agent_in != "window"
+    }
+
+    /// The pane a new agent starts in, in this window: the focused one
+    /// when its shell waits for a command, else a new one beside it.
+    /// `None` when there is no room, or a popup is shown.
+    fn pane_for_agent(&mut self) -> Option<PaneId> {
+        if self.shown_popup().is_some() {
+            return None;
+        }
+        let focus = self.ws.focus;
+        let pane = self.panes.get(&focus)?;
+        let argv = pane.foreground_argv();
+        if !argv.is_empty() && agent::is_shell(&argv) && agent::agent_name(&argv).is_none() {
+            return Some(focus);
+        }
+        self.split(Axis::Row);
+        (self.ws.focus != focus).then_some(self.ws.focus)
     }
 
     /// The list shown now, if one is: its items and the one selected.
@@ -11485,7 +11533,7 @@ impl App {
             Mode::AgentAccount(_) => (
                 "NEW AGENT",
                 t.accent,
-                "↑↓ choose · Enter or 1-9 start it in that account · Esc cancel",
+                "↑↓ choose · Enter or 1-9 start it in that account · p this pane / new window · Esc cancel",
             ),
             Mode::Picker => ("GO TO", t.cyan, "type to filter · Enter go · Esc cancel"),
             Mode::Sidebar(_) => (
