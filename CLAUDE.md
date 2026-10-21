@@ -483,7 +483,7 @@ Projekt-Slug: `imkr`
   schließt ein Pane (nicht das letzte). Test: Skript mit tmux-Befehlen in einem Pane.
 - Layouts: `src/shapes.rs` (`Shape` = Splits ohne Panes, `of`, `preset` wie tmux, `build` mit den
   Panes in Reihenfolge, gespeichert in `layouts.json` neben der Config), `App::layout`
-  (`Request::Layout`, `Ctrl+B w l` → `Mode::Layouts`). main-* nicht angleichen (60 % Hauptpane).
+  (`Request::Layout`, `Ctrl+B w l` → `Mode::Layouts`). `Ctrl+B w x` → `Action::CloseWorkspace` → `App::close_workspace` (alle Panes per `close`, Rückfrage). main-* nicht angleichen (60 % Hauptpane).
 - Worktrees: `src/worktree.rs` (`create`: neben dem Haupt-Repo `<repo>--<name>`, über
   `--git-common-dir` auch aus einem Worktree heraus), `App::worktree_window` (`Request::Worktree`,
   `Ctrl+B w t` per `PromptFor::Worktree`). Entfernen bleibt bei git.

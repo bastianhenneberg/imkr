@@ -65,6 +65,8 @@ pub enum Command {
     MoveWorkspace,
     /// Number the windows 1, 2, 3 … again, closing the gaps.
     RenumberWorkspaces,
+    /// Close the active window with all its panes, asking first.
+    CloseWorkspace,
     /// The layouts to give this window: presets and saved ones.
     Layouts,
     /// Show or hide the popup used last.
@@ -850,6 +852,12 @@ pub const BINDINGS: &[Binding] = &[
         keys: &[(Key::plain(Char('h')), C::HostedWindow)],
     },
     Binding {
+        label: "x",
+        description: "close window",
+        group: Group::Workspaces,
+        keys: &[(Key::plain(Char('x')), C::CloseWorkspace)],
+    },
+    Binding {
         label: "m",
         description: "move to session",
         group: Group::Workspaces,
@@ -1394,6 +1402,10 @@ mod tests {
         assert_eq!(
             lookup(Menu::Workspaces, event(KeyCode::Backspace, none)),
             Some(C::Back)
+        );
+        assert_eq!(
+            lookup(Menu::Workspaces, event(Char('x'), none)),
+            Some(C::CloseWorkspace)
         );
         assert_eq!(lookup(Menu::Workspaces, event(Char('%'), none)), None);
     }

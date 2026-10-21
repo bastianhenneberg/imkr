@@ -447,6 +447,8 @@ enum MenuEntry {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
     ClosePane(PaneId),
+    /// Close window n with every pane in it.
+    CloseWorkspace(u8),
     KillServer,
     /// End the session named in `App::confirm_target`.
     EndSession,
@@ -4456,6 +4458,9 @@ impl App {
             Command::SplitRow => self.split(Axis::Row),
             Command::SplitColumn => self.split(Axis::Column),
             Command::ClosePane => self.mode = Mode::Confirm(Action::ClosePane(self.ws.focus)),
+            Command::CloseWorkspace => {
+                self.mode = Mode::Confirm(Action::CloseWorkspace(self.workspace));
+            }
             Command::NextPane => self.ws.cycle_focus(),
             Command::Focus(dir) => self.ws.focus_direction(dir, self.body),
             Command::Resize(dir, cells) => {
@@ -8893,6 +8898,7 @@ impl App {
     fn perform(&mut self, action: Action) {
         match action {
             Action::ClosePane(id) => self.close(id),
+            Action::CloseWorkspace(n) => self.close_workspace(n),
             Action::KillServer => self.quit = true,
             Action::EndSession => {
                 if let Some(name) = self.confirm_target.take() {
@@ -9116,6 +9122,16 @@ impl App {
             self.switch_workspace(back);
         }
         self.close(pane);
+    }
+
+    /// Closes window `n` with every pane in it, ending their programs.
+    fn close_workspace(&mut self, n: u8) {
+        let Some(panes) = self.workspace_ref(n).map(Workspace::panes) else {
+            return;
+        };
+        for id in panes {
+            self.close(id);
+        }
     }
 
     fn close(&mut self, id: PaneId) {
@@ -10989,6 +11005,21 @@ impl App {
                     "Close pane {id} and end the program running in it?"
                 ))],
             ),
+            Action::CloseWorkspace(n) => {
+                let ws = self.workspace_ref(n);
+                let count = ws.map_or(0, |ws| ws.panes().len());
+                let name = ws
+                    .and_then(|ws| ws.name.clone())
+                    .map(|name| format!(" ({name})"))
+                    .unwrap_or_default();
+                (
+                    " Close window ",
+                    vec![Line::from(format!(
+                        "Close window {n}{name} and end the {count} {} in it?",
+                        if count == 1 { "program" } else { "programs" }
+                    ))],
+                )
+            }
             Action::KillServer => (
                 " Quit imkr ",
                 vec![
