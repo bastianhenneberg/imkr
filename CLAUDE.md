@@ -235,6 +235,9 @@ Projekt-Slug: `imkr`
   Tab `dir_key` → `template::complete_with`), andere Rechner per ssh `imkr dirs` (Pfad auf stdin)
   in `dir_lists` gecacht, `MAX_PATH`);
   der Ordner wird `Template::root`, „leer“ = Vorlage mit einem Window.
+- Ende ohne Panes (letzte Shell `exit`, `Ctrl+B w x` aufs letzte Fenster): `close`/`close_workspace`
+  merken vorher `final_layout` (`keep_final_layout`), das Ende legt es nach `last` – sonst ging die
+  Session ganz verloren (#8544).
 - Archiv (#506): was `keep_newest` aus `last` drängt, geht nach `saves/.archive.json`
   (`persist::Archived` mit `hive`, `archive`/`unarchive`/`archived`), nie weg. Die Marke kommt aus
   `Hive::hive_of` in `last`, gesetzt in `keep_in_last` per `hive_for` (aktiver Hive, wenn er die

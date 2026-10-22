@@ -870,6 +870,9 @@ pub struct App {
     /// When and where the left button went down last, to spot double clicks.
     last_click: Option<(Instant, Position)>,
     quit: bool,
+    /// The layout just before its last pane went, for `last`: a session
+    /// whose last shell exited has no panes left to save when it ends.
+    final_layout: Option<Saved>,
 }
 
 impl App {
@@ -990,6 +993,7 @@ impl App {
             search: None,
             last_click: None,
             quit: false,
+            final_layout: None,
         };
         app.apply_theme();
         app.load_plugins();
@@ -1011,16 +1015,21 @@ impl App {
             let _ = std::fs::remove_file(link);
         }
         // Ended on purpose: kept in the save file `last` instead, from where
-        // `imkr restore` brings it back. A session whose last shell
-        // exited has nothing to keep.
+        // `imkr restore` brings it back. A session whose last shell exited
+        // keeps the layout it had just before.
         // Stopped with the machine: the saved layout stays as it was before
         // the shells died, and the next server brings it back.
         if crate::server::stopped() {
             return Ok(());
         }
         app.save_scrollback(true);
-        if !app.panes.is_empty()
-            && let Err(e) = persist::keep_in_last(&protocol::session_name(), app.saved())
+        let layout = if app.panes.is_empty() {
+            app.final_layout.take()
+        } else {
+            Some(app.saved())
+        };
+        if let Some(layout) = layout
+            && let Err(e) = persist::keep_in_last(&protocol::session_name(), layout)
         {
             eprintln!("could not keep the session in the last save: {e:#}");
         }
@@ -9160,12 +9169,36 @@ impl App {
         let Some(panes) = self.workspace_ref(n).map(Workspace::panes) else {
             return;
         };
+        // The session ends with this window: keep all of it, not just the
+        // pane closed last.
+        let other_windows =
+            self.hidden.keys().filter(|&&k| k != n).count() + usize::from(self.workspace != n);
+        if other_windows == 0 {
+            self.keep_final_layout();
+        }
         for id in panes {
             self.close(id);
         }
     }
 
+    /// Notes the layout as it is now, once, for `last` when the session
+    /// ends without panes.
+    fn keep_final_layout(&mut self) {
+        if self.final_layout.is_none() {
+            self.final_layout = Some(self.saved());
+        }
+    }
+
     fn close(&mut self, id: PaneId) {
+        let popup = self.popups.values().any(|p| p.pane == id);
+        let others = self
+            .panes
+            .keys()
+            .filter(|&&other| other != id && !self.popups.values().any(|p| p.pane == other))
+            .count();
+        if !popup && others == 0 && self.panes.contains_key(&id) {
+            self.keep_final_layout();
+        }
         if self.panes.remove(&id).is_none() {
             return;
         }
