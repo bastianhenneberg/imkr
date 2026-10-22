@@ -2192,7 +2192,7 @@ pub fn account(args: &[String]) -> Result<()> {
             for tool in TOOLS {
                 println!("{tool}");
                 let default = store.default_of(tool);
-                for account in store.of_tool(tool) {
+                for account in store.listed(tool) {
                     // By the subscription it is logged in to, `(standard)` for
                     // the one new shells start in.
                     let mut name = crate::account::shown(&store, &account);
@@ -2243,6 +2243,53 @@ pub fn account(args: &[String]) -> Result<()> {
                 }
             }
             println!("in this order a used up account falls back to the next");
+            Ok(())
+        }
+        // Again for an account there is, or one this person had: logged in
+        // anew, never a second account of the same person (#8577).
+        ["add", tool, name] if url.is_none() && token.is_none() && !token_stdin => {
+            if let Some(there) = store.find(tool, name) {
+                println!("{tool} account {name} is there already: logging it in again");
+                return login(&store, &there);
+            }
+            if let Some(was) = store.logged_out_as(tool, name) {
+                println!(
+                    "{tool} account {} was {name} and is logged out: logging it in again \
+                     instead of adding a second one",
+                    was.name
+                );
+                return login(&store, &was);
+            }
+            let account = store.add(Account {
+                name: (*name).to_owned(),
+                tool: (*tool).to_owned(),
+                url: None,
+                token: None,
+                model: None,
+            })?;
+            println!("{} account {} added", account.tool, account.name);
+            login(&store, &account)?;
+            let Some(other) = store.same_person(&account) else {
+                return Ok(());
+            };
+            let who = store
+                .identity(&account)
+                .map(|i| i.shown)
+                .unwrap_or_default();
+            if account_in_use(&account.tool, &account.name) {
+                println!(
+                    "careful: {} is logged in as {who}, like account {}; agents use {} \
+                     already, so it stays: `imkr account rm {}:{}` once they are done",
+                    account.name, other.name, account.name, account.tool, account.name
+                );
+                return Ok(());
+            }
+            store.move_login(&account, &other)?;
+            store.remove(&account.tool, &account.name)?;
+            println!(
+                "{who} is account {} already: logged in there, no second account",
+                other.name
+            );
             Ok(())
         }
         ["add", tool, name] => {
@@ -3348,6 +3395,19 @@ fn end_panes(panes: Vec<(PathBuf, crate::layout::PaneId)>) {
     for (socket, pane) in panes {
         let _ = client::request_at(&socket, Request::Kill { pane });
     }
+}
+
+/// Whether an agent in a session here runs in account `tool:name`.
+fn account_in_use(tool: &str, name: &str) -> bool {
+    protocol::sessions().into_iter().any(|session| {
+        protocol::session_socket(&session)
+            .and_then(|socket| client::request_at(&socket, Request::List))
+            .ok()
+            .and_then(|panes| panes.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .any(|p| p["program"].as_str() == Some(tool) && p["account"].as_str() == Some(name))
+    })
 }
 
 #[cfg(test)]

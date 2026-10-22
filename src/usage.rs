@@ -61,7 +61,7 @@ pub fn report() -> Result<Report> {
     for tool in crate::account::TOOLS {
         let default = store.default_of(tool);
         let mut seen = Vec::new();
-        for account in store.of_tool(tool) {
+        for account in store.listed(tool) {
             // The same subscription twice has one limit: shown once.
             if let Some(identity) = store.identity(&account) {
                 if seen.contains(&identity.key) {

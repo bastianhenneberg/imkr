@@ -464,7 +464,16 @@ impl Store {
     /// token in Codex' `auth.json`. `None` for providers and accounts not
     /// logged in.
     pub fn identity(&self, account: &Account) -> Option<Identity> {
-        if account.url.is_some() || self.login_dead(account) {
+        if self.login_dead(account) {
+            return None;
+        }
+        self.last_identity(account)
+    }
+
+    /// Who `account` is or was logged in as: `identity`, also when the
+    /// login is spent and only `.claude.json` still names the person.
+    pub fn last_identity(&self, account: &Account) -> Option<Identity> {
+        if account.url.is_some() {
             return None;
         }
         match account.tool.as_str() {
@@ -513,6 +522,98 @@ impl Store {
             .into_iter()
             .filter(|other| other.name != account.name)
             .find(|other| self.identity(other).is_some_and(|i| i.key == identity.key))
+    }
+
+    /// Whether `account` is left over (#8577): logged out, and the person
+    /// it was logged in as has another account that is logged in. Lists
+    /// leave it out, so that one person shows once.
+    pub fn left_over(&self, account: &Account) -> bool {
+        if !self.login_dead(account) {
+            return false;
+        }
+        let Some(was) = self.last_identity(account) else {
+            return false;
+        };
+        self.of_tool(&account.tool).iter().any(|other| {
+            other.name != account.name && self.identity(other).is_some_and(|i| i.key == was.key)
+        })
+    }
+
+    /// The accounts of `tool` as lists show them: `of_tool` without those
+    /// left over.
+    pub fn listed(&self, tool: &str) -> Vec<Account> {
+        self.of_tool(tool)
+            .into_iter()
+            .filter(|a| !self.left_over(a))
+            .collect()
+    }
+
+    /// Another named account (not `standard`) of the person `account` is
+    /// logged in as, logged in or not: where its login belongs.
+    pub fn same_person(&self, account: &Account) -> Option<Account> {
+        let me = self.identity(account)?;
+        self.of_tool(&account.tool).into_iter().find(|other| {
+            other.name != account.name
+                && !other.is_standard()
+                && self.last_identity(other).is_some_and(|i| i.key == me.key)
+        })
+    }
+
+    /// A named account of `tool` that is logged out and was the person
+    /// called `name` (the part of the address before the @): to log in
+    /// again instead of adding a second one.
+    pub fn logged_out_as(&self, tool: &str, name: &str) -> Option<Account> {
+        self.of_tool(tool).into_iter().find(|a| {
+            !a.is_standard()
+                && self.login_dead(a)
+                && self.last_identity(a).is_some_and(|i| {
+                    i.shown
+                        .split('@')
+                        .next()
+                        .is_some_and(|who| who.eq_ignore_ascii_case(name))
+                })
+        })
+    }
+
+    /// Moves the login of `from` into the account `into` of the same
+    /// agent: the login file, and for Claude what of `.claude.json` belongs
+    /// to the login. A login is never in two places: both would renew it
+    /// and lock each other out.
+    pub fn move_login(&self, from: &Account, into: &Account) -> Result<()> {
+        let (Some(from_dir), Some(into_dir)) = (self.dir_of(from), self.dir_of(into)) else {
+            bail!("only between named accounts");
+        };
+        let file = if from.tool == "codex" {
+            "auth.json"
+        } else {
+            ".credentials.json"
+        };
+        let target = into_dir.join(file);
+        // A link (to what is shared) is replaced, not written through.
+        if target.symlink_metadata().is_ok() {
+            std::fs::remove_file(&target)?;
+        }
+        std::fs::rename(from_dir.join(file), &target)
+            .with_context(|| format!("could not move the login into {}", into.name))?;
+        if from.tool != "codex" {
+            let read = |path: &Path| -> serde_json::Map<String, serde_json::Value> {
+                std::fs::read_to_string(path)
+                    .ok()
+                    .and_then(|t| serde_json::from_str(&t).ok())
+                    .unwrap_or_default()
+            };
+            let source = read(&from_dir.join(".claude.json"));
+            let path = into_dir.join(".claude.json");
+            let mut own = read(&path);
+            own.retain(|key, _| !account_bound(key));
+            for (key, value) in source {
+                if account_bound(&key) {
+                    own.insert(key, value);
+                }
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&own)?)?;
+        }
+        Ok(())
     }
 
     /// The file holding the Claude login of `account`, `standard`'s too.
@@ -872,6 +973,71 @@ mod tests {
         assert!(store.same_login(&find("me")).is_none());
         // No default set: the first logged in, not the logged out standard.
         assert_eq!(store.default_of("claude"), "me");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 2026-10-22: stelljes logged in anew as a second account while the
+    /// spent `~/.claude` still named stelljes: one person shows once, and
+    /// a person with a logged out account is logged in there again.
+    #[test]
+    fn one_person_is_one_account() {
+        let base = std::env::temp_dir().join(format!("imkr-one-person-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        let spent = r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}"#;
+        claude_login(&store.home, "me@x", "org1");
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        std::fs::write(store.usual_dir("claude").join(".credentials.json"), spent).unwrap();
+        for name in ["me", "old", "fresh"] {
+            store
+                .add(Account {
+                    name: name.into(),
+                    tool: "claude".into(),
+                    ..Account::default()
+                })
+                .unwrap();
+        }
+        let dir = |name: &str| store.root.join(format!("claude/{name}"));
+        claude_login(&dir("me"), "me@x", "org1");
+        claude_login(&dir("old"), "you@x", "org1");
+        std::fs::write(dir("old").join(".credentials.json"), spent).unwrap();
+        let find = |name: &str| store.find("claude", name).unwrap();
+
+        // The spent standard was me, who has an account: left out.
+        assert!(store.left_over(&find(STANDARD)));
+        let listed: Vec<String> = store.listed("claude").into_iter().map(|a| a.name).collect();
+        assert_eq!(listed, ["me", "old", "fresh"]);
+        // `old` is logged out and has no one else: listed, and `add you`
+        // logs it in again.
+        assert!(!store.left_over(&find("old")));
+        assert_eq!(store.logged_out_as("claude", "You").unwrap().name, "old");
+        assert!(store.logged_out_as("claude", "me").is_none());
+
+        // `fresh` logged in as you: its login moves into `old`.
+        claude_login(&dir("fresh"), "you@x", "org1");
+        std::fs::write(dir("fresh").join(".credentials.json"), "new login").unwrap();
+        assert_eq!(store.same_person(&find("fresh")).unwrap().name, "old");
+        std::fs::write(
+            dir("old").join(".claude.json"),
+            r#"{"oauthAccount":{"emailAddress":"you@x"},"mcpServers":{"brain":{}}}"#,
+        )
+        .unwrap();
+        store.move_login(&find("fresh"), &find("old")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir("old").join(".credentials.json")).unwrap(),
+            "new login"
+        );
+        assert!(!dir("fresh").join(".credentials.json").exists());
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir("old").join(".claude.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(config["oauthAccount"]["emailAddress"], "you@x");
+        assert!(config["mcpServers"]["brain"].is_object());
+        assert!(store.logged_in(&find("old")));
         let _ = std::fs::remove_dir_all(&base);
     }
 

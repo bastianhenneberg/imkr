@@ -48,7 +48,7 @@ pub fn ends_soon(login: &serde_json::Value, now: u64) -> Option<u64> {
 /// The Claude subscriptions here, `standard` too.
 fn claude_logins(store: &Store) -> Vec<Account> {
     store
-        .of_tool("claude")
+        .listed("claude")
         .into_iter()
         .filter(|a| a.url.is_none())
         .collect()

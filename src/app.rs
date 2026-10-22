@@ -10495,7 +10495,7 @@ impl App {
         let mut items = Vec::new();
         for tool in crate::account::TOOLS {
             let default = store.default_of(tool);
-            for account in store.of_tool(tool) {
+            for account in store.listed(tool) {
                 let session = self
                     .accounts
                     .get(*tool)
@@ -10664,7 +10664,7 @@ impl App {
         let mut items = Vec::new();
         for tool in &start.tools {
             let default = store.default_of(tool);
-            for account in store.of_tool(tool) {
+            for account in store.listed(tool) {
                 let mut hint = match (&account.url, store.identity(&account)) {
                     (None, Some(who)) => who.shown,
                     (None, None) if account.is_standard() => format!("~/.{tool}"),

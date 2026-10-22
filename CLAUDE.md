@@ -238,6 +238,12 @@ Projekt-Slug: `imkr`
 - Ende ohne Panes (letzte Shell `exit`, `Ctrl+B w x` aufs letzte Fenster): `close`/`close_workspace`
   merken vorher `final_layout` (`keep_final_layout`), das Ende legt es nach `last` – sonst ging die
   Session ganz verloren (#8544).
+- Eine Person = ein Konto (#8577): `Store::last_identity` (auch abgemeldet), `left_over` →
+  `listed(tool)` statt `of_tool` in Listen, Login-Wache, Nutzung. `account add NAME`: gibt es
+  NAME → neu anmelden; `logged_out_as` (abgemeldetes benanntes Konto dieser Person) → das
+  anmelden; nach dem Login `same_person` (nur benannte Ziele) → `move_login` (Datei verschieben,
+  `account_bound`-Schlüssel), neues Konto weg, außer `account_in_use`. Nie in `standard`
+  hineinziehen (Name ginge verloren, Kontolisten-Sync ist eine Vereinigung).
 - Worktrees (#8567): `worktree::Setup` (`copy`/`symlink`/`post_create`/`pre_remove`) aus Config
   `[worktree]` + `.imkr.toml` (`setup_for`, Listen ersetzen, `"<global>"` fügt ein), `prepare`
   (Globs `expand`/`fits`) nur bei frischem Worktree in `worktree_window`, `post_create` per

@@ -134,6 +134,13 @@ an account is no subscription: it is not counted twice, not fallen back to, and 
 not start in it: when the default is logged out, they start in the first account that is
 logged in. A pane whose account is logged out starts in the default when it comes back.
 
+One person is one account. `imkr account add claude stelljes` again logs `stelljes` in anew
+instead of failing, and so does adding a name a logged out account was logged in as. When the
+browser login of a new account turns out to be a person another account was or is logged in as,
+the login moves into that account and the new one goes again (unless agents run in it already).
+A logged out account whose person is logged in elsewhere, such as an old `~/.claude`, is left
+out of the lists.
+
 A Claude login lasts about 30 days from `/login`; Claude Code renewing its key does not move
 that end. So imkr says it ahead: three days before, `imkr account` and the account lists show
 *login ends …*, and one imkr on the machine sends a notification once, as it does when a login
