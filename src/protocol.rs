@@ -422,6 +422,9 @@ pub enum Request {
     },
     /// Show `text` in the control bar, e.g. why a switch failed.
     Flash { text: String },
+    /// An image from the clipboard of the client's machine, base64, to
+    /// paste into the focused pane as a file on this one (#8581).
+    PasteImage { data: String, ending: String },
     /// Read the plugin files again, after `imkr plugin add` and the like.
     ReloadPlugins,
     /// Read the config and plugins again, after `imkr settings sync`.

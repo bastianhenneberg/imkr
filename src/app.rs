@@ -2304,6 +2304,7 @@ impl App {
                 self.flash = Some(text);
                 Ok(serde_json::json!({}))
             }
+            Request::PasteImage { data, ending } => self.paste_image(&data, &ending),
             Request::UseAccount { tool, name, pane } => {
                 let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
                 let account = store
@@ -9909,6 +9910,55 @@ impl App {
         }
     }
 
+    /// An image from the clipboard of the machine the terminal is on,
+    /// pasted into the focused pane as a file here (#8581): an agent takes
+    /// a pasted image path as the image. Files older than three days go.
+    fn paste_image(&mut self, data: &str, ending: &str) -> Reply {
+        if !matches!(ending, "png" | "jpg" | "webp" | "gif") {
+            return Err(format!("not an image ending: {ending}"));
+        }
+        let bytes = crate::clipboard::unbase64(data).ok_or("the image did not arrive whole")?;
+        let dir = paste_dir().ok_or("no home directory")?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let old = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > Duration::from_secs(3 * 24 * 3600));
+                if old {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let path = dir.join(format!("{stamp}.{ending}"));
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .map_err(|e| e.to_string())?;
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+        }
+        let text = path.to_string_lossy().into_owned();
+        self.paste(&text).map_err(|e| format!("{e:#}"))?;
+        self.flash = Some(format!(
+            "image pasted ({} KB) as {}",
+            bytes.len() / 1024,
+            tilde(&path)
+        ));
+        Ok(serde_json::json!({ "path": text }))
+    }
+
     fn paste(&mut self, text: &str) -> Result<()> {
         // Pasted into imkr's own lines, not the pane behind them.
         if self.mode == Mode::Notes
@@ -12531,6 +12581,15 @@ fn hosted_command(argv: &[String]) -> Option<String> {
     }
     let words: Vec<String> = argv.iter().map(|w| crate::client::sh_quote(w)).collect();
     Some(format!("exec {}", words.join(" ")))
+}
+
+/// Where images pasted from another machine are kept: imkr's cache.
+fn paste_dir() -> Option<PathBuf> {
+    let cache = match std::env::var_os("XDG_CACHE_HOME") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => PathBuf::from(std::env::var_os("HOME")?).join(".cache"),
+    };
+    Some(cache.join("imkr/paste"))
 }
 
 /// How soon a pane pushes the same kind again.

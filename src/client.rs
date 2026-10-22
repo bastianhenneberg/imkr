@@ -631,6 +631,32 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
     let input = Arc::clone(&writer);
     thread::Builder::new().name("input".into()).spawn(move || {
         while let Ok(event) = event::read() {
+            // Ctrl+V in a session on another machine: an image in this
+            // machine's clipboard goes there as a file, since the agent
+            // there reads that machine's clipboard (#8581).
+            if is_ctrl_v(&event)
+                && SHOWN_HOST.lock().unwrap().is_some()
+                && let Some((bytes, ending)) = crate::clipboard::local_image()
+            {
+                let data = crate::clipboard::base64(&bytes);
+                let request = if data.len() > 15 * 1024 * 1024 {
+                    Request::Flash {
+                        text: format!(
+                            "the image in the clipboard is too large to send ({} MB)",
+                            bytes.len() / (1024 * 1024)
+                        ),
+                    }
+                } else {
+                    Request::PasteImage {
+                        data,
+                        ending: ending.to_owned(),
+                    }
+                };
+                if let Some(stream) = input.lock().unwrap().as_mut() {
+                    let _ = ClientMsg::Request(request).write_to(stream);
+                }
+                continue;
+            }
             if let Some(stream) = input.lock().unwrap().as_mut() {
                 let resized = matches!(event, Event::Resize(..));
                 let _ = ClientMsg::Event(event).write_to(stream);
@@ -1710,6 +1736,19 @@ fn pass_on(from: &mut impl Read, to: &mut impl Write) -> io::Result<()> {
             Err(e) => return Err(e),
         }
     }
+}
+
+/// Whether `event` is Ctrl+V pressed, without other modifiers.
+fn is_ctrl_v(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(crossterm::event::KeyEvent {
+            code: crossterm::event::KeyCode::Char('v'),
+            modifiers: crossterm::event::KeyModifiers::CONTROL,
+            kind: crossterm::event::KeyEventKind::Press,
+            ..
+        })
+    )
 }
 
 #[cfg(test)]

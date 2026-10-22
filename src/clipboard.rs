@@ -7,7 +7,7 @@ pub fn osc52(text: &str) -> Vec<u8> {
     format!("\x1b]52;c;{}\x07", base64(text.as_bytes())).into_bytes()
 }
 
-fn base64(bytes: &[u8]) -> String {
+pub fn base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -26,6 +26,93 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+/// Standard base64 back to bytes; `None` for anything else.
+pub fn unbase64(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() / 4 * 3);
+    let mut bits = 0u32;
+    let mut count = 0;
+    for c in text.bytes() {
+        let value = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\n' | b'\r' => continue,
+            _ => return None,
+        };
+        bits = bits << 6 | u32::from(value);
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            out.push((bits >> count) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// An image in this machine's clipboard, with its file ending (`png` …),
+/// read with `wl-paste` under Wayland, else `xclip`. `None` when the
+/// clipboard holds no image or no tool answers within two seconds.
+pub fn local_image() -> Option<(Vec<u8>, &'static str)> {
+    const KINDS: [(&str, &str); 4] = [
+        ("image/png", "png"),
+        ("image/jpeg", "jpg"),
+        ("image/webp", "webp"),
+        ("image/gif", "gif"),
+    ];
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let x11 = std::env::var_os("DISPLAY").is_some();
+    let types = if wayland {
+        run_for(&["wl-paste", "--list-types"])?
+    } else if x11 {
+        run_for(&["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"])?
+    } else {
+        return None;
+    };
+    let types = String::from_utf8_lossy(&types);
+    let (kind, ending) = KINDS
+        .iter()
+        .find(|(kind, _)| types.lines().any(|l| l.trim() == *kind))?;
+    let bytes = if wayland {
+        run_for(&["wl-paste", "--no-newline", "--type", kind])?
+    } else {
+        run_for(&["xclip", "-selection", "clipboard", "-t", kind, "-o"])?
+    };
+    (!bytes.is_empty()).then_some((bytes, *ending))
+}
+
+/// Runs `argv` and returns what it printed, if it succeeds within two
+/// seconds: a clipboard tool must not hold up the keyboard.
+fn run_for(argv: &[&str]) -> Option<Vec<u8>> {
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut out);
+        let _ = tx.send(out);
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(out) => {
+            let status = child.wait().ok()?;
+            status.success().then_some(out)
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+    }
 }
 
 /// Picks the OSC 52 sequences, "put this into the clipboard", out of a
@@ -175,5 +262,13 @@ mod tests {
     #[test]
     fn osc52_wraps_the_text() {
         assert_eq!(osc52("hi"), b"\x1b]52;c;aGk=\x07");
+    }
+
+    #[test]
+    fn base64_goes_both_ways() {
+        for bytes in [&b""[..], b"f", b"fo", b"foo", b"\x89PNG\r\n\x1a\n\x00\xff"] {
+            assert_eq!(unbase64(&base64(bytes)).unwrap(), bytes);
+        }
+        assert!(unbase64("a$b").is_none());
     }
 }

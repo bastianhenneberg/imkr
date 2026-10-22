@@ -62,3 +62,10 @@ Agents of the other sessions, here and on other machines, are listed under *Agen
 session's own, grouped by session (`⇄ codingmachine · brain`), those that need you first. A click
 goes to the session and shows the agent's pane. When one elsewhere comes to need you or finishes,
 imkr tells you as it does for its own: in the bar, with a bell, and a notification.
+
+Images reach agents on other machines too. An agent pastes an image from the clipboard of the
+machine it runs on, and in a session on another machine that is not the one in front of you.
+So `Ctrl+V` there looks first into this machine's clipboard (`wl-paste`, else `xclip`): an image
+in it goes over the connection as a file into `~/.cache/imkr/paste/` on the other machine, and
+its path is pasted into the focused pane, which Claude Code takes as the image. Without an image
+`Ctrl+V` goes through as always. Files there older than three days are removed.

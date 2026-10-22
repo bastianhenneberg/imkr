@@ -246,7 +246,13 @@ sidebar, the inbox and the agent list, and answering it from the inbox types the
 <p>Agents of the other sessions, here and on other machines, are listed under <em>Agents</em> below this
 session's own, grouped by session (<code>⇄ codingmachine · brain</code>), those that need you first. A click
 goes to the session and shows the agent's pane. When one elsewhere comes to need you or finishes,
-imkr tells you as it does for its own: in the bar, with a bell, and a notification.</p></article>
+imkr tells you as it does for its own: in the bar, with a bell, and a notification.</p>
+<p>Images reach agents on other machines too. An agent pastes an image from the clipboard of the
+machine it runs on, and in a session on another machine that is not the one in front of you.
+So <code>Ctrl+V</code> there looks first into this machine's clipboard (<code>wl-paste</code>, else <code>xclip</code>): an image
+in it goes over the connection as a file into <code>~/.cache/imkr/paste/</code> on the other machine, and
+its path is pasted into the focused pane, which Claude Code takes as the image. Without an image
+<code>Ctrl+V</code> goes through as always. Files there older than three days are removed.</p></article>
 <div class="pager"><a href="ai-brain.html"><span>← Back</span>imkr and AI Brain</a><a href="hives.html" style="text-align:right"><span>Next →</span>Hives and templates</a></div><p class="edit">Source: <a href="https://github.com/bastianhenneberg/imkr/blob/main/docs/src/machines.md">docs/src/machines.md</a></p>
 </main>
 </div>

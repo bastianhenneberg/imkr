@@ -238,6 +238,11 @@ Projekt-Slug: `imkr`
 - Ende ohne Panes (letzte Shell `exit`, `Ctrl+B w x` aufs letzte Fenster): `close`/`close_workspace`
   merken vorher `final_layout` (`keep_final_layout`), das Ende legt es nach `last` – sonst ging die
   Session ganz verloren (#8544).
+- Bilder auf andere Rechner (#8581): Client-Eingabe-Thread fängt Ctrl+V ab, wenn `SHOWN_HOST`
+  gesetzt ist und `clipboard::local_image` (wl-paste/xclip, 2 s Frist) ein Bild liefert →
+  `Request::PasteImage` (base64, ≤15 MB) → `App::paste_image` legt es in `paste_dir()`
+  (`~/.cache/imkr/paste`, 0600, >3 Tage weg) und fügt den Pfad per `paste` ein. Sonst geht
+  Ctrl+V durch.
 - Eine Person = ein Konto (#8577): `Store::last_identity` (auch abgemeldet), `left_over` →
   `listed(tool)` statt `of_tool` in Listen, Login-Wache, Nutzung. `account add NAME`: gibt es
   NAME → neu anmelden; `logged_out_as` (abgemeldetes benanntes Konto dieser Person) → das
