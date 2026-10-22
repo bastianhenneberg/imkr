@@ -225,6 +225,10 @@ finishing does not mark the agent done, and the session id is kept to resume the
 transcript's path comes along too: imkr reads the model and context of the agent's last answer
 from its end and shows them as <code>opus 5.5 · 300k</code> in <code>Ctrl+B A</code>, the inbox, <code>imkr agents</code> and,
 for the focused agent, in the sidebar.</p>
+<p>What an agent says it is doing shows under it in the sidebar, after it in <code>Ctrl+B A</code> and in
+<code>imkr agents</code>, on every machine: the title it gives its terminal. Claude Code keeps a short
+summary of its task there; spinners in front are cut off, and a title that only names the
+program is left out.</p>
 <p>Scripts and agents can drive imkr too:</p>
 <pre><code class="language-bash">imkr list [--json]                        # panes with program, state and directory
 imkr send --pane 3 &quot;run the tests&quot;        # type into a pane, then Enter

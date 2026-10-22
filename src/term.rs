@@ -46,11 +46,21 @@ pub enum MouseProtocolEncoding {
 struct Listener {
     answers: Arc<Mutex<Vec<u8>>>,
     size: Arc<Mutex<WindowSize>>,
+    /// The title the program set (OSC 0/2), `None` after a reset.
+    title: Arc<Mutex<Option<String>>>,
 }
 
 impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         let answer = match event {
+            Event::Title(title) => {
+                *self.title.lock().unwrap() = Some(title);
+                return;
+            }
+            Event::ResetTitle => {
+                *self.title.lock().unwrap() = None;
+                return;
+            }
             Event::PtyWrite(text) => text,
             Event::TextAreaSizeRequest(format) => format(*self.size.lock().unwrap()),
             // Colours nobody set: a plain dark terminal's, near enough for
@@ -113,6 +123,7 @@ impl Parser {
         let (rows, cols) = (rows.max(1), cols.max(1));
         let listener = Listener {
             answers: Arc::default(),
+            title: Arc::default(),
             size: Arc::new(Mutex::new(WindowSize {
                 num_lines: rows,
                 num_cols: cols,
@@ -146,6 +157,16 @@ impl Parser {
     /// write back to it.
     pub fn answers(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.listener.answers.lock().unwrap())
+    }
+
+    /// The title the program gave its terminal, as it set it.
+    pub fn title(&self) -> Option<String> {
+        self.listener.title.lock().unwrap().clone()
+    }
+
+    /// Sets the title, for a terminal taken over by `imkr update`.
+    pub fn set_title(&mut self, title: Option<String>) {
+        *self.listener.title.lock().unwrap() = title;
     }
 
     /// The same terminal, as vt100 split it into parser and screen.

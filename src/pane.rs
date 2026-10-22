@@ -283,6 +283,7 @@ impl Pane {
         pane.reported = from.reported;
         pane.failure = from.failure.clone();
         pane.transcript = from.transcript.clone();
+        pane.parser.lock().unwrap().set_title(from.title.clone());
         *pane.remote.lock().unwrap() = from.remote.clone();
         // What it wrote was read before the handover: the pane is not busy
         // just because it was taken over.
@@ -319,6 +320,7 @@ impl Pane {
             reported: self.reported,
             failure: self.failure.clone(),
             transcript: self.transcript.clone(),
+            title: parser.screen().title(),
             remote: self.remote_agent(),
         })
     }
@@ -768,6 +770,14 @@ impl Pane {
 
     /// What the sidebar tells about its agent: model and context, and the
     /// account when not `standard`.
+    /// What the program says it does, from its terminal title: Claude
+    /// Code puts a summary of its task there. Spinners and the like in
+    /// front are cut off; a title that only names the program is none.
+    pub fn title(&self) -> String {
+        let title = self.parser.lock().unwrap().title().unwrap_or_default();
+        clean_title(&title, self.program().as_deref())
+    }
+
     pub fn meta_label(&self) -> String {
         let parts: Vec<String> = self
             .meta()
@@ -1174,5 +1184,44 @@ mod bench {
                 t.elapsed()
             );
         }
+    }
+}
+
+/// `title` without what is not words in front (spinners, ✳), empty when
+/// all that is left names the program (`Claude Code`, `claude`).
+pub fn clean_title(title: &str, program: Option<&str>) -> String {
+    let text = title
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim()
+        .to_owned();
+    let plain = text.to_lowercase();
+    let names_program = program.is_some_and(|p| {
+        let p = p.to_lowercase();
+        plain == p
+            || plain
+                .strip_prefix(&p)
+                .is_some_and(|rest| rest.trim() == "code")
+    });
+    if names_program || plain == "claude code" {
+        String::new()
+    } else {
+        text
+    }
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::clean_title;
+
+    #[test]
+    fn cleans_agent_titles() {
+        assert_eq!(
+            clean_title("⠐ Fix the archive bug", Some("claude")),
+            "Fix the archive bug"
+        );
+        assert_eq!(clean_title("✳ Claude Code", Some("claude")), "");
+        assert_eq!(clean_title("codex", Some("codex")), "");
+        assert_eq!(clean_title("  ", Some("claude")), "");
+        assert_eq!(clean_title("✶ 3 tests failing", None), "3 tests failing");
     }
 }

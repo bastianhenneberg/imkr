@@ -238,6 +238,11 @@ Projekt-Slug: `imkr`
 - Ende ohne Panes (letzte Shell `exit`, `Ctrl+B w x` aufs letzte Fenster): `close`/`close_workspace`
   merken vorher `final_layout` (`keep_final_layout`), das Ende legt es nach `last` – sonst ging die
   Session ganz verloren (#8544).
+- Fenstertitel (#8564): `term::Listener` merkt `Event::Title`/`ResetTitle`, `Pane::title` →
+  `clean_title` (Spinner weg, nur Programmname = leer); über `list` (`"title"`) in
+  `AgentInfo::title`, Sidebar-Zeile unter dem Agent (`AgentRow`/`OtherAgentRow::title`),
+  `with_title` in `Ctrl+B A`, `imkr agents`; `HandoverPane::title`. Zeilen unter einem Agent mit
+  gleichem Ziel gehören zu ihm (`selection_index`, `targets` dedupt).
 - Archiv (#506): was `keep_newest` aus `last` drängt, geht nach `saves/.archive.json`
   (`persist::Archived` mit `hive`, `archive`/`unarchive`/`archived`), nie weg. Die Marke kommt aus
   `Hive::hive_of` in `last`, gesetzt in `keep_in_last` per `hive_for` (aktiver Hive, wenn er die

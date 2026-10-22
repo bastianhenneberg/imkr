@@ -211,6 +211,9 @@ pub struct AgentInfo {
     /// question, or what it said last (`agent::tail`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tail: String,
+    /// What it says it does, from its terminal title (`Pane::title`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
 }
 
 impl SessionInfo {

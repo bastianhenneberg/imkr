@@ -108,6 +108,9 @@ pub struct HandoverPane {
     /// The agent's transcript, see `Pane::transcript`.
     #[serde(default)]
     pub transcript: Option<PathBuf>,
+    /// The terminal title the program set, see `Pane::title`.
+    #[serde(default)]
+    pub title: Option<String>,
     /// The agent on another machine the pane shows, see `Pane::remote`.
     #[serde(default)]
     pub remote: Option<(String, AgentState)>,

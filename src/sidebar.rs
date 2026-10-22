@@ -76,6 +76,8 @@ pub struct AgentRow {
     /// Its model and context (`opus 5.5 · 300k`), shown under it while it
     /// is focused.
     pub meta: String,
+    /// What it says it does (its terminal title), shown under it.
+    pub title: String,
 }
 
 /// An agent of another session, here or on another machine.
@@ -91,6 +93,8 @@ pub struct OtherAgentRow {
     pub dir: String,
     pub state: AgentState,
     pub since: Duration,
+    /// What it says it does, as `AgentRow::title`.
+    pub title: String,
 }
 
 pub struct Data {
@@ -406,6 +410,10 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 agent.focused,
             );
             out.push((line, Some(Target::Pane(agent.pane))));
+            if !agent.title.is_empty() {
+                let title = Line::styled(fit(&format!("  {}", agent.title), width), dim);
+                out.push((title, Some(Target::Pane(agent.pane))));
+            }
             if agent.focused && !agent.meta.is_empty() {
                 let meta = Line::styled(fit(&format!("  {}", agent.meta), width), dim);
                 out.push((meta, Some(Target::Pane(agent.pane))));
@@ -440,11 +448,17 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                             a.since,
                             a.focused,
                         );
+                        let title = (!a.title.is_empty()).then(|| {
+                            let text = fit(&format!("      {}", a.title), width);
+                            (Line::styled(text, dim), Target::Pane(a.pane))
+                        });
                         let meta = (a.focused && !a.meta.is_empty()).then(|| {
                             let text = fit(&format!("      {}", a.meta), width);
                             (Line::styled(text, dim), Target::Pane(a.pane))
                         });
-                        std::iter::once((line, Target::Pane(a.pane))).chain(meta)
+                        std::iter::once((line, Target::Pane(a.pane)))
+                            .chain(title)
+                            .chain(meta)
                     })
                     .collect(),
             });
@@ -459,16 +473,21 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 agent.since,
                 false,
             );
+            let mut lines = vec![(line, Target::OtherAgent(agent.index))];
+            if !agent.title.is_empty() {
+                let text = fit(&format!("      {}", agent.title), width);
+                lines.push((Line::styled(text, dim), Target::OtherAgent(agent.index)));
+            }
             let found = groups.iter_mut().find(|g| {
                 !g.current && g.machine == agent.machine.as_deref() && g.session == agent.session
             });
             match found {
-                Some(group) => group.lines.push((line, Target::OtherAgent(agent.index))),
+                Some(group) => group.lines.extend(lines),
                 None => groups.push(Group {
                     machine: agent.machine.as_deref(),
                     session: &agent.session,
                     current: false,
-                    lines: vec![(line, Target::OtherAgent(agent.index))],
+                    lines,
                 }),
             }
         }
@@ -591,16 +610,32 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
     out
 }
 
+/// For each row, its place among the rows the keyboard selects. A row
+/// under one with the same target (an agent's title, its model) belongs
+/// to that one: it is selected along with it, not on its own.
+fn selection_index(lines: &[(Line, Option<Target>)]) -> Vec<Option<usize>> {
+    let mut next = 0;
+    let mut previous: Option<Target> = None;
+    lines
+        .iter()
+        .map(|(_, target)| {
+            let target = (*target)?;
+            if previous != Some(target) {
+                next += 1;
+            }
+            previous = Some(target);
+            Some(next - 1)
+        })
+        .collect()
+}
+
 /// How far to scroll a sidebar of `height` rows so the `selected` clickable
 /// row shows, starting from `scroll`.
 pub fn scroll_to_show(data: &Data, height: u16, selected: usize, scroll: usize) -> usize {
     let height = usize::from(height.max(1));
-    let Some(row) = lines(data, WIDTH)
+    let Some(row) = selection_index(&lines(data, WIDTH))
         .iter()
-        .enumerate()
-        .filter(|(_, (_, target))| target.is_some())
-        .nth(selected)
-        .map(|(row, _)| row)
+        .position(|index| *index == Some(selected))
     else {
         return scroll;
     };
@@ -666,14 +701,13 @@ pub fn draw(frame: &mut Frame, area: Rect, data: &Data, selected: Option<usize>,
                 .add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
-    let mut clickable = 0;
-    let rows: Vec<Line> = lines(data, inner.width)
+    let all = lines(data, inner.width);
+    let indices = selection_index(&all);
+    let rows: Vec<Line> = all
         .into_iter()
-        .map(|(line, target)| {
-            let Some(_) = target else { return line };
-            let highlight = selected == Some(clickable);
-            clickable += 1;
-            if highlight {
+        .zip(indices)
+        .map(|((line, _), index)| {
+            if index.is_some() && index == selected {
                 let width = usize::from(inner.width).saturating_sub(line.width());
                 let mut line = line;
                 line.spans.push(Span::raw(" ".repeat(width)));
@@ -690,10 +724,13 @@ pub fn draw(frame: &mut Frame, area: Rect, data: &Data, selected: Option<usize>,
 
 /// The clickable rows' targets, top to bottom.
 pub fn targets(data: &Data) -> Vec<Target> {
-    lines(data, WIDTH)
+    let mut targets: Vec<Target> = lines(data, WIDTH)
         .into_iter()
         .filter_map(|(_, target)| target)
-        .collect()
+        .collect();
+    // Rows under an agent with the same target are part of it.
+    targets.dedup();
+    targets
 }
 
 /// What the row at `pos` does when clicked, for a sidebar drawn at `area`.
@@ -798,6 +835,7 @@ mod tests {
                 since: Duration::from_secs(185),
                 focused: false,
                 meta: "opus 5.5 · 300k".into(),
+                title: "Fix the login".into(),
             }],
             branch: Some("main".into()),
             changes: vec![Change {
@@ -989,6 +1027,7 @@ mod tests {
             dir: "d".into(),
             state: AgentState::Idle,
             since: Duration::from_secs(5),
+            title: String::new(),
         };
         let mut data = data();
         // On codingmachine, in peppermint-tui, the user sitting at omarchy.

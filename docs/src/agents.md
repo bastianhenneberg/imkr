@@ -37,6 +37,11 @@ transcript's path comes along too: imkr reads the model and context of the agent
 from its end and shows them as `opus 5.5 · 300k` in `Ctrl+B A`, the inbox, `imkr agents` and,
 for the focused agent, in the sidebar.
 
+What an agent says it is doing shows under it in the sidebar, after it in `Ctrl+B A` and in
+`imkr agents`, on every machine: the title it gives its terminal. Claude Code keeps a short
+summary of its task there; spinners in front are cut off, and a title that only names the
+program is left out.
+
 Scripts and agents can drive imkr too:
 
 ```bash

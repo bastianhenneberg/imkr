@@ -2421,6 +2421,7 @@ impl App {
                     "name": pane.name,
                     "workspace_name": ws.name,
                     "meta": pane.meta().map(agent::Meta::label),
+                    "title": Some(pane.title()).filter(|t| !t.is_empty()),
                     "account": pane.account(),
                     "tail": matches!(
                         self.shown_state(id),
@@ -3675,6 +3676,7 @@ impl App {
                     since: now - since,
                     focused: id == self.ws.focus,
                     meta: pane.meta_label(),
+                    title: pane.title(),
                 })
             })
             .collect();
@@ -3715,6 +3717,7 @@ impl App {
                         dir: agent.dir,
                         state: AgentState::from_name(&agent.state)?,
                         since: Duration::from_secs(agent.since),
+                        title: agent.title,
                     })
                 })
                 .collect(),
@@ -6723,7 +6726,7 @@ impl App {
                     .and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()))
                     .unwrap_or_default()
             });
-            let program = format!("{n} {dir} › {program}");
+            let program = with_title(format!("{n} {dir} › {program}"), &pane.title());
             let place = match pane.meta() {
                 Some(meta) => format!("this session · {}", meta.label()),
                 None => "this session".into(),
@@ -6742,7 +6745,10 @@ impl App {
                 continue;
             };
             let group = self.machine_label(place.host.as_deref());
-            let program = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
+            let program = with_title(
+                format!("{} {} › {}", agent.workspace, agent.dir, agent.program),
+                &agent.title,
+            );
             let since = Duration::from_secs(agent.since);
             let place = if agent.meta.is_empty() {
                 place.name
@@ -12407,6 +12413,15 @@ fn hosted_command(argv: &[String]) -> Option<String> {
     }
     let words: Vec<String> = argv.iter().map(|w| crate::client::sh_quote(w)).collect();
     Some(format!("exec {}", words.join(" ")))
+}
+
+/// `label` with what the agent says it does after it, if anything.
+fn with_title(label: String, title: &str) -> String {
+    if title.is_empty() {
+        label
+    } else {
+        format!("{label} · {title}")
+    }
 }
 
 #[cfg(test)]

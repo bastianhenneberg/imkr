@@ -627,6 +627,7 @@ pub fn agents(args: &[String]) -> Result<()> {
                         "window": agent.workspace,
                         "window_name": agent.dir,
                         "meta": agent.meta,
+                        "title": agent.title,
                     }));
                 } else {
                     let at = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
@@ -635,7 +636,12 @@ pub fn agents(args: &[String]) -> Result<()> {
                     } else {
                         format!("  ({})", agent.meta)
                     };
-                    println!("{address:<24} {:<8} {at}{meta}", agent.state);
+                    let title = if agent.title.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  · {}", agent.title)
+                    };
+                    println!("{address:<24} {:<8} {at}{meta}{title}", agent.state);
                 }
             }
         }
