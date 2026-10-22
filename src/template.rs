@@ -8,7 +8,7 @@
 //!
 //! [[window]]
 //! name = "claude"
-//! command = "claude"
+//! command = "<claude>"   # filled in from `agent_commands`
 //!
 //! [[window]]
 //! name = "terminal"
@@ -207,7 +207,12 @@ impl Template {
                     let spec = saved.panes.get(&id).cloned().unwrap_or_default();
                     let mut pane = TemplatePane {
                         name: spec.name.clone(),
-                        command: spec.command.clone().or(spec.agent.clone()),
+                        // As a placeholder: started the way this machine's
+                        // `agent_commands` say, with their flags.
+                        command: spec
+                            .command
+                            .clone()
+                            .or(spec.agent.as_ref().map(|a| format!("<{a}>"))),
                         cwd: spec
                             .cwd
                             .as_deref()

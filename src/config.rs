@@ -236,6 +236,8 @@ pub struct Config {
     /// beside it when a program runs there), or `window`, a new one. `p` in
     /// its list switches for the time imkr runs.
     pub new_agent_in: String,
+    /// The agent `<agent>` stands for in templates and commands.
+    pub default_agent: String,
     /// Programs to treat as coding agents besides those imkr knows, by the
     /// name they run under, e.g. `my-agent`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -378,6 +380,69 @@ impl Config {
             .unwrap_or_else(|| tool.to_owned())
     }
 
+    /// `command` with its agent placeholders filled in (#8565): `<claude>`
+    /// becomes `agent_command("claude")`, `<agent>` the `default_agent`'s,
+    /// and `<claude@work>` that started in the account `claude:work`
+    /// through `imkr` (the path to run it by). Placeholders for programs
+    /// that are no agent stay as they are.
+    pub fn expand_agents(&self, command: &str, imkr: &str) -> String {
+        let mut out = String::new();
+        let mut rest = command;
+        while let Some(start) = rest.find('<') {
+            out.push_str(&rest[..start]);
+            let after = &rest[start + 1..];
+            let filled = after.find('>').and_then(|end| {
+                let filled = self.placeholder(&after[..end], imkr)?;
+                Some((filled, end))
+            });
+            match filled {
+                Some((filled, end)) => {
+                    out.push_str(&filled);
+                    rest = &after[end + 1..];
+                }
+                None => {
+                    out.push('<');
+                    rest = after;
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// What one placeholder (without `<>`) stands for, `None` if it is none.
+    fn placeholder(&self, inner: &str, imkr: &str) -> Option<String> {
+        let (name, account) = match inner.split_once('@') {
+            Some((name, account)) => (name, Some(account)),
+            None => (inner, None),
+        };
+        let word = |s: &str| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        };
+        if !word(name) || account.is_some_and(|a| !word(a)) {
+            return None;
+        }
+        let tool = if name == "agent" {
+            self.default_agent.as_str()
+        } else {
+            name
+        };
+        if !(crate::agent::is_agent(tool) || self.agent_commands.contains_key(tool)) {
+            return None;
+        }
+        let command = self.agent_command(tool);
+        Some(match account {
+            Some(account) => format!(
+                "{} account run {} -- {command}",
+                crate::client::sh_quote(imkr),
+                crate::client::sh_quote(&format!("{tool}:{account}")),
+            ),
+            None => command,
+        })
+    }
+
     /// Hooks on events there are none of, e.g. misspelt, as a note.
     pub fn hook_problems(&self) -> Option<String> {
         let unknown: Vec<&str> = self
@@ -478,6 +543,7 @@ impl Default for Config {
             resume_commands: BTreeMap::new(),
             agent_commands: BTreeMap::new(),
             new_agent_in: "pane".into(),
+            default_agent: "claude".into(),
             images: true,
             renumber_windows: false,
             marks_on_alt: true,
@@ -836,6 +902,28 @@ pub const SETTINGS: &[Setting] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_placeholders_are_filled_in() {
+        let config = Config::parse(
+            "default_agent = \"codex\"\n[agent_commands]\nclaude = \"claude --dangerously-skip-permissions\"\n",
+        )
+        .unwrap();
+        let x = |c: &str| config.expand_agents(c, "/bin/imkr");
+        assert_eq!(x("<claude>"), "claude --dangerously-skip-permissions");
+        assert_eq!(
+            x("<claude> -p 'fix it'"),
+            "claude --dangerously-skip-permissions -p 'fix it'"
+        );
+        assert_eq!(x("<agent>"), "codex");
+        assert_eq!(
+            x("<claude@work>"),
+            "/bin/imkr account run claude:work -- claude --dangerously-skip-permissions"
+        );
+        assert_eq!(x("sort <in> out"), "sort <in> out");
+        assert_eq!(x("a < b"), "a < b");
+        assert_eq!(x("claude"), "claude");
+    }
 
     #[test]
     fn agent_commands_default_to_the_agent() {

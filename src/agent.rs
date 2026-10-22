@@ -97,6 +97,12 @@ pub fn configure(agents: &[String], phrases: &[String]) {
     *EXTRA.write().unwrap() = (agents.to_vec(), phrases.to_vec());
 }
 
+/// Whether `name` is an agent imkr knows or one of the config's
+/// `extra_agents`.
+pub fn is_agent(name: &str) -> bool {
+    AGENTS.contains(&name) || EXTRA.read().unwrap().0.iter().any(|a| a == name)
+}
+
 /// The agent name if `argv` (a process's command line) runs one, looking at
 /// the program and, for interpreters like node, its script: one imkr knows
 /// or one of the config's `extra_agents`.

@@ -1328,7 +1328,19 @@ pub fn fleet(args: &[String]) -> Result<()> {
         let member = format!("{name}-{i}");
         let reply = client::request(Request::Worktree {
             name: member.clone(),
-            command: vec![agent.clone(), prompt.clone()],
+            // A plain agent name as a placeholder: started with this
+            // machine's `agent_commands`.
+            command: vec![
+                if agent
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_.@".contains(c))
+                {
+                    format!("<{agent}>")
+                } else {
+                    agent.clone()
+                },
+                prompt.clone(),
+            ],
             cwd: Some(here.clone()),
         })?;
         println!(

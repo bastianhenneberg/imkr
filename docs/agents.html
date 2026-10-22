@@ -279,6 +279,12 @@ is <code>[agent_commands]</code> in the config, else the agent's name:</p>
 <pre><code class="language-toml">[agent_commands]
 claude = &quot;claude --dangerously-skip-permissions --chrome&quot;
 </code></pre>
+<p>The same command starts wherever an agent is written as a placeholder: <code>&lt;claude&gt;</code> in a session
+template, in <code>imkr new -- '&lt;claude&gt;' …</code> and <code>imkr worktree NAME -- '&lt;codex&gt;'</code>, and in
+<code>imkr fleet --agent claude</code>. <code>&lt;agent&gt;</code> stands for <code>default_agent</code> (<code>claude</code> unless the config
+says otherwise), and <code>&lt;claude@work&gt;</code> starts it in the account <code>claude:work</code> right away instead of
+asking. Each machine fills in its own <code>[agent_commands]</code>, and a template saved from a running
+session writes its agents this way.</p>
 <p><code>Ctrl+B s c</code> lists them: Enter puts the focused agent into the chosen account, <code>u</code> new shells of
 this session. Switching ends the agent and starts it again in the same conversation, typed into
 its shell as <code>imkr account run claude:privat -- claude --resume &lt;id&gt;</code>, so no key shows on the

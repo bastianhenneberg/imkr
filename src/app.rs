@@ -1108,7 +1108,10 @@ impl App {
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
             for (id, rect) in ws.rects(self.body) {
-                let spec = saved.panes.get(&id).cloned().unwrap_or_default();
+                let mut spec = saved.panes.get(&id).cloned().unwrap_or_default();
+                spec.command = spec
+                    .command
+                    .map(|c| self.config.expand_agents(&c, &imkr_path()));
                 let cwd = spec.cwd.as_deref().map(crate::template::home_dir);
                 let inner = pane_inner(rect);
                 let before = persist::read_scrollback(&path, id)
@@ -3237,6 +3240,30 @@ impl App {
         Ok(serde_json::json!({ "window": n, "dir": dir, "pane": reply["pane"] }))
     }
 
+    /// `command` with a placeholder as its program (`<claude>`, see
+    /// `Config::expand_agents`) run through the shell as filled in, its
+    /// arguments passed on unchanged.
+    fn agent_argv(&self, command: &[String]) -> Vec<String> {
+        let Some(first) = command.first() else {
+            return Vec::new();
+        };
+        if !(first.starts_with('<') && first.ends_with('>')) {
+            return command.to_vec();
+        }
+        let filled = self.config.expand_agents(first, &imkr_path());
+        if filled == *first {
+            return command.to_vec();
+        }
+        let mut argv = vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            format!("exec {filled} \"$@\""),
+            "sh".to_owned(),
+        ];
+        argv.extend(command[1..].iter().cloned());
+        argv
+    }
+
     fn new_pane(
         &mut self,
         command: &[String],
@@ -3244,6 +3271,7 @@ impl App {
         workspace: Option<u8>,
         cwd: Option<PathBuf>,
     ) -> Reply {
+        let command = &self.agent_argv(command);
         // 0: a window of its own, the first free number.
         let n = match workspace {
             Some(0) => self.free_workspace().ok_or("all 9 windows are in use")?,

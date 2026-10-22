@@ -94,7 +94,7 @@ root = "~/Development/{session}"   # {session} is the new session's name
 
 [[window]]
 name = "claude"
-command = "claude"
+command = "<claude>"   # the agent as [agent_commands] starts it, see Agents
 
 [[window]]
 name = "terminal"

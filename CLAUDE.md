@@ -238,6 +238,10 @@ Projekt-Slug: `imkr`
 - Ende ohne Panes (letzte Shell `exit`, `Ctrl+B w x` aufs letzte Fenster): `close`/`close_workspace`
   merken vorher `final_layout` (`keep_final_layout`), das Ende legt es nach `last` – sonst ging die
   Session ganz verloren (#8544).
+- Agent-Platzhalter (#8565): `Config::expand_agents` (`<claude>`, `<agent>` = `default_agent`,
+  `<claude@konto>` → `imkr account run`; nur bekannte Agents/`agent_commands`, sonst bleibt der
+  Text). Angewandt in `restore` (Vorlagen-`command`), `App::agent_argv` vor `new_pane` (new,
+  worktree, fleet schickt `<agent>`), `template` speichert Agents als `<name>`.
 - Fenstertitel (#8564): `term::Listener` merkt `Event::Title`/`ResetTitle`, `Pane::title` →
   `clean_title` (Spinner weg, nur Programmname = leer); über `list` (`"title"`) in
   `AgentInfo::title`, Sidebar-Zeile unter dem Agent (`AgentRow`/`OtherAgentRow::title`),
