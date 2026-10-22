@@ -238,6 +238,10 @@ pub struct Config {
     pub new_agent_in: String,
     /// The agent `<agent>` stands for in templates and commands.
     pub default_agent: String,
+    /// What new worktrees get (copied files, links, commands), see
+    /// `worktree::Setup`; a project's `.imkr.toml` adds to it.
+    #[serde(skip_serializing_if = "crate::worktree::Setup::is_empty")]
+    pub worktree: crate::worktree::Setup,
     /// Push to the phone through ntfy or a webhook, see `push`.
     #[serde(skip_serializing_if = "crate::push::Push::is_default")]
     pub push: crate::push::Push,
@@ -548,6 +552,7 @@ impl Default for Config {
             new_agent_in: "pane".into(),
             default_agent: "claude".into(),
             push: crate::push::Push::default(),
+            worktree: crate::worktree::Setup::default(),
             images: true,
             renumber_windows: false,
             marks_on_alt: true,

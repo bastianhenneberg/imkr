@@ -231,9 +231,28 @@ state comes from what imkr sees on the screen.</p>
 pane's repository: <code>&lt;repo&gt;--&lt;branch&gt;</code> next to it, a new branch from the current commit or the
 existing one, or the worktree made before. So agents work side by side without touching each
 other's files. From a shell, also with what to run in it:</p>
-<pre><code class="language-bash">imkr worktree fix-login -- claude     # window &quot;fix-login&quot; in ../api--fix-login, running claude
+<pre><code class="language-bash">imkr worktree fix-login -- '&lt;claude&gt;'  # window &quot;fix-login&quot; in ../api--fix-login, running claude
 </code></pre>
-<p>Worktrees stay when the window closes; <code>git worktree remove</code> deletes one once its work is merged.</p>
+<p>Worktrees stay when the window closes. When the work is done:</p>
+<pre><code class="language-bash">imkr worktree ls              # each with what is uncommitted or not merged yet
+imkr worktree merge fix-login # merge into the branch checked out here, then remove it
+imkr worktree rm fix-login    # remove worktree, its windows and branch
+</code></pre>
+<p><code>merge</code> needs both checkouts clean and undoes a merge that conflicts; it merges into the branch
+the main checkout has, never switching it. <code>rm</code> refuses while there is work not committed or not
+merged, <code>--force</code> drops it.</p>
+<p>A new worktree has what git keeps, not <code>.env</code> and the like. <code>.imkr.toml</code> at the repository's
+root says what it gets besides, and <code>[worktree]</code> in the config the same for every repository:</p>
+<pre><code class="language-toml">[worktree]
+copy = [&quot;.env&quot;, &quot;.env.*&quot;]            # copied from the main checkout (globs: * and ?)
+symlink = [&quot;storage/app/public&quot;]     # linked to the main checkout's
+post_create = [&quot;composer install&quot;]   # run in the new window before its program
+pre_remove = []                      # run before merge or rm removes it; failing stops that
+</code></pre>
+<p>A list in <code>.imkr.toml</code> replaces the config's, unless it holds <code>"&lt;global&gt;"</code>, which brings the
+config's in at that place: <code>copy = ["&lt;global&gt;", "storage/*.key"]</code>. Careful with <code>symlink</code>:
+whatever writes into a linked directory writes into the main checkout, so link nothing a build
+or <code>composer install</code> changes (<code>vendor</code>, <code>node_modules</code>) unless that is what you want.</p>
 <p>A fleet puts several agents on the same task, each in a worktree of its own, to pick the best
 result:</p>
 <pre><code class="language-bash">imkr fleet speed -n 3 &quot;make the start-up faster&quot;   # windows speed-1 … speed-3 running claude

@@ -158,7 +158,12 @@ For scripts and agents:
                 window NAME-1 …; `fleet NAME --diff` compares what they did
   worktree NAME [-- command]
                 a new window in git worktree <repo>--NAME on branch NAME,
-                next to the repository here, running command or a shell
+                next to the repository here, running command or a shell;
+                [worktree] in the config and .imkr.toml copy files over
+  worktree ls [--json] | merge NAME | rm NAME [--force]
+                the worktrees with what is not merged; merge into the
+                branch checked out here, then remove; remove worktree,
+                window and branch (refused with work not merged)
   subscribe [--snapshot]
                 what changes, as JSON lines: agent states, panes opened,
                 closed and moved, in every session here (-s: only that one)

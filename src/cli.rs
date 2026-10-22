@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -1353,8 +1353,63 @@ pub fn fleet(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `imkr worktree NAME [-- command args...]`
+/// `imkr worktree NAME [-- command args...] | ls [--json] | merge NAME |
+/// rm NAME [--force]`
 pub fn worktree(args: &[String]) -> Result<()> {
+    let here = std::env::current_dir()?;
+    let setup = || -> Result<crate::worktree::Setup> {
+        let (config, _) = crate::config::Config::load();
+        crate::worktree::setup_for(&crate::worktree::main_root(&here)?, &config.worktree)
+    };
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["ls"] | ["ls", "--json"] => {
+            let list = crate::worktree::list(&here)?;
+            if args.len() == 2 {
+                println!("{}", serde_json::to_string_pretty(&list)?);
+                return Ok(());
+            }
+            if list.is_empty() {
+                println!("no worktrees besides the main checkout");
+            }
+            for w in list {
+                let state = match (w.changed, w.merged) {
+                    (0, true) => "merged".to_owned(),
+                    (0, false) => format!("{} commit(s) to merge", w.ahead),
+                    (n, _) => format!("{n} uncommitted"),
+                };
+                println!("{:<24} {:<22} {}", w.name, state, w.dir.display());
+            }
+            return Ok(());
+        }
+        ["merge", name] => {
+            let info = crate::worktree::merge(&here, name)?;
+            println!("merged {name}");
+            let panes = panes_in(&info.dir);
+            crate::worktree::remove(&here, name, &setup()?, false)?;
+            println!("removed {name}: worktree, window and branch");
+            end_panes(panes);
+            return Ok(());
+        }
+        ["rm", name] | ["rm", name, "--force"] | ["rm", "--force", name] => {
+            let force = args.iter().any(|a| a == "--force");
+            let panes = crate::worktree::find(&here, name)
+                .map(|info| panes_in(&info.dir))
+                .unwrap_or_default();
+            crate::worktree::remove(&here, name, &setup()?, force)?;
+            println!("removed {name}: worktree, window and branch");
+            end_panes(panes);
+            return Ok(());
+        }
+        ["merge" | "rm", ..] => {
+            bail!("usage: imkr worktree merge NAME | imkr worktree rm NAME [--force]")
+        }
+        _ => {}
+    }
     let (options, command) = match args.iter().position(|a| a == "--") {
         Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
         None => (args.to_vec(), Vec::new()),
@@ -3252,6 +3307,47 @@ pub fn push(args: &[String]) -> Result<()> {
         bail!("not every push went out");
     }
     Ok(())
+}
+
+/// The panes of the sessions here that work in `dir` or below, but not the
+/// one this runs in (its shell is where the user typed): to end once their
+/// worktree is gone. Taken before, when their directory still exists.
+fn panes_in(dir: &std::path::Path) -> Vec<(PathBuf, crate::layout::PaneId)> {
+    let own = std::env::var("IMKR_PANE")
+        .ok()
+        .and_then(|p| p.parse::<u64>().ok())
+        .map(|p| (protocol::session_name(), p));
+    let mut found = Vec::new();
+    for name in protocol::sessions() {
+        let Ok(socket) = protocol::session_socket(&name) else {
+            continue;
+        };
+        let Ok(panes) = client::request_at(&socket, Request::List) else {
+            continue;
+        };
+        for pane in panes.as_array().cloned().unwrap_or_default() {
+            let id = pane["pane"].as_u64();
+            if own
+                .as_ref()
+                .is_some_and(|(s, p)| *s == name && id == Some(*p))
+            {
+                continue;
+            }
+            let inside = pane["cwd"]
+                .as_str()
+                .is_some_and(|cwd| std::path::Path::new(cwd).starts_with(dir));
+            if let (true, Some(id)) = (inside, id) {
+                found.push((socket.clone(), id as crate::layout::PaneId));
+            }
+        }
+    }
+    found
+}
+
+fn end_panes(panes: Vec<(PathBuf, crate::layout::PaneId)>) {
+    for (socket, pane) in panes {
+        let _ = client::request_at(&socket, Request::Kill { pane });
+    }
 }
 
 #[cfg(test)]

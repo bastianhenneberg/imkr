@@ -238,6 +238,12 @@ Projekt-Slug: `imkr`
 - Ende ohne Panes (letzte Shell `exit`, `Ctrl+B w x` aufs letzte Fenster): `close`/`close_workspace`
   merken vorher `final_layout` (`keep_final_layout`), das Ende legt es nach `last` – sonst ging die
   Session ganz verloren (#8544).
+- Worktrees (#8567): `worktree::Setup` (`copy`/`symlink`/`post_create`/`pre_remove`) aus Config
+  `[worktree]` + `.imkr.toml` (`setup_for`, Listen ersetzen, `"<global>"` fügt ein), `prepare`
+  (Globs `expand`/`fits`) nur bei frischem Worktree in `worktree_window`, `post_create` per
+  `sh -c` vor dem Programm. `list`/`find`/`merge` (nie checkout, Konflikt → abort)/`remove`
+  (ohne --force nur sauber+gemergt). CLI `imkr worktree ls|merge|rm`, `panes_in` VOR dem
+  Entfernen (danach ist cwd „(deleted)“), eigenes Pane bleibt.
 - Push (#8566): `src/push.rs` (`[push]`: ntfy-Themenadresse → JSON an die Server-Wurzel,
   webhook → `push::Event` als JSON, per `curl` im Thread). `App::notify(id, kind, what)` ruft
   `App::push`: `wants(kind)`, nicht wenn ein Client in `quiet` s getippt hat (`user_at`), je

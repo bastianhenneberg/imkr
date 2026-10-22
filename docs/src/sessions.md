@@ -45,10 +45,36 @@ existing one, or the worktree made before. So agents work side by side without t
 other's files. From a shell, also with what to run in it:
 
 ```bash
-imkr worktree fix-login -- claude     # window "fix-login" in ../api--fix-login, running claude
+imkr worktree fix-login -- '<claude>'  # window "fix-login" in ../api--fix-login, running claude
 ```
 
-Worktrees stay when the window closes; `git worktree remove` deletes one once its work is merged.
+Worktrees stay when the window closes. When the work is done:
+
+```bash
+imkr worktree ls              # each with what is uncommitted or not merged yet
+imkr worktree merge fix-login # merge into the branch checked out here, then remove it
+imkr worktree rm fix-login    # remove worktree, its windows and branch
+```
+
+`merge` needs both checkouts clean and undoes a merge that conflicts; it merges into the branch
+the main checkout has, never switching it. `rm` refuses while there is work not committed or not
+merged, `--force` drops it.
+
+A new worktree has what git keeps, not `.env` and the like. `.imkr.toml` at the repository's
+root says what it gets besides, and `[worktree]` in the config the same for every repository:
+
+```toml
+[worktree]
+copy = [".env", ".env.*"]            # copied from the main checkout (globs: * and ?)
+symlink = ["storage/app/public"]     # linked to the main checkout's
+post_create = ["composer install"]   # run in the new window before its program
+pre_remove = []                      # run before merge or rm removes it; failing stops that
+```
+
+A list in `.imkr.toml` replaces the config's, unless it holds `"<global>"`, which brings the
+config's in at that place: `copy = ["<global>", "storage/*.key"]`. Careful with `symlink`:
+whatever writes into a linked directory writes into the main checkout, so link nothing a build
+or `composer install` changes (`vendor`, `node_modules`) unless that is what you want.
 
 A fleet puts several agents on the same task, each in a worktree of its own, to pick the best
 result:

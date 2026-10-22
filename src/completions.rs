@@ -296,7 +296,12 @@ const COMMANDS: &[Command] = &[
         &["-n", "--agent", "--diff"],
         Nothing,
     ),
-    cmd("worktree", "a window in a new git worktree", &[], Nothing),
+    cmd(
+        "worktree",
+        "a window in a new git worktree",
+        &["ls", "merge", "rm", "--force", "--json"],
+        Nothing,
+    ),
     cmd(
         "subscribe",
         "what changes, as JSON lines",

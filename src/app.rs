@@ -3241,9 +3241,31 @@ impl App {
         let from = cwd
             .or_else(|| self.focused_cwd())
             .ok_or("no directory to start from")?;
-        let dir = crate::worktree::create(&from, name).map_err(|e| format!("{e:#}"))?;
         let n = self.free_workspace().ok_or("all 9 windows are in use")?;
-        let reply = self.new_pane(command, false, Some(n), Some(dir.clone()))?;
+        let main = crate::worktree::main_root(&from).map_err(|e| format!("{e:#}"))?;
+        let setup = crate::worktree::setup_for(&main, &self.config.worktree)
+            .map_err(|e| format!("{e:#}"))?;
+        let fresh = crate::worktree::dir_for(&main, name).is_some_and(|d| !d.join(".git").exists());
+        let dir = crate::worktree::create(&from, name).map_err(|e| format!("{e:#}"))?;
+        let mut command = self.agent_argv(command);
+        if fresh {
+            crate::worktree::prepare(&main, &dir, &setup).map_err(|e| format!("{e:#}"))?;
+            if !setup.post_create.is_empty() {
+                // Run first, in the window, where its output shows.
+                let steps = setup.post_create.join(" && ");
+                let then = if command.is_empty() {
+                    "exec \"${SHELL:-sh}\"".to_owned()
+                } else {
+                    "exec \"$@\"".to_owned()
+                };
+                let script =
+                    format!("( {steps} ) || printf '\\nimkr: post_create failed\\n\\n'; {then}");
+                let mut wrapped = vec!["sh".to_owned(), "-c".to_owned(), script, "sh".to_owned()];
+                wrapped.append(&mut command);
+                command = wrapped;
+            }
+        }
+        let reply = self.new_pane(&command, false, Some(n), Some(dir.clone()))?;
         if let Some(ws) = self.hidden.get_mut(&n) {
             ws.name = Some(name.to_owned());
         }
