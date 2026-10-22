@@ -310,6 +310,7 @@ const COMMANDS: &[Command] = &[
         Nothing,
     ),
     cmd("msg", "message an agent", &["--wait", "--from"], Addresses),
+    cmd("push", "send a test push to the phone", &["test"], Nothing),
     cmd(
         "skill",
         "the guide for agents driving imkr",

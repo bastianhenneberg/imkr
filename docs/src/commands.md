@@ -124,6 +124,9 @@ For scripts and agents:
   agents [--all] [--json]               every agent in every session here, with
                                         --all also on the other machines, and
                                         its address for msg
+  push test                             send a test push the way [push] in the
+                                        config says (ntfy, webhook): agents that
+                                        need you, fail or run out reach the phone
   msg [--wait] <to> <text>              message an agent: <to> is a pane number,
                                         name or program, `session/<to>` or
                                         `machine:session/<to>`. Typed in once it

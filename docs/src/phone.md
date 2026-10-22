@@ -56,3 +56,24 @@ web_listen = "100.97.56.232:4657"   # optional
 
 Without HTTPS a browser will not install the page as an app; it works as a page all the same. For
 HTTPS put it behind `tailscale serve 4657` or the reverse proxy of your NetBird or other server.
+
+## Push to the phone
+
+The page shows what waits only while it is open. To hear of it with the phone in your pocket,
+each machine's imkr can push through [ntfy](https://ntfy.sh) (its app on Android or iPhone,
+subscribed to a topic only you know) and/or to a webhook of your own:
+
+```toml
+[push]
+ntfy = "https://ntfy.sh/a-topic-only-you-know"   # or your own ntfy server
+webhook = "https://example.org/imkr"             # gets each event as JSON
+on = ["blocked", "failed", "account"]            # the default; "done" too if you like
+quiet = 60     # nothing while you typed in that session in the last 60 seconds
+link = "http://100.97.56.232:4657"               # what a tap opens; else imkr web's address
+```
+
+A push names machine, session and agent (`codingmachine · php: claude needs you`), what the
+agent works on and, for a question or an error, the bottom of its screen. Each machine pushes
+for its own agents, so the setting belongs in every machine's config (`imkr hosts sync` takes it
+along). The same pane pushes the same thing at most every two minutes. `imkr push test` sends
+a test and says whether it went out.

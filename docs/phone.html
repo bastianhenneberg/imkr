@@ -238,7 +238,23 @@ by itself after an update.</p>
 web_listen = &quot;100.97.56.232:4657&quot;   # optional
 </code></pre>
 <p>Without HTTPS a browser will not install the page as an app; it works as a page all the same. For
-HTTPS put it behind <code>tailscale serve 4657</code> or the reverse proxy of your NetBird or other server.</p></article>
+HTTPS put it behind <code>tailscale serve 4657</code> or the reverse proxy of your NetBird or other server.</p>
+<h2 id="push-to-the-phone">Push to the phone</h2>
+<p>The page shows what waits only while it is open. To hear of it with the phone in your pocket,
+each machine's imkr can push through <a href="https://ntfy.sh">ntfy</a> (its app on Android or iPhone,
+subscribed to a topic only you know) and/or to a webhook of your own:</p>
+<pre><code class="language-toml">[push]
+ntfy = &quot;https://ntfy.sh/a-topic-only-you-know&quot;   # or your own ntfy server
+webhook = &quot;https://example.org/imkr&quot;             # gets each event as JSON
+on = [&quot;blocked&quot;, &quot;failed&quot;, &quot;account&quot;]            # the default; &quot;done&quot; too if you like
+quiet = 60     # nothing while you typed in that session in the last 60 seconds
+link = &quot;http://100.97.56.232:4657&quot;               # what a tap opens; else imkr web's address
+</code></pre>
+<p>A push names machine, session and agent (<code>codingmachine · php: claude needs you</code>), what the
+agent works on and, for a question or an error, the bottom of its screen. Each machine pushes
+for its own agents, so the setting belongs in every machine's config (<code>imkr hosts sync</code> takes it
+along). The same pane pushes the same thing at most every two minutes. <code>imkr push test</code> sends
+a test and says whether it went out.</p></article>
 <div class="pager"><a href="hives.html"><span>← Back</span>Hives and templates</a><a href="plugins.html" style="text-align:right"><span>Next →</span>Plugins</a></div><p class="edit">Source: <a href="https://github.com/bastianhenneberg/imkr/blob/main/docs/src/phone.md">docs/src/phone.md</a></p>
 </main>
 </div>

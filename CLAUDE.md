@@ -238,6 +238,10 @@ Projekt-Slug: `imkr`
 - Ende ohne Panes (letzte Shell `exit`, `Ctrl+B w x` aufs letzte Fenster): `close`/`close_workspace`
   merken vorher `final_layout` (`keep_final_layout`), das Ende legt es nach `last` – sonst ging die
   Session ganz verloren (#8544).
+- Push (#8566): `src/push.rs` (`[push]`: ntfy-Themenadresse → JSON an die Server-Wurzel,
+  webhook → `push::Event` als JSON, per `curl` im Thread). `App::notify(id, kind, what)` ruft
+  `App::push`: `wants(kind)`, nicht wenn ein Client in `quiet` s getippt hat (`user_at`), je
+  (Pane, Art) höchstens alle `PUSH_AGAIN` (Zustand flackert sonst doppelt). `imkr push test`.
 - Agent-Platzhalter (#8565): `Config::expand_agents` (`<claude>`, `<agent>` = `default_agent`,
   `<claude@konto>` → `imkr account run`; nur bekannte Agents/`agent_commands`, sonst bleibt der
   Text). Angewandt in `restore` (Vorlagen-`command`), `App::agent_argv` vor `new_pane` (new,

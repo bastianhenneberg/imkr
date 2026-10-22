@@ -238,6 +238,9 @@ pub struct Config {
     pub new_agent_in: String,
     /// The agent `<agent>` stands for in templates and commands.
     pub default_agent: String,
+    /// Push to the phone through ntfy or a webhook, see `push`.
+    #[serde(skip_serializing_if = "crate::push::Push::is_default")]
+    pub push: crate::push::Push,
     /// Programs to treat as coding agents besides those imkr knows, by the
     /// name they run under, e.g. `my-agent`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -544,6 +547,7 @@ impl Default for Config {
             agent_commands: BTreeMap::new(),
             new_agent_in: "pane".into(),
             default_agent: "claude".into(),
+            push: crate::push::Push::default(),
             images: true,
             renumber_windows: false,
             marks_on_alt: true,

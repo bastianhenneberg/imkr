@@ -23,6 +23,7 @@ mod pane;
 mod persist;
 mod plugin;
 mod protocol;
+mod push;
 mod release;
 mod render;
 mod review;
@@ -164,6 +165,9 @@ For scripts and agents:
   agents [--all] [--json]               every agent in every session here, with
                                         --all also on the other machines, and
                                         its address for msg
+  push test                             send a test push the way [push] in the
+                                        config says (ntfy, webhook): agents that
+                                        need you, fail or run out reach the phone
   msg [--wait] <to> <text>              message an agent: <to> is a pane number,
                                         name or program, `session/<to>` or
                                         `machine:session/<to>`. Typed in once it
@@ -308,6 +312,7 @@ fn main() -> Result<()> {
         ["note", ..] => cli::note(&args[1..]),
         ["connect", ..] => cli::connect(&args[1..]),
         ["agents", ..] => cli::agents(&args[1..]),
+        ["push", ..] => cli::push(&args[1..]),
         ["subscribe", ..] => cli::subscribe(&args[1..], chosen),
         ["worktree", ..] => cli::worktree(&args[1..]),
         ["fleet", ..] => cli::fleet(&args[1..]),

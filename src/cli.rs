@@ -3202,6 +3202,58 @@ fn update_at(socket: &std::path::Path, exe: &std::path::Path) -> Result<u64> {
     anyhow::bail!("the server did not come back, see its log next to the socket")
 }
 
+/// `imkr push test`: sends a test push the way `[push]` in the config says,
+/// and waits to say whether it arrived.
+pub fn push(args: &[String]) -> Result<()> {
+    if args.first().map(String::as_str) != Some("test") || args.len() > 1 {
+        bail!("usage: imkr push test");
+    }
+    let (config, problem) = crate::config::Config::load();
+    if let Some(problem) = problem {
+        eprintln!("config: {problem}");
+    }
+    let push = &config.push;
+    if !push.enabled() {
+        bail!("nothing to push to: set ntfy or webhook under [push] in the config");
+    }
+    let event = crate::push::Event {
+        kind: "test".into(),
+        machine: protocol::machine_name(),
+        session: protocol::session_name(),
+        agent: "imkr".into(),
+        text: "can reach you".into(),
+        task: "A test from imkr push test".into(),
+        link: push.link.clone().unwrap_or_default(),
+        ..crate::push::Event::default()
+    };
+    let mut failed = false;
+    if let Some(address) = &push.ntfy {
+        let Some((server, topic)) = crate::push::ntfy_parts(address) else {
+            bail!("not an ntfy topic address: {address} (e.g. https://ntfy.sh/a-topic)");
+        };
+        match crate::push::post(&server, &crate::push::ntfy_body(&topic, &event)) {
+            Ok(()) => println!("ntfy: sent to {topic} on {server}"),
+            Err(e) => {
+                failed = true;
+                println!("ntfy: {e:#}");
+            }
+        }
+    }
+    if let Some(address) = &push.webhook {
+        match crate::push::post(address, &serde_json::to_value(&event)?) {
+            Ok(()) => println!("webhook: sent to {address}"),
+            Err(e) => {
+                failed = true;
+                println!("webhook: {e:#}");
+            }
+        }
+    }
+    if failed {
+        bail!("not every push went out");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -873,6 +873,12 @@ pub struct App {
     /// The layout just before its last pane went, for `last`: a session
     /// whose last shell exited has no panes left to save when it ends.
     final_layout: Option<Saved>,
+    /// When a terminal attached here last gave a key or click: pushes
+    /// wait while the user is at it (`push::Push::quiet`).
+    user_at: Option<Instant>,
+    /// When each pane last pushed each kind: a state that flickers pushes
+    /// once (`PUSH_AGAIN`).
+    pushed: HashMap<(PaneId, String), Instant>,
 }
 
 impl App {
@@ -994,6 +1000,8 @@ impl App {
             last_click: None,
             quit: false,
             final_layout: None,
+            user_at: None,
+            pushed: HashMap::new(),
         };
         app.apply_theme();
         app.load_plugins();
@@ -1692,6 +1700,9 @@ impl App {
             }
             AppEvent::ClientMsg(id, ClientMsg::Event(event)) if self.client_mut(id).is_some() => {
                 self.active = Some(id);
+                if matches!(event, Event::Key(_) | Event::Mouse(_) | Event::Paste(_)) {
+                    self.user_at = Some(Instant::now());
+                }
                 if let Some(n) = self.client_mut(id).map(|c| c.workspace) {
                     self.view(n);
                 }
@@ -3493,12 +3504,12 @@ impl App {
                 && !in_view
             {
                 self.unseen.insert(id);
-                self.notify(id, "is done");
+                self.notify(id, "done", "is done");
             }
             if state == AgentState::Blocked && was != Some(AgentState::Blocked) && !in_view {
                 self.flash = Some(format!("pane {id} needs you · ^B a"));
                 self.broadcast(b"\x07");
-                self.notify(id, "needs you");
+                self.notify(id, "blocked", "needs you");
             }
             // Said even in view: it looked busy, and the user waits for it.
             if state == AgentState::Failed && was != Some(AgentState::Failed) {
@@ -3508,7 +3519,7 @@ impl App {
                     .map_or_else(|| "error".to_owned(), |p| p.failure_reason().to_owned());
                 self.flash = Some(format!("pane {id} stopped: {reason} · ^B a"));
                 self.broadcast(b"\x07");
-                self.notify(id, &format!("stopped: {reason}"));
+                self.notify(id, "failed", &format!("stopped: {reason}"));
             }
         }
         self.unseen.retain(|id| seen.contains_key(id));
@@ -3544,11 +3555,14 @@ impl App {
     }
 
     /// Tells the user outside imkr that the agent in pane `id` `what`,
-    /// e.g. "needs you", the way the settings say.
-    fn notify(&mut self, id: PaneId, what: &str) {
+    /// e.g. "needs you", the way the settings say, and pushes it to the
+    /// phone when `[push]` wants `kind` (`blocked`, `failed`, `account`,
+    /// `done`).
+    fn notify(&mut self, id: PaneId, kind: &str, what: &str) {
         let Some(who) = self.pane_who(id) else {
             return;
         };
+        self.push(id, kind, &who, what);
         let cwd = self.panes.get(&id).and_then(|pane| pane.cwd());
         let place = match (self.workspace_of(id), cwd) {
             (Some(n), Some(cwd)) => format!("window {n} · {}", tilde(&cwd)),
@@ -3556,6 +3570,60 @@ impl App {
             _ => String::new(),
         };
         self.send_notification(&format!("{who} {what}"), &place);
+    }
+
+    /// Pushes what happened in pane `id` to the phone, see `push`; not
+    /// while the user typed here in the last `quiet` seconds.
+    fn push(&mut self, id: PaneId, kind: &str, who: &str, what: &str) {
+        let push = &self.config.push;
+        if !push.wants(kind) {
+            return;
+        }
+        let quiet = Duration::from_secs(push.quiet);
+        if !self.clients.is_empty() && self.user_at.is_some_and(|at| at.elapsed() < quiet) {
+            return;
+        }
+        let key = (id, kind.to_owned());
+        if self
+            .pushed
+            .get(&key)
+            .is_some_and(|at| at.elapsed() < PUSH_AGAIN)
+        {
+            return;
+        }
+        self.pushed.retain(|_, at| at.elapsed() < PUSH_AGAIN);
+        self.pushed.insert(key, Instant::now());
+        let push = &self.config.push;
+        let Some(pane) = self.panes.get(&id) else {
+            return;
+        };
+        let screen = if matches!(kind, "blocked" | "failed") {
+            agent::tail(pane.screen().screen(), INBOX_LINES)
+        } else {
+            String::new()
+        };
+        let link = push
+            .link
+            .clone()
+            .unwrap_or_else(|| match &self.config.web_listen {
+                Some(listen) if self.config.web => format!("http://{listen}"),
+                _ => String::new(),
+            });
+        crate::push::send(
+            push,
+            crate::push::Event {
+                kind: kind.to_owned(),
+                machine: protocol::machine_name(),
+                session: protocol::session_name(),
+                pane: id as u64,
+                window: self.workspace_of(id).unwrap_or(0),
+                agent: who.to_owned(),
+                text: what.to_owned(),
+                task: pane.title(),
+                screen,
+                link,
+            },
+        );
     }
 
     /// The name pane `id` goes by in notifications: its name, else its
@@ -4476,7 +4544,7 @@ impl App {
                 ),
                 None => format!("account {current} used up until {when}, no other free one"),
             };
-            self.notify(id, &text);
+            self.notify(id, "account", &text);
             self.flash = Some(format!("pane {id}: {text}"));
         }
     }
@@ -12442,6 +12510,9 @@ fn hosted_command(argv: &[String]) -> Option<String> {
     let words: Vec<String> = argv.iter().map(|w| crate::client::sh_quote(w)).collect();
     Some(format!("exec {}", words.join(" ")))
 }
+
+/// How soon a pane pushes the same kind again.
+const PUSH_AGAIN: Duration = Duration::from_secs(120);
 
 /// `label` with what the agent says it does after it, if anything.
 fn with_title(label: String, title: &str) -> String {
