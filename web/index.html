@@ -375,6 +375,26 @@ function input(text) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(text));
 }
 
+// In AI Brain the page sits in a frame without allow-forms, where the browser
+// drops a form's submission before any submit event: Enter and the buttons
+// raise it themselves, here as on the phone.
+function submitted(form) {
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing || e.target.tagName !== 'INPUT') return;
+  const form = e.target.closest('form');
+  if (!form) return;
+  e.preventDefault();
+  submitted(form);
+});
+document.addEventListener('click', (e) => {
+  const button = e.target.closest?.('form button');
+  if (!button) return;
+  e.preventDefault();
+  submitted(button.form);
+});
+
 $('compose').addEventListener('submit', (e) => {
   e.preventDefault();
   const line = $('line');
