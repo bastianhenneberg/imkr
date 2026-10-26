@@ -1037,17 +1037,26 @@ if [[ -n "$IMKR" ]]; then
 fi
 "#;
 
-/// The same for bash, with a DEBUG trap for the start of a command.
+/// The same for bash, with a DEBUG trap for the start of a command. The
+/// trap also fires for every other prompt command (Arch's bash.bashrc adds
+/// one for the window title), so a command only starts once the prompt is
+/// drawn: `_imkr_prompt` runs last and lets the next one through.
 const BASH_INTEGRATION: &str = r#"# imkr shell integration: `eval "$(imkr shell-integration bash)"` in ~/.bashrc
 if [[ -n "$IMKR" ]]; then
-  _imkr_ran=
+  _imkr_ran= _imkr_ready=
   _imkr_preexec() {
-    [[ -n "$_imkr_ran" || "$BASH_COMMAND" == _imkr_prompt* ]] && return
-    _imkr_ran=1; printf '\e]133;C\a'
+    [[ -z "$_imkr_ready" || "$BASH_COMMAND" == _imkr_status* ]] && return
+    _imkr_ready= _imkr_ran=1; printf '\e]133;C\a'
   }
-  _imkr_prompt() { local code=$?; [[ -n "$_imkr_ran" ]] && printf '\e]133;D;%s\a' "$code"; _imkr_ran=; printf '\e]133;A\a'; }
+  _imkr_status() { local code=$?; _imkr_ready=; [[ -n "$_imkr_ran" ]] && printf '\e]133;D;%s\a' "$code"; _imkr_ran=; }
+  _imkr_prompt() { printf '\e]133;A\a'; _imkr_ready=1; }
   trap _imkr_preexec DEBUG
-  PROMPT_COMMAND="_imkr_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+  if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
+    PROMPT_COMMAND=(_imkr_status "${PROMPT_COMMAND[@]}" _imkr_prompt)
+  else
+    _imkr_pc=${PROMPT_COMMAND%;}
+    PROMPT_COMMAND="_imkr_status${_imkr_pc:+;$_imkr_pc};_imkr_prompt"
+  fi
 fi
 "#;
 
