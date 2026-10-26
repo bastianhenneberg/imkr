@@ -53,6 +53,16 @@ sessions across machines, is imkr's own.
   agent yet; one key hands a note over later, once it is idle. Saved with the pane.
 - **Plugins** are plain programs in a popup, from a file or a git catalog of your own.
 
+### Built from inside
+
+imkr is developed by coding agents that run in imkr, with a person deciding and approving. One
+agent orchestrates, others work on other machines, and they hand work and questions to each
+other with `imkr msg`. `imkr update` swaps the binary under them without a pane closing, so the
+agents building a change keep running through its release, on every machine (`imkr hosts sync`).
+What they learn stays in [AI Brain](docs/src/ai-brain.md): decisions, learnings and tasks, read
+at the start of each session and written back at its end. The interfaces are pinned by tests:
+the key and command lists in the docs are generated from the code and fail when they drift.
+
 ## Install
 
 Linux on x86_64 or aarch64:

@@ -273,6 +273,24 @@ flowchart TB
   </div>
 </section>
 
+<section class="ch" id="inside">
+  <div class="ch-head"><span class="hex"></span><h2>Built from inside</h2></div>
+  <p class="read">imkr is developed by coding agents that run in imkr, with a person deciding and approving. One agent orchestrates, others work on other machines, and they pass work and questions on with <code>imkr msg</code>. <code>imkr update</code> swaps the binary under them, so the agents building a release keep running through it, on every machine.</p>
+  <div class="figure">
+<pre class="mermaid">
+flowchart LR
+    P["you: decide, approve"] --> O["orchestrator<br/>laptop"]
+    O -- "imkr msg" --> A["agent<br/>server A"]
+    O -- "imkr msg" --> B["agent<br/>laptop, other repo"]
+    A -- "answers" --> O
+    B -- "answers" --> O
+    O -- "release ·<br/>imkr hosts sync" --> U["new binary under<br/>every running pane"]
+    O <-- "learnings,<br/>tasks" --> M[("AI Brain")]
+</pre>
+    <p class="cap">What the agents learn stays in AI Brain and is read again by the next session. The key and command lists here are generated from the code; a test fails when they drift.</p>
+  </div>
+</section>
+
 <section class="ch" id="start">
   <div class="ch-head"><span class="hex"></span><h2>Getting started</h2></div>
   <ol class="steps">
