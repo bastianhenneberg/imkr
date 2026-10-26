@@ -6,12 +6,12 @@
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#1e1e2e">
 <title>imkr · {{MACHINE}}</title>
-<link rel="manifest" href="/manifest.json">
-<link rel="icon" href="/icon.svg">
-<link rel="apple-touch-icon" href="/icon.svg">
-<link rel="stylesheet" href="/xterm.css?v={{VERSION}}">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="xterm.css?v={{VERSION}}">
 <style>
-  @font-face { font-family:"Symbols Nerd Font Mono"; src:url("/symbols.woff2?v={{VERSION}}") format("woff2"); font-display:block; }
+  @font-face { font-family:"Symbols Nerd Font Mono"; src:url("symbols.woff2?v={{VERSION}}") format("woff2"); font-display:block; }
   :root {
     --bg:#f6f6f8; --fg:#1e1e2e; --muted:#6c6f85; --card:#fff; --line:#dcdce4;
     --accent:#1e66f5; --on-accent:#fff; --warn:#df8e1d; --ok:#40a02b; --danger:#d20f39; --key:#e6e6ee;
@@ -104,13 +104,94 @@
   <form id="compose"><input id="line" placeholder="Type, then send" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send"><button class="key primary">⏎</button></form>
 </div>
 
-<script src="/xterm.js?v={{VERSION}}"></script>
-<script src="/addon-fit.js?v={{VERSION}}"></script>
+<script src="xterm.js?v={{VERSION}}"></script>
+<script src="addon-fit.js?v={{VERSION}}"></script>
 <script>
 'use strict';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+// --- Transport: this machine's imkr web, or AI Brain around the page ---
+
+// Inside a frame the page is AI Brain's view of a machine (imkr web itself
+// refuses to be framed): state, typing and terminals go to the page around
+// it as messages, which passes them on through ai-brain-harness.
+const embedded = window.parent !== window;
+const bridge = { next: 1, waiting: new Map(), terms: new Map() };
+if (embedded) {
+  window.addEventListener('message', (e) => {
+    if (e.source !== window.parent || !e.data || typeof e.data.imkr !== 'string') return;
+    const m = e.data;
+    if (m.imkr === 'reply') {
+      const done = bridge.waiting.get(m.id);
+      bridge.waiting.delete(m.id);
+      if (done) m.ok ? done.ok(m.body) : done.fail(new Error(m.error || 'failed'));
+    } else if (m.imkr === 'data' || m.imkr === 'closed') {
+      bridge.terms.get(m.tid)?.deliver(m);
+    }
+  });
+}
+function ask(what, body) {
+  const id = bridge.next++;
+  return new Promise((ok, fail) => {
+    bridge.waiting.set(id, { ok, fail });
+    window.parent.postMessage({ imkr: what, id, body }, '*');
+  });
+}
+// A WebSocket's face for a terminal that runs through the page around.
+class BridgedSocket {
+  constructor(params) {
+    this.tid = bridge.next++;
+    this.readyState = WebSocket.OPEN;
+    bridge.terms.set(this.tid, this);
+    window.parent.postMessage({ imkr: 'open', tid: this.tid, params }, '*');
+  }
+  deliver(m) {
+    if (m.imkr === 'closed') { this.end(); return; }
+    this.onmessage?.({ data: m.text ?? m.bytes });
+  }
+  send(data) {
+    if (this.readyState !== WebSocket.OPEN) return;
+    const bytes = typeof data === 'string' ? null : data;
+    window.parent.postMessage({ imkr: 'input', tid: this.tid, bytes, text: bytes ? undefined : data }, '*');
+  }
+  close() {
+    if (this.readyState !== WebSocket.OPEN) return;
+    window.parent.postMessage({ imkr: 'close', tid: this.tid }, '*');
+    this.end();
+  }
+  end() {
+    if (this.readyState === WebSocket.CLOSED) return;
+    this.readyState = WebSocket.CLOSED;
+    bridge.terms.delete(this.tid);
+    this.onclose?.();
+  }
+}
+const transport = embedded ? {
+  state: () => ask('state'),
+  send: (body) => ask('send', body),
+  terminal: (params) => new BridgedSocket(params),
+} : {
+  async state() {
+    const res = await fetch('api/state');
+    if (res.status === 401) { location.reload(); return new Promise(() => {}); }
+    return res.json();
+  },
+  async send(body) {
+    const res = await fetch('api/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (res.status === 401) location.reload();
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  },
+  terminal(params) {
+    const url = new URL('ws', location.href);
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.search = new URLSearchParams(params);
+    return new WebSocket(url);
+  },
+};
 
 function ago(secs) {
   if (secs < 60) return 'just now';
@@ -119,13 +200,8 @@ function ago(secs) {
   return Math.floor(secs / 86400) + 'd ago';
 }
 
-async function send(host, session, pane, text, enter) {
-  const res = await fetch('/api/send', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ host: host || null, session, pane, text, enter }),
-  });
-  if (res.status === 401) location.reload();
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+function send(host, session, pane, text, enter) {
+  return transport.send({ host: host || null, session, pane, text, enter });
 }
 
 // --- Home: what waits, what is done, every session ---
@@ -136,9 +212,7 @@ const open = new Set(JSON.parse(store.get('open', '[]')));
 async function refresh() {
   if (document.hidden || document.body.classList.contains('term')) return;
   try {
-    const res = await fetch('/api/state');
-    if (res.status === 401) return location.reload();
-    state = await res.json();
+    state = await transport.state();
     $('dot').classList.remove('off');
     $('device').textContent = state.device || '';
     render();
@@ -421,8 +495,6 @@ async function connect() {
   if (ws) { ws.onclose = null; ws.close(); }
   makeTerm();
   status('Connecting…');
-  const url = new URL('/ws', location.href);
-  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const params = target.whole
     ? { session: target.session, attach: '1' }
     : { session: target.session, pane: target.pane, fit: fit ? '1' : '0' };
@@ -433,8 +505,7 @@ async function connect() {
     const want = fitAddon.proposeDimensions();
     if (want) Object.assign(params, { cols: want.cols, rows: want.rows });
   }
-  url.search = new URLSearchParams(params);
-  const socket = new WebSocket(url);
+  const socket = transport.terminal(params);
   socket.binaryType = 'arraybuffer';
   ws = socket;
   let ended = false;

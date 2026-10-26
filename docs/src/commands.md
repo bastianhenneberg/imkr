@@ -69,6 +69,9 @@ Commands:
                 on the VPN address (Tailscale, NetBird) or 127.0.0.1
   web pair | devices | forget NAME|all
                 pair a phone (a code for ten minutes), list or remove them
+  web page | state | send
+                the page, what it shows (JSON), type into a pane (JSON on
+                stdin): for ai-brain-harness, which shows it in AI Brain
   rename-session NAME
                 rename the session (`-s OLD rename-session NEW` for another)
   kill-server   shut down the session's server and every pane in it

@@ -110,6 +110,9 @@ Commands:
                 on the VPN address (Tailscale, NetBird) or 127.0.0.1
   web pair | devices | forget NAME|all
                 pair a phone (a code for ten minutes), list or remove them
+  web page | state | send
+                the page, what it shows (JSON), type into a pane (JSON on
+                stdin): for ai-brain-harness, which shows it in AI Brain
   rename-session NAME
                 rename the session (`-s OLD rename-session NEW` for another)
   kill-server   shut down the session's server and every pane in it
@@ -278,10 +281,18 @@ fn main() -> Result<()> {
     // head closed the pipe. Commands that print end quietly instead, like
     // other tools; the ones that live on connections (client, proxy, server,
     // web, hosted windows) keep handling a closed one themselves.
-    let lives_on_connections = matches!(
-        args.first().map(String::as_str),
-        None | Some("attach" | "a" | "proxy" | "server" | "web" | "hosted" | "attach-pane" | "tap")
+    // `imkr web page|state|send` only print, for ai-brain-harness.
+    let prints = matches!(
+        args.get(1).map(String::as_str),
+        Some("page" | "state" | "send")
     );
+    let lives_on_connections = match args.first().map(String::as_str) {
+        Some("web") => !prints,
+        first => matches!(
+            first,
+            None | Some("attach" | "a" | "proxy" | "server" | "hosted" | "attach-pane" | "tap")
+        ),
+    };
     if !lives_on_connections {
         // SAFETY: no other thread runs yet; restoring the default action.
         unsafe {

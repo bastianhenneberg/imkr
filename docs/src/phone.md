@@ -57,6 +57,21 @@ web_listen = "100.97.56.232:4657"   # optional
 Without HTTPS a browser will not install the page as an app; it works as a page all the same. For
 HTTPS put it behind `tailscale serve 4657` or the reverse proxy of your NetBird or other server.
 
+### The same page in AI Brain
+
+AI Brain can show this page for a machine without `imkr web` running there: ai-brain-harness
+asks imkr for it and carries what the page asks for over its own connection, so no address,
+pairing or VPN is needed. Inside a frame the page sends its requests to the page around it
+instead of this server. The harness uses three commands:
+
+```bash
+imkr web page            # the page, as imkr web serves it
+imkr web state           # what it shows: the sessions here and on the other machines (JSON)
+imkr web send            # type into a pane: {"session", "pane", "text", "enter", "host"} on stdin
+```
+
+Terminals go through `imkr tap` (see [Agents](agents.md)).
+
 ## Push to the phone
 
 The page shows what waits only while it is open. To hear of it with the phone in your pocket,

@@ -89,8 +89,28 @@ pub fn main(args: &[String]) -> Result<()> {
             println!("forgot {} device(s)", before - devices.len());
             Ok(())
         }
+        // For ai-brain-harness, which shows this page in AI Brain and
+        // carries what it asks for instead of a web server here.
+        ["page"] => {
+            print!("{}", page());
+            Ok(())
+        }
+        ["state"] => {
+            println!("{}", state(None));
+            Ok(())
+        }
+        ["send"] => {
+            let mut body = Vec::new();
+            std::io::stdin().read_to_end(&mut body)?;
+            let reply = send(&body);
+            println!("{}", String::from_utf8_lossy(&reply.body));
+            if !reply.status.starts_with('2') {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         _ => bail!(
-            "usage: imkr web [--listen ADDR[:PORT]] | imkr web pair | imkr web devices | imkr web forget NAME|all"
+            "usage: imkr web [--listen ADDR[:PORT]] | imkr web pair | imkr web devices | imkr web forget NAME|all | imkr web page|state|send"
         ),
     }
 }
@@ -916,13 +936,7 @@ fn route(request: &HttpRequest) -> Response {
             }
         }
         ("GET", "/") if device.is_none() => pair_page("", ""),
-        ("GET", "/") => Response::new(
-            "200 OK",
-            "text/html; charset=utf-8",
-            INDEX
-                .replace("{{VERSION}}", env!("CARGO_PKG_VERSION"))
-                .replace("{{MACHINE}}", &html_escape(&protocol::machine_name())),
-        ),
+        ("GET", "/") => Response::new("200 OK", "text/html; charset=utf-8", page()),
         (_, path) if path.starts_with("/api/") && device.is_none() => {
             Response::error("401 Unauthorized", "not paired")
         }
@@ -930,17 +944,30 @@ fn route(request: &HttpRequest) -> Response {
             if let Some(device) = &device {
                 note_seen(&device.name, &request.peer, None);
             }
-            Response::json(&serde_json::json!({
-            "machine": protocol::machine_name(),
-            "version": env!("CARGO_PKG_VERSION"),
-            "device": device.map(|d| d.name),
-            "sessions": crate::client::local_sessions(),
-            "hosts": other_machines(),
-            }))
+            Response::json(&state(device.map(|d| d.name)))
         }
         ("POST", "/api/send") if request.same_origin() => send(&request.body),
         _ => Response::error("404 Not Found", "nothing here"),
     }
+}
+
+/// The page, for this machine.
+fn page() -> String {
+    INDEX
+        .replace("{{VERSION}}", env!("CARGO_PKG_VERSION"))
+        .replace("{{MACHINE}}", &html_escape(&protocol::machine_name()))
+}
+
+/// What the page shows: the sessions here and on the other machines, for
+/// the device `device` looking.
+fn state(device: Option<String>) -> serde_json::Value {
+    serde_json::json!({
+        "machine": protocol::machine_name(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "device": device,
+        "sessions": crate::client::local_sessions(),
+        "hosts": other_machines(),
+    })
 }
 
 fn html_escape(text: &str) -> String {

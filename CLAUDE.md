@@ -187,6 +187,12 @@ Projekt-Slug: `imkr`
   >100 KB still; Harness nimmt `--max 40000` für ≤60 KB JSON); Lücke ⇒ neu verbinden ⇒ Vollbild,
   `fit_screen` kürzt den Verlauf (Klartext vor dem ersten ESC) vorn. Ein Kanal für alle
   Verbindungen, Ereignisse tragen die Verbindungsnummer (alte Leser zählen nicht).
+- imkr web in AI Brain (#530): `web/index.html` hat eine Transportschicht (`transport`: state/send/
+  terminal). Im Frame (`window.parent !== window`; imkr web selbst schickt `X-Frame-Options: DENY`)
+  geht alles per `postMessage` an die Elternseite (`ask`, `BridgedSocket`, Nachrichten `imkr:
+  state|send|open|input|close` hin, `reply|data|closed` zurück), sonst fetch/WebSocket wie bisher.
+  Asset-Pfade relativ (AI Brain setzt `<base>`). Für die Harness: `imkr web page|state|send`
+  (`web::page`, `web::state`, `web::send`); die drei sterben still an geschlossener Pipe.
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
   `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet
