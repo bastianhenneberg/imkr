@@ -263,6 +263,10 @@ imkr run --pane 3 -- cargo test   # types it in, waits, prints the output, exits
 imkr wait --pane 3                # waits for the command running there (--timeout S)
 ```
 
+One word after `--` is typed as the command line it is (`imkr run --pane 3 -- 'make && make
+test'`); several are the words of one command and each is quoted, as a program would get them:
+`-- echo "a b;c"` prints `a b;c`.
+
 ### Showing a pane to a program
 
 `imkr tap` shows a pane to a program instead of a terminal, for example to bring it into a web

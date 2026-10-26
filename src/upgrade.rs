@@ -52,6 +52,10 @@ pub struct Handover {
     /// Agents done whose pane was not looked at since: they stay done.
     #[serde(default)]
     pub unseen: Vec<PaneId>,
+    /// Messages for agents not delivered yet (`imkr msg`): an update while
+    /// one waits for its agent must not drop it.
+    #[serde(default)]
+    pub mailbox: Vec<(PaneId, String)>,
     pub saved: Saved,
     pub panes: BTreeMap<PaneId, HandoverPane>,
 }

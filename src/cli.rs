@@ -1137,10 +1137,25 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     client::request(Request::Send {
         pane,
-        text: command.join(" "),
+        text: command_line(&command),
         enter: true,
     })?;
     finish(pane, before["finished"].as_u64().unwrap_or(0), timeout)
+}
+
+/// What `imkr run` types: one word as the command line it is (`"make &&
+/// make test"`), several as the words of one command, each quoted, as a
+/// program would get them. Joined as they came, `-- echo "a b;echo x"`
+/// ran two commands.
+fn command_line(words: &[String]) -> String {
+    match words {
+        [line] => line.clone(),
+        words => words
+            .iter()
+            .map(|w| client::sh_quote(w))
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
 }
 
 /// `imkr wait [--pane N] [--timeout S]` without `--until`: waits until
@@ -3792,6 +3807,21 @@ fn account_in_use(tool: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_quotes_several_words_but_not_one_line() {
+        let words = |w: &[&str]| w.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        assert_eq!(command_line(&words(&["cargo", "test"])), "cargo test");
+        assert_eq!(
+            command_line(&words(&["echo", "a b;echo ZWEI"])),
+            "echo 'a b;echo ZWEI'"
+        );
+        assert_eq!(command_line(&words(&["echo", "it's"])), r"echo 'it'\''s'");
+        assert_eq!(
+            command_line(&words(&["make && make test"])),
+            "make && make test"
+        );
+    }
 
     #[test]
     fn tap_leaves_out_the_oldest_history_first() {

@@ -1244,6 +1244,7 @@ impl App {
         self.screen = Rect::new(0, 0, handover.screen.0, handover.screen.1);
         self.focus_mode = handover.focus_mode;
         self.unseen.extend(handover.unseen.iter().copied());
+        self.mailbox.extend(handover.mailbox.iter().cloned());
         let saved = handover.saved;
         self.carry_idle(&saved);
         self.accounts = saved.accounts.clone();
@@ -1375,6 +1376,7 @@ impl App {
             popup_full: self.popup_full,
             focus_mode: self.focus_mode,
             unseen: self.unseen.iter().copied().collect(),
+            mailbox: self.mailbox.clone(),
             saved: self.saved(),
             panes,
         };
@@ -2519,8 +2521,14 @@ impl App {
             if !self.panes.contains_key(&id) {
                 continue;
             }
+            // Right after a restart or update no tick has looked at the
+            // agents yet: ask the pane rather than take "not looked at" for
+            // "no agent", which typed into a question waiting there.
+            let state = self
+                .shown_state(id)
+                .or_else(|| self.panes.get(&id).and_then(|pane| pane.agent_state()));
             let ready = matches!(
-                self.shown_state(id),
+                state,
                 None | Some(AgentState::Idle | AgentState::Done | AgentState::Failed)
             );
             // One at a time: after a message the agent gets a few seconds to
