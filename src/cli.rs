@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::agent::AgentState;
 use crate::client;
+use crate::clipboard;
 use crate::layout::PaneId;
 use crate::protocol::{self, RenameTarget, Request};
 
@@ -1695,6 +1696,375 @@ pub fn attach_pane(args: &[String]) -> Result<()> {
     }
     // The pane ended there: the window here closes as well.
     std::process::exit(0);
+}
+
+/// How long `imkr tap` gathers output before passing it on: a few lines
+/// per message instead of every read of the pty.
+const TAP_EVERY: u64 = 150;
+
+/// The most output `imkr tap` passes on at once, before base64. AI Brain's
+/// Reverb drops messages over 100 KB without a word, and base64 adds a
+/// third.
+const TAP_MAX: usize = 64 * 1024;
+
+/// `imkr tap ADDRESS [--every MS] [--max BYTES]`: shows a pane to a program
+/// rather than a terminal, for ai-brain-harness. Prints JSON lines:
+/// `{"screen", "rows", "cols"}` first (history and screen, base64, more
+/// than `--max` follows as `out`), then `{"out"}` with what came within
+/// `--every` ms, `{"gap"}` with the bytes left out when more came than
+/// `--max` (a fresh `screen` follows, as when the pane's size changes), and
+/// `{"exit": true}` when the pane ends. Reads JSON lines on stdin:
+/// `{"input": base64}` or `{"text": "…"}` are typed into the pane. Watches
+/// only: the pane keeps its size and answers terminal queries itself.
+pub fn tap(args: &[String]) -> Result<()> {
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::sync::{Arc, Mutex};
+    let mut rest = args.to_vec();
+    let every = take_value(&mut rest, "--every")?
+        .map(|ms| ms.parse::<u64>().context("--every takes milliseconds"))
+        .transpose()?
+        .unwrap_or(TAP_EVERY)
+        .max(10);
+    let max = take_value(&mut rest, "--max")?
+        .map(|n| n.parse::<usize>().context("--max takes bytes"))
+        .transpose()?
+        .unwrap_or(TAP_MAX)
+        .max(1024);
+    let [address] = rest.as_slice() else {
+        bail!("usage: imkr tap ADDRESS [--every MS] [--max BYTES]   (ADDRESS as for `imkr read`)");
+    };
+    let target = TapTarget::find(address)?;
+    // One channel for every connection; each says which one it comes
+    // from, so a connection that was cut cannot speak for the next.
+    let (tx, rx) = std::sync::mpsc::channel::<TapEvent>();
+    // Input goes to whichever connection is open, and waits for the next
+    // one between two (or before the first).
+    let writer = Arc::new(Mutex::new(TapInput::default()));
+    {
+        let writer = Arc::clone(&writer);
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for line in std::io::stdin().lines() {
+                let Ok(line) = line else { break };
+                match tap_line(&line) {
+                    Some(TapLine::Input(bytes)) => writer.lock().unwrap().send(bytes),
+                    Some(TapLine::Screen) => {
+                        let _ = tx.send(TapEvent::Screen);
+                    }
+                    None if line.trim().is_empty() => {}
+                    None => eprintln!("imkr tap: not input: {line}"),
+                }
+            }
+        });
+    }
+    let mut stdout = std::io::stdout().lock();
+    let mut emit =
+        |value: serde_json::Value| writeln!(stdout, "{value}").and_then(|()| stdout.flush());
+    let mut current = 0u64;
+    loop {
+        current += 1;
+        let opened = match target.open() {
+            Ok(opened) => opened,
+            Err(e) if current == 1 => return Err(e),
+            Err(e) => {
+                // Gone between two connections, or the server with it.
+                let _ = emit(serde_json::json!({ "exit": true, "error": format!("{e:#}") }));
+                return Ok(());
+            }
+        };
+        let OpenTap {
+            mut conn,
+            socket,
+            rows,
+            cols,
+            screen,
+        } = opened;
+        // Only a screen without history can still be larger; it goes on
+        // as `out`, as there is nothing left to leave out.
+        let mut chunks = fit_screen(&screen, max).chunks(max);
+        let head = chunks.next().unwrap_or_default();
+        let mut sent = emit(serde_json::json!({
+            "screen": clipboard::base64(head), "rows": rows, "cols": cols,
+        }))
+        .is_ok();
+        for chunk in chunks {
+            sent = sent && emit(serde_json::json!({ "out": clipboard::base64(chunk) })).is_ok();
+        }
+        if !sent {
+            return Ok(());
+        }
+        let mut reader = std::mem::replace(&mut conn.reader, Box::new(std::io::empty()));
+        {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let event = match protocol::ServerMsg::read_from(&mut reader) {
+                        Ok(Some(protocol::ServerMsg::Output(bytes))) => {
+                            TapEvent::Out(current, bytes)
+                        }
+                        Ok(Some(protocol::ServerMsg::Exited)) => TapEvent::Exited(current),
+                        Ok(Some(_)) => continue,
+                        // Cut off: the pane's size changed, the server was
+                        // updated or this fell behind.
+                        Ok(None) | Err(_) => TapEvent::Lost(current),
+                    };
+                    let ended = !matches!(event, TapEvent::Out(..));
+                    if tx.send(event).is_err() || ended {
+                        break;
+                    }
+                }
+            });
+        }
+        writer.lock().unwrap().connect(std::mem::replace(
+            &mut conn.writer,
+            Box::new(std::io::sink()),
+        ));
+        // What a connection ends with: the pane, or only this connection
+        // (a fresh one follows).
+        let mut exited = false;
+        // Waits for output, then gathers what comes within `every`.
+        'connection: loop {
+            let mut pending = Vec::new();
+            let mut until: Option<std::time::Instant> = None;
+            let mut done = false;
+            loop {
+                let event = match until {
+                    None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    Some(until) => {
+                        rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now()))
+                    }
+                };
+                match event {
+                    Ok(TapEvent::Out(from, bytes)) if from == current => {
+                        pending.extend_from_slice(&bytes);
+                        until.get_or_insert_with(|| {
+                            std::time::Instant::now() + std::time::Duration::from_millis(every)
+                        });
+                    }
+                    Ok(TapEvent::Exited(from)) if from == current => {
+                        exited = true;
+                        done = true;
+                    }
+                    Ok(TapEvent::Lost(from)) if from == current => done = true,
+                    Ok(TapEvent::Screen) => done = true,
+                    Ok(_) => {}
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => done = true,
+                }
+                if done || until.is_some_and(|until| std::time::Instant::now() >= until) {
+                    break;
+                }
+            }
+            if pending.len() > max {
+                // Rather a gap that shows than a message Reverb drops; the
+                // fresh screen of the next connection covers it.
+                if emit(serde_json::json!({ "gap": pending.len() })).is_err() {
+                    return Ok(());
+                }
+                break 'connection;
+            }
+            if !pending.is_empty()
+                && emit(serde_json::json!({ "out": clipboard::base64(&pending) })).is_err()
+            {
+                return Ok(());
+            }
+            if done {
+                break 'connection;
+            }
+        }
+        writer.lock().unwrap().out = None;
+        if let Some(socket) = socket {
+            let _ = socket.shutdown(std::net::Shutdown::Both);
+        }
+        drop(conn);
+        if exited {
+            let _ = emit(serde_json::json!({ "exit": true }));
+            return Ok(());
+        }
+        // Not at once: a pane that keeps cutting off would spin.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// What draws a tapped pane, in at most `max` bytes if it can be: the
+/// history (plain text lines, before the first escape code) shortened
+/// from the start, the screen itself kept whole.
+fn fit_screen(screen: &[u8], max: usize) -> &[u8] {
+    let Some(over) = screen.len().checked_sub(max).filter(|over| *over > 0) else {
+        return screen;
+    };
+    let history = screen
+        .iter()
+        .position(|b| *b == 0x1b)
+        .unwrap_or(screen.len());
+    let cut = screen[over.min(history)..history]
+        .iter()
+        .position(|b| *b == b'\n')
+        .map_or(history, |at| over.min(history) + at + 1);
+    &screen[cut..]
+}
+
+/// What reaches `imkr tap`'s loop: output, the end of a connection (by its
+/// number) or a request for a fresh screen.
+enum TapEvent {
+    Out(u64, Vec<u8>),
+    Exited(u64),
+    Lost(u64),
+    Screen,
+}
+
+/// A line on `imkr tap`'s stdin.
+#[derive(Debug, PartialEq)]
+enum TapLine {
+    /// Typed into the pane.
+    Input(Vec<u8>),
+    /// A fresh screen, after the other side lost track.
+    Screen,
+}
+
+/// Where `imkr tap` types: the open connection, or what waits for one.
+#[derive(Default)]
+struct TapInput {
+    out: Option<Box<dyn Write + Send>>,
+    waiting: Vec<u8>,
+}
+
+impl TapInput {
+    fn send(&mut self, bytes: Vec<u8>) {
+        self.waiting.extend_from_slice(&bytes);
+        self.flush();
+    }
+
+    fn connect(&mut self, out: Box<dyn Write + Send>) {
+        self.out = Some(out);
+        self.flush();
+    }
+
+    fn flush(&mut self) {
+        let Some(out) = self.out.as_mut() else { return };
+        if self.waiting.is_empty() {
+            return;
+        }
+        let bytes = std::mem::take(&mut self.waiting);
+        if protocol::ClientMsg::Input(bytes.clone())
+            .write_to(out)
+            .and_then(|()| out.flush())
+            .is_err()
+        {
+            // Cut off meanwhile: the next connection types it.
+            self.out = None;
+            self.waiting = bytes;
+        }
+    }
+}
+
+/// A line on `imkr tap`'s stdin: `{"input": base64}` or `{"text": "…"}`
+/// to type, `{"screen": true}` for a fresh screen.
+fn tap_line(line: &str) -> Option<TapLine> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value["screen"] == true {
+        return Some(TapLine::Screen);
+    }
+    if let Some(text) = value["text"].as_str() {
+        return Some(TapLine::Input(text.as_bytes().to_vec()));
+    }
+    clipboard::unbase64(value["input"].as_str()?).map(TapLine::Input)
+}
+
+/// The pane `imkr tap` shows, found once: a fresh connection after a cut
+/// goes to the same pane, not to another that took its name.
+struct TapTarget {
+    machine: Option<String>,
+    session: Option<String>,
+    pane: PaneId,
+}
+
+/// A connection showing a pane, with its size and what draws it now.
+struct OpenTap {
+    conn: client::Conn,
+    /// The local socket, to end the connection with while a thread reads.
+    socket: Option<std::os::unix::net::UnixStream>,
+    rows: u64,
+    cols: u64,
+    screen: Vec<u8>,
+}
+
+impl TapTarget {
+    fn find(address: &str) -> Result<Self> {
+        let (machine, session, who) = parse_address(address)?;
+        let panes = match &machine {
+            Some(host) => {
+                let session = session.as_deref().unwrap_or(protocol::DEFAULT_SESSION);
+                let text = client::remote_output(host, &["-s", session, "list", "--json"], "")?;
+                serde_json::from_str(&text).context("no pane list from there")?
+            }
+            None => client::request_at(&tap_socket(session.as_deref())?, Request::List)?,
+        };
+        let pane = find_pane(&panes, &who).with_context(|| format!("no pane {address}"))?;
+        Ok(TapTarget {
+            machine,
+            session,
+            pane,
+        })
+    }
+
+    fn open(&self) -> Result<OpenTap> {
+        let (mut conn, socket) = match &self.machine {
+            Some(host) => (
+                client::Conn::remote(
+                    host,
+                    Some(self.session.as_deref().unwrap_or(protocol::DEFAULT_SESSION)),
+                    false,
+                )?,
+                None,
+            ),
+            None => {
+                let unix =
+                    std::os::unix::net::UnixStream::connect(tap_socket(self.session.as_deref())?)
+                        .context("the session does not run")?;
+                let socket = unix.try_clone()?;
+                (client::Conn::local(unix)?, Some(socket))
+            }
+        };
+        protocol::ClientMsg::Request(Request::Tap {
+            pane: self.pane,
+            watch: true,
+            size: None,
+        })
+        .write_to(&mut conn.writer)?;
+        conn.writer.flush()?;
+        let reply = match protocol::ServerMsg::read_from(&mut conn.reader)? {
+            Some(protocol::ServerMsg::Reply(Ok(reply))) => reply,
+            Some(protocol::ServerMsg::Reply(Err(message))) => bail!(message),
+            _ => bail!("the server does not show panes elsewhere, update it"),
+        };
+        // The tap sends what draws the pane now before anything else.
+        let screen = loop {
+            match protocol::ServerMsg::read_from(&mut conn.reader)? {
+                Some(protocol::ServerMsg::Output(bytes)) => break bytes,
+                Some(protocol::ServerMsg::Exited) | None => bail!("pane {} ended", self.pane),
+                Some(_) => {}
+            }
+        };
+        Ok(OpenTap {
+            conn,
+            socket,
+            rows: reply["rows"].as_u64().unwrap_or_default(),
+            cols: reply["cols"].as_u64().unwrap_or_default(),
+            screen,
+        })
+    }
+}
+
+/// The socket of session `session` here, or of this one.
+fn tap_socket(session: Option<&str>) -> Result<PathBuf> {
+    match session {
+        Some(name) if protocol::sessions().iter().any(|s| s == name) => {
+            protocol::session_socket(name)
+        }
+        Some(name) => bail!("no session {name} here"),
+        None => protocol::socket_path(),
+    }
 }
 
 /// The Claude Code events that report the agent state, with the matcher
@@ -3413,6 +3783,33 @@ fn account_in_use(tool: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tap_leaves_out_the_oldest_history_first() {
+        let screen = b"one\r\ntwo\r\nthree\r\n\x1b[H\x1b[2Jscreen";
+        assert_eq!(fit_screen(screen, 100), screen);
+        // Whole lines go, the newest stay.
+        assert_eq!(fit_screen(screen, 25), b"three\r\n\x1b[H\x1b[2Jscreen");
+        assert_eq!(fit_screen(screen, 18), b"\x1b[H\x1b[2Jscreen");
+        // The screen itself is never cut.
+        assert_eq!(fit_screen(screen, 5), b"\x1b[H\x1b[2Jscreen");
+    }
+
+    #[test]
+    fn tap_takes_input_as_base64_or_text() {
+        let input = clipboard::base64(b"\x1b[A\r");
+        assert_eq!(
+            tap_line(&format!(r#"{{"input":"{input}"}}"#)),
+            Some(TapLine::Input(b"\x1b[A\r".to_vec()))
+        );
+        assert_eq!(
+            tap_line(r#"{"text":"ls\r"}"#),
+            Some(TapLine::Input(b"ls\r".to_vec()))
+        );
+        assert_eq!(tap_line(r#"{"screen":true}"#), Some(TapLine::Screen));
+        assert_eq!(tap_line(r#"{"input":"not base64!"}"#), None);
+        assert_eq!(tap_line("ls"), None);
+    }
 
     #[test]
     fn subscribe_reports_what_changed() {

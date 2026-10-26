@@ -389,6 +389,12 @@ const COMMANDS: &[Command] = &[
         Addresses,
     ),
     cmd(
+        "tap",
+        "show a pane to a program as JSON lines",
+        &["--every", "--max"],
+        Addresses,
+    ),
+    cmd(
         "hooks",
         "the Claude Code hooks for agent states",
         &["--install"],

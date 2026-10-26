@@ -263,6 +263,27 @@ imkr run --pane 3 -- cargo test   # types it in, waits, prints the output, exits
 imkr wait --pane 3                # waits for the command running there (--timeout S)
 ```
 
+### Showing a pane to a program
+
+`imkr tap` shows a pane to a program instead of a terminal, for example to bring it into a web
+page (AI Brain's harness uses it). It takes an address as `imkr read` does and speaks JSON lines,
+bytes as base64:
+
+```bash
+imkr tap api/claude
+# out: {"screen": "…", "rows": 40, "cols": 120}   what draws the pane now, first
+#      {"out": "…"}                               what it printed within 150 ms (--every MS)
+#      {"gap": 412000}                            more than 64 KB came at once (--max BYTES):
+#                                                 left out, a fresh "screen" follows
+#      {"exit": true}                             the pane ended
+# in:  {"text": "ls\r"} or {"input": "G1tB"}      typed into the pane
+#      {"screen": true}                           a fresh "screen", e.g. after a page reload
+```
+
+It only watches: the pane keeps its size. When that changes, a fresh `screen` comes with the new
+size. A `screen` stays within `--max` too, by leaving out the oldest history; only a screen
+without history that is still larger goes on as `out`.
+
 ### Where the user sits
 
 An agent on another machine sometimes wants to show you something on your own screen, a browser

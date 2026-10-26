@@ -357,6 +357,9 @@ For scripts and agents:
   outbox        messages waiting here for machines out of reach (they
                 pick them up when they next ask this machine)
   read [ADDRESS|--pane N] [--lines N]   print a pane's screen (here, another session or machine)
+  tap ADDRESS [--every MS] [--max BYTES]
+                                        show a pane to a program: JSON lines out
+                                        (screen, out, gap, exit), input as JSON lines in
   wait [--pane N] --until &lt;state&gt; [--timeout S]
                                         wait for an agent: working, blocked, idle,
                                         done, or ready (idle or done)

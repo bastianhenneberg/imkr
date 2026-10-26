@@ -206,6 +206,9 @@ For scripts and agents:
   outbox        messages waiting here for machines out of reach (they
                 pick them up when they next ask this machine)
   read [ADDRESS|--pane N] [--lines N]   print a pane's screen (here, another session or machine)
+  tap ADDRESS [--every MS] [--max BYTES]
+                                        show a pane to a program: JSON lines out
+                                        (screen, out, gap, exit), input as JSON lines in
   wait [--pane N] --until <state> [--timeout S]
                                         wait for an agent: working, blocked, idle,
                                         done, or ready (idle or done)
@@ -277,7 +280,7 @@ fn main() -> Result<()> {
     // web, hosted windows) keep handling a closed one themselves.
     let lives_on_connections = matches!(
         args.first().map(String::as_str),
-        None | Some("attach" | "a" | "proxy" | "server" | "web" | "hosted" | "attach-pane")
+        None | Some("attach" | "a" | "proxy" | "server" | "web" | "hosted" | "attach-pane" | "tap")
     );
     if !lives_on_connections {
         // SAFETY: no other thread runs yet; restoring the default action.
@@ -341,6 +344,7 @@ fn main() -> Result<()> {
         ["new", ..] => cli::new(&args[1..]),
         ["hosted", ..] => cli::hosted(&args[1..]),
         ["attach-pane", ..] => cli::attach_pane(&args[1..]),
+        ["tap", ..] => cli::tap(&args[1..]),
         ["web", ..] => web::main(&args[1..]),
         ["rename", ..] => cli::rename(&args[1..]),
         ["move-window", ..] => cli::move_window(&args[1..]),

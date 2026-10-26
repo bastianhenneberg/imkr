@@ -396,6 +396,22 @@ ended. Many prompts send it already; otherwise add one line to the shell's rc fi
 <pre><code class="language-bash">imkr run --pane 3 -- cargo test   # types it in, waits, prints the output, exits with its code
 imkr wait --pane 3                # waits for the command running there (--timeout S)
 </code></pre>
+<h3 id="showing-a-pane-to-a-program">Showing a pane to a program</h3>
+<p><code>imkr tap</code> shows a pane to a program instead of a terminal, for example to bring it into a web
+page (AI Brain's harness uses it). It takes an address as <code>imkr read</code> does and speaks JSON lines,
+bytes as base64:</p>
+<pre><code class="language-bash">imkr tap api/claude
+# out: {&quot;screen&quot;: &quot;…&quot;, &quot;rows&quot;: 40, &quot;cols&quot;: 120}   what draws the pane now, first
+#      {&quot;out&quot;: &quot;…&quot;}                               what it printed within 150 ms (--every MS)
+#      {&quot;gap&quot;: 412000}                            more than 64 KB came at once (--max BYTES):
+#                                                 left out, a fresh &quot;screen&quot; follows
+#      {&quot;exit&quot;: true}                             the pane ended
+# in:  {&quot;text&quot;: &quot;ls\r&quot;} or {&quot;input&quot;: &quot;G1tB&quot;}      typed into the pane
+#      {&quot;screen&quot;: true}                           a fresh &quot;screen&quot;, e.g. after a page reload
+</code></pre>
+<p>It only watches: the pane keeps its size. When that changes, a fresh <code>screen</code> comes with the new
+size. A <code>screen</code> stays within <code>--max</code> too, by leaving out the oldest history; only a screen
+without history that is still larger goes on as <code>out</code>.</p>
 <h3 id="where-the-user-sits">Where the user sits</h3>
 <p>An agent on another machine sometimes wants to show you something on your own screen, a browser
 for example. <code>imkr operator</code> says which machine you sit at, as the terminal attached to the

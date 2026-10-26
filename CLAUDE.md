@@ -181,6 +181,12 @@ Projekt-Slug: `imkr`
   (`read_request` → `None`, die Probe von `keep_running`) still. `firewall_hint`/`ufw_hint` liest
   `/etc/ufw/ufw.conf` + `user.rules` (lesbar ohne root), Interface aus `interfaces()`.
   Test: headless `chromium --remote-debugging-port` + Node-Skript per CDP (Node hat WebSocket).
+- Pane für Programme (#530/#529, AI-Brain-Harness): `imkr tap ADRESSE` (`cli::tap`, `TapTarget`,
+  `Request::Tap` mit `watch`), JSON-Zeilen `screen`/`out`/`gap`/`exit`, Eingabe `text`/`input`,
+  `{"screen":true}` = frisches Bild. Gebündelt `TAP_EVERY`, Deckel `TAP_MAX` (Reverb verwirft
+  >100 KB still; Harness nimmt `--max 40000` für ≤60 KB JSON); Lücke ⇒ neu verbinden ⇒ Vollbild,
+  `fit_screen` kürzt den Verlauf (Klartext vor dem ersten ESC) vorn. Ein Kanal für alle
+  Verbindungen, Ereignisse tragen die Verbindungsnummer (alte Leser zählen nicht).
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
   `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet
