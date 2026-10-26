@@ -193,6 +193,12 @@ Projekt-Slug: `imkr`
   state|send|open|input|close` hin, `reply|data|closed` zurück), sonst fetch/WebSocket wie bisher.
   Asset-Pfade relativ (AI Brain setzt `<base>`). Für die Harness: `imkr web page|state|send`
   (`web::page`, `web::state`, `web::send`); die drei sterben still an geschlossener Pipe.
+- Orchestrierungs-Ansicht `Ctrl+B O` (#534): `App::mail_log` (`protocol::MailNote`, `MAIL_LOG`,
+  `note_mail`), gefüllt beim Zustellen (`Request::Message`, nur Absender mit `:`) und von
+  `imkr msg` selbst (`cli::note_sent` → `Request::Sent`, nur ohne `--from`, Fehler egal).
+  `crew_rows` (Panes hier mit Notizen, Absender zuerst; Ziele per `cli::parse_address` →
+  `crew_peer`: Pane hier oder `other_agents`), `crew_key`, `draw_crew`; im Handover `mail_log`
+  (und seit #8774 `mailbox`).
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
   `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet

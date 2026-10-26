@@ -136,6 +136,8 @@ enum Mode {
     /// The agents waiting for the user or done, that one selected, its
     /// question below with the answer typed so far (`App::inbox_answer`).
     Inbox(usize),
+    /// Who hands work to whom, that row selected.
+    Crew(usize),
     /// Choosing the machine for a new session, that one selected.
     NewSessionWhere(usize),
     /// Choosing the session, on any machine, for a new window.
@@ -541,6 +543,34 @@ fn load_marks() -> Vec<Mark> {
         .unwrap_or_default()
 }
 
+/// A row of the orchestration view: where the agent is, what its screen
+/// and the latest messages say, and the line itself.
+struct CrewRow {
+    at: Option<AgentAt>,
+    preview: String,
+    item: menu::MenuItem,
+}
+
+/// A line of the orchestration view, colored by the agent's state.
+fn crew_item(
+    state: Option<AgentState>,
+    label: String,
+    hint: String,
+    group: Option<String>,
+) -> menu::MenuItem {
+    let symbol = state.map_or("·", |s| s.symbol());
+    menu::MenuItem {
+        key: ' ',
+        title: format!("{symbol} {label}"),
+        hint,
+        danger: state == Some(AgentState::Blocked),
+        apart: false,
+        color: state.and_then(|s| sidebar::state_style(s).fg),
+        group,
+        marks: Vec::new(),
+    }
+}
+
 /// Where an agent in the agent list runs: a pane of this session, or the
 /// one at this index of `App::other_agents`.
 #[derive(Clone, Copy)]
@@ -581,6 +611,9 @@ fn restored_history(text: &str) -> Vec<u8> {
     bytes.extend_from_slice(b"\r\n\x1b[2m\xe2\x94\x80\xe2\x94\x80 restored after a restart \xe2\x94\x80\xe2\x94\x80\x1b[0m\r\n");
     bytes
 }
+
+/// How many messages the orchestration view remembers.
+const MAIL_LOG: usize = 400;
 
 /// How many lines of a waiting agent's screen the inbox shows.
 const INBOX_LINES: usize = 12;
@@ -846,6 +879,8 @@ pub struct App {
     mailbox: Vec<(PaneId, String)>,
     /// When each pane last got a message, so the next one waits a little.
     mail_sent: HashMap<PaneId, Instant>,
+    /// Who messaged whom, newest last, for the orchestration view.
+    mail_log: Vec<protocol::MailNote>,
     prompt: Option<Prompt>,
     /// The accounts new shells start with, by agent, see `account`.
     accounts: BTreeMap<String, String>,
@@ -987,6 +1022,7 @@ impl App {
             new_session: None,
             mailbox: Vec::new(),
             mail_sent: HashMap::new(),
+            mail_log: Vec::new(),
             prompt: None,
             dir_lists: Arc::default(),
             accounts: BTreeMap::new(),
@@ -1245,6 +1281,7 @@ impl App {
         self.focus_mode = handover.focus_mode;
         self.unseen.extend(handover.unseen.iter().copied());
         self.mailbox.extend(handover.mailbox.iter().cloned());
+        self.mail_log.extend(handover.mail_log.iter().cloned());
         let saved = handover.saved;
         self.carry_idle(&saved);
         self.accounts = saved.accounts.clone();
@@ -1377,6 +1414,7 @@ impl App {
             focus_mode: self.focus_mode,
             unseen: self.unseen.iter().copied().collect(),
             mailbox: self.mailbox.clone(),
+            mail_log: self.mail_log.clone(),
             saved: self.saved(),
             panes,
         };
@@ -2355,10 +2393,20 @@ impl App {
                 } else {
                     format!("[imkr message from {from}]")
                 };
+                if from.contains(':') {
+                    self.note_mail(pane, &from, false, &text);
+                }
                 self.mailbox.push((pane, format!("{header} {text}")));
                 self.deliver_mail();
                 let queued = self.mailbox.iter().any(|(p, _)| *p == pane);
                 Ok(serde_json::json!({ "pane": pane, "queued": queued }))
+            }
+            Request::Sent { pane, to, text } => {
+                if !self.panes.contains_key(&pane) {
+                    return Err(format!("no pane {pane}"));
+                }
+                self.note_mail(pane, &to, true, &text);
+                Ok(serde_json::json!({}))
             }
             Request::Read { pane, lines } => {
                 let p = self.panes.get(&pane).ok_or(format!("no pane {pane}"))?;
@@ -2515,6 +2563,27 @@ impl App {
     /// Types waiting messages into their panes: right away into a pane
     /// without an agent, into an agent once it is idle or done. Never while
     /// it works, and never into a question, which is the user's to answer.
+    /// Notes a message pane `pane` sent to or got from `peer`, for the
+    /// orchestration view; the newest `MAIL_LOG` stay.
+    fn note_mail(&mut self, pane: PaneId, peer: &str, sent: bool, text: &str) {
+        let text: String = text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(200)
+            .collect();
+        self.mail_log.push(protocol::MailNote {
+            at: crate::persist::now(),
+            pane,
+            peer: peer.to_owned(),
+            sent,
+            text,
+        });
+        let over = self.mail_log.len().saturating_sub(MAIL_LOG);
+        self.mail_log.drain(..over);
+    }
+
     fn deliver_mail(&mut self) {
         let mail = std::mem::take(&mut self.mailbox);
         for (id, text) in mail {
@@ -4301,6 +4370,10 @@ impl App {
                 self.inbox_key(key, selected);
                 Ok(())
             }
+            Mode::Crew(selected) => {
+                self.crew_key(key, selected);
+                Ok(())
+            }
             Mode::Review => {
                 self.review_key(key);
                 Ok(())
@@ -4738,6 +4811,7 @@ impl App {
             Command::RenameWorkspace => self.start_prompt(RenameTarget::Workspace(self.workspace)),
             Command::MoveWorkspace => self.mode = Mode::MoveTo(self.workspace, 0),
             Command::Agents => self.mode = Mode::Agents(0),
+            Command::Crew => self.mode = Mode::Crew(0),
             Command::Inbox => {
                 self.inbox_answer.clear();
                 self.inbox_on = self.inbox_items().0.first().map(|(_, _, id)| id.clone());
@@ -7096,6 +7170,205 @@ impl App {
             {
                 self.inbox_answer.push(c);
             }
+            _ => {}
+        }
+    }
+
+    /// The orchestration view's rows: each pane here that messaged agents
+    /// or got messages from them, then those agents, wherever they run,
+    /// newest exchange first. The orchestrators (panes that sent) lead.
+    fn crew_rows(&self) -> Vec<CrewRow> {
+        let others = self.other_agents();
+        let mut panes: Vec<(bool, u64, PaneId)> = Vec::new();
+        for note in self.mail_log.iter().rev() {
+            if !self.panes.contains_key(&note.pane) {
+                continue;
+            }
+            match panes.iter_mut().find(|(_, _, p)| *p == note.pane) {
+                Some(entry) => entry.0 |= note.sent,
+                None => panes.push((note.sent, note.at, note.pane)),
+            }
+        }
+        panes.sort_by_key(|(sent, at, _)| (!*sent, std::cmp::Reverse(*at)));
+        let now = crate::persist::now();
+        let ago = |at: u64| sidebar::age(Duration::from_secs(now.saturating_sub(at)));
+        let mut rows = Vec::new();
+        for (sent, _, id) in panes {
+            let (state, label, tail) = self.crew_here(id);
+            let notes: Vec<&protocol::MailNote> =
+                self.mail_log.iter().filter(|n| n.pane == id).collect();
+            let mut peers: Vec<&str> = Vec::new();
+            for note in notes.iter().rev() {
+                if !peers.contains(&note.peer.as_str()) {
+                    peers.push(&note.peer);
+                }
+            }
+            let workers = notes
+                .iter()
+                .filter(|n| n.sent)
+                .map(|n| &n.peer)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len();
+            let group = Some(if sent {
+                format!("{label} · orchestrates {workers}")
+            } else {
+                format!("{label} · works for others")
+            });
+            rows.push(CrewRow {
+                at: Some(AgentAt::Here(id)),
+                preview: tail,
+                item: crew_item(state, label, String::from("itself"), group.clone()),
+            });
+            for peer in peers {
+                let (at, state, label, tail) = self.crew_peer(peer, &others);
+                let last = |sent: bool| {
+                    notes
+                        .iter()
+                        .rev()
+                        .find(|n| n.peer == peer && n.sent == sent)
+                };
+                let mut hint = Vec::new();
+                let mut talk = Vec::new();
+                for (arrow, note) in [("↑", last(true)), ("↓", last(false))] {
+                    if let Some(note) = note {
+                        let short: String = note.text.chars().take(40).collect();
+                        hint.push(format!("{arrow} {} {short}", ago(note.at)));
+                    }
+                }
+                let with_peer: Vec<_> = notes.iter().filter(|n| n.peer == peer).collect();
+                for note in &with_peer[with_peer.len().saturating_sub(4)..] {
+                    let arrow = if note.sent { "↑ sent" } else { "↓ got" };
+                    talk.push(format!("{arrow} {}: {}", ago(note.at), note.text));
+                }
+                let preview = if tail.is_empty() {
+                    talk.join("\n")
+                } else {
+                    format!("{tail}\n\n{}", talk.join("\n"))
+                };
+                rows.push(CrewRow {
+                    at,
+                    preview,
+                    item: crew_item(state, format!("  {label}"), hint.join("  "), group.clone()),
+                });
+            }
+        }
+        rows
+    }
+
+    /// A pane here as the orchestration view shows it: state, where it is
+    /// and what is at the bottom of its screen.
+    fn crew_here(&self, id: PaneId) -> (Option<AgentState>, String, String) {
+        let Some(pane) = self.panes.get(&id) else {
+            return (None, format!("pane {id}"), String::new());
+        };
+        let program = pane
+            .name
+            .clone()
+            .or_else(|| pane.program())
+            .unwrap_or_default();
+        let window = self
+            .workspace_of(id)
+            .map(|n| n.to_string())
+            .unwrap_or_default();
+        let label = with_title(
+            format!(
+                "{} › {} › {window} {program}",
+                self.machine_label(None)
+                    .unwrap_or_else(protocol::machine_name),
+                protocol::session_name()
+            ),
+            &pane.title(),
+        );
+        let tail = agent::tail(pane.screen().screen(), INBOX_LINES);
+        (self.shown_state(id), label, tail)
+    }
+
+    /// The agent `address` (as `imkr msg` takes it) means: a pane here, an
+    /// agent of `others`, or none known, with its state, label and screen.
+    fn crew_peer(
+        &self,
+        address: &str,
+        others: &[(Place, protocol::AgentInfo)],
+    ) -> (Option<AgentAt>, Option<AgentState>, String, String) {
+        let unknown = (
+            None,
+            None,
+            address.to_owned(),
+            "not seen from here".to_owned(),
+        );
+        let Ok((machine, session, who)) = crate::cli::parse_address(address) else {
+            return unknown;
+        };
+        let here = protocol::session_name();
+        if machine.is_none() && session.as_deref().is_none_or(|s| s == here) {
+            let wanted = who.to_lowercase();
+            let id = who
+                .parse::<PaneId>()
+                .ok()
+                .filter(|id| self.panes.contains_key(id))
+                .or_else(|| {
+                    self.panes.iter().find_map(|(&id, pane)| {
+                        let name = pane.name.clone().or_else(|| pane.program())?;
+                        (name.to_lowercase() == wanted).then_some(id)
+                    })
+                });
+            let Some(id) = id else { return unknown };
+            let (state, label, tail) = self.crew_here(id);
+            return (Some(AgentAt::Here(id)), state, label, tail);
+        }
+        let session = session.unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned());
+        let found = others.iter().enumerate().find(|(_, (place, agent))| {
+            place.name == session
+                && place.host == machine
+                && (agent.pane.to_string() == who || agent.program.eq_ignore_ascii_case(&who))
+        });
+        let Some((i, (place, agent))) = found else {
+            return unknown;
+        };
+        let label = with_title(
+            format!(
+                "{} › {} › {} {}",
+                self.machine_label(place.host.as_deref())
+                    .or_else(|| place.host.clone())
+                    .unwrap_or_else(protocol::machine_name),
+                place.name,
+                agent.workspace,
+                agent.program
+            ),
+            &agent.title,
+        );
+        (
+            Some(AgentAt::Other(i)),
+            AgentState::from_name(&agent.state),
+            label,
+            agent.tail.clone(),
+        )
+    }
+
+    /// Up and down choose, Enter goes to the agent, Esc closes.
+    fn crew_key(&mut self, key: KeyEvent, selected: usize) {
+        let rows = self.crew_rows();
+        let count = rows.len().max(1);
+        let here = selected.min(count - 1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
+            KeyCode::Up | KeyCode::BackTab | KeyCode::Char('k') => {
+                self.mode = Mode::Crew((here + count - 1) % count);
+            }
+            KeyCode::Down | KeyCode::Tab | KeyCode::Char('j') => {
+                self.mode = Mode::Crew((here + 1) % count);
+            }
+            KeyCode::Enter => match rows.get(here).and_then(|row| row.at) {
+                Some(AgentAt::Here(id)) => {
+                    self.mode = Mode::Normal;
+                    self.reveal(id);
+                }
+                Some(AgentAt::Other(i)) => {
+                    self.mode = Mode::Normal;
+                    self.go_to_other_agent(i);
+                }
+                None => self.flash = Some("that agent is not seen from here".into()),
+            },
             _ => {}
         }
     }
@@ -10176,6 +10449,7 @@ impl App {
                         | Mode::MoveTo(..)
                         | Mode::Agents(_)
                         | Mode::Inbox(_)
+                        | Mode::Crew(_)
                         | Mode::Review
                         | Mode::Notes
                         | Mode::Layouts(_)
@@ -10387,6 +10661,7 @@ impl App {
                 );
             }
             Mode::Inbox(selected) => self.draw_inbox(frame, body, selected),
+            Mode::Crew(selected) => self.draw_crew(frame, body, selected),
             Mode::Review => self.draw_review(frame, body),
             Mode::Notes => self.draw_notes(frame, body),
             Mode::Context(selected) => self.draw_context(frame, selected),
@@ -11093,6 +11368,77 @@ impl App {
         frame.render_widget(Paragraph::new(text).block(block).scroll((skip, 0)), area);
     }
 
+    fn draw_crew(&self, frame: &mut Frame, body: Rect, selected: usize) {
+        let rows = self.crew_rows();
+        let mut items: Vec<menu::MenuItem> = rows.iter().map(|row| row.item.clone()).collect();
+        if items.is_empty() {
+            items.push(menu::MenuItem {
+                key: ' ',
+                title: "no agent has messaged another yet".into(),
+                hint: "imkr msg ADDRESS TEXT from an agent starts it".into(),
+                danger: false,
+                apart: false,
+                color: None,
+                group: None,
+                marks: Vec::new(),
+            });
+        }
+        let selected = selected.min(items.len() - 1);
+        let preview = rows
+            .get(selected)
+            .map(|row| row.preview.as_str())
+            .unwrap_or_default();
+        let lines = preview.lines().count() as u16;
+        let shown = if preview.is_empty() {
+            0
+        } else {
+            (lines + 2).min(body.height / 2)
+        };
+        let list = Rect {
+            height: body.height - shown,
+            ..body
+        };
+        menu::draw_choices(
+            frame,
+            list,
+            " ⬢ Orchestration ",
+            &items,
+            selected,
+            bindings::CREW_KEYS,
+        );
+        if shown == 0 {
+            return;
+        }
+        let t = theme::current();
+        let body = Rect {
+            height: body.height.saturating_sub(1),
+            ..body
+        };
+        let width = body.width.saturating_sub(4).min(120);
+        let area = Rect {
+            x: body.x + (body.width - width) / 2,
+            y: body.y + body.height - shown,
+            width,
+            height: shown,
+        };
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(if items[selected].danger {
+                t.danger
+            } else {
+                t.accent
+            }))
+            .title(format!(" {} ", items[selected].title.trim()))
+            .padding(Padding::horizontal(1));
+        let text: Vec<Line> = preview
+            .lines()
+            .map(|line| Line::from(line.to_owned()))
+            .collect();
+        let skip = (text.len() as u16).saturating_sub(shown.saturating_sub(2));
+        frame.render_widget(Clear, area);
+        frame.render_widget(Paragraph::new(text).block(block).scroll((skip, 0)), area);
+    }
+
     fn draw_list(
         &self,
         frame: &mut Frame,
@@ -11689,6 +12035,11 @@ impl App {
                 "REVIEW",
                 t.magenta,
                 "j k move · n p file · c note · x remove · s send to the agent · Esc close",
+            ),
+            Mode::Crew(_) => (
+                "ORCHESTRATION",
+                t.magenta,
+                "↑↓ choose · Enter go there · Esc close",
             ),
             Mode::Inbox(_) => (
                 "INBOX",

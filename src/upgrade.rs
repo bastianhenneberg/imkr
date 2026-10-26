@@ -56,6 +56,9 @@ pub struct Handover {
     /// one waits for its agent must not drop it.
     #[serde(default)]
     pub mailbox: Vec<(PaneId, String)>,
+    /// Who messaged whom, for the orchestration view.
+    #[serde(default)]
+    pub mail_log: Vec<crate::protocol::MailNote>,
     pub saved: Saved,
     pub panes: BTreeMap<PaneId, HandoverPane>,
 }

@@ -193,6 +193,17 @@ to your laptop. A message for a machine out of reach waits in the sender's outbo
 outbox`), and the machine it is for picks it up when it next asks that one, every 5 seconds
 while its imkr runs, so a laptop that was offline gets it later.
 
+### Who works for whom
+
+When an agent hands work to others with `imkr msg`, `Ctrl+B O` shows it: each pane that sent
+messages leads as an orchestrator, its workers below, on any machine, with their state, the last
+message each way and how long ago. The box below shows the selected worker's screen and the
+latest messages; Enter goes there. A pane that only got messages shows who it works for.
+
+imkr learns this from the messages themselves: the session that delivers one notes the sender,
+and `imkr msg` tells its own session where it sent one. The newest 400 are kept, also across
+`imkr update`.
+
 ### Other people's imkrs
 
 Colleagues with their own imkr (their machine, their Claude account) can message your agents,

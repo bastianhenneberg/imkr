@@ -338,7 +338,7 @@ fn message_id(id: &str) -> Result<u64> {
 
 /// `machine:session/who`, `session/who` or `who`, the machine left out
 /// when it is this one.
-fn parse_address(to: &str) -> Result<(Option<String>, Option<String>, String)> {
+pub(crate) fn parse_address(to: &str) -> Result<(Option<String>, Option<String>, String)> {
     let to = to.rsplit_once('@').map_or(to, |(_, at)| at);
     let (machine, rest) = match to.split_once(':') {
         Some((machine, rest)) => (Some(machine.to_owned()), rest),
@@ -449,10 +449,11 @@ pub fn msg(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let wait = take_flag(&mut rest, "--wait");
     let stdin = take_flag(&mut rest, "--stdin");
-    let from = match take_value(&mut rest, "--from")? {
-        Some(from) => from,
-        None => own_address(),
-    };
+    let given = take_value(&mut rest, "--from")?;
+    // Sent from a pane here (not passed on for one elsewhere): its session
+    // notes it for the orchestration view.
+    let mine = given.is_none();
+    let from = given.unwrap_or_else(own_address);
     let Some((to, words)) = rest.split_first() else {
         bail!(USAGE);
     };
@@ -475,6 +476,9 @@ pub fn msg(args: &[String]) -> Result<()> {
             None => who.clone(),
         };
         println!("{}", crate::contacts::send(&contact, &to, &text, &from)?);
+        if mine {
+            note_sent(&rest[0], &text);
+        }
         if wait {
             println!("not waiting for an answer: it comes as a message of its own");
         }
@@ -487,6 +491,9 @@ pub fn msg(args: &[String]) -> Result<()> {
             args.push("--wait");
         }
         args.push(&who);
+        if mine {
+            note_sent(to, &text);
+        }
         match client::remote_output(&machine, &args, &text) {
             Ok(out) => print!("{out}"),
             // Out of reach from here, e.g. a laptop seen from a server: it
@@ -518,6 +525,9 @@ pub fn msg(args: &[String]) -> Result<()> {
         Some(session) => protocol::session_socket(session)?,
         None => protocol::socket_path()?,
     };
+    if mine {
+        note_sent(to, &text);
+    }
     let reply = client::request_at(
         &socket,
         Request::Message {
@@ -536,6 +546,23 @@ pub fn msg(args: &[String]) -> Result<()> {
         wait_for_answer(&socket, pane)?;
     }
     Ok(())
+}
+
+/// Tells the session of the pane this runs in that its agent sent `to` a
+/// message, for the orchestration view. Older servers do not know the
+/// request, and outside imkr there is no pane: never an error.
+fn note_sent(to: &str, text: &str) {
+    let Some(pane) = std::env::var("IMKR_PANE")
+        .ok()
+        .and_then(|p| p.parse::<PaneId>().ok())
+    else {
+        return;
+    };
+    let _ = client::request(Request::Sent {
+        pane,
+        to: to.to_owned(),
+        text: text.to_owned(),
+    });
 }
 
 /// Waits until the agent in `pane` has taken up a message and finished,

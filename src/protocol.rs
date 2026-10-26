@@ -395,6 +395,13 @@ pub enum Request {
         text: String,
         from: String,
     },
+    /// That the agent in pane `pane` sent `to` a message (`imkr msg`), for
+    /// the orchestration view: who hands work to whom.
+    Sent {
+        pane: PaneId,
+        to: String,
+        text: String,
+    },
     /// The text on a pane's screen, or its last `lines` lines including the
     /// history.
     Read { pane: PaneId, lines: Option<usize> },
@@ -762,6 +769,22 @@ pub fn sessions() -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// A message an agent here sent or got (`imkr msg`), kept for the
+/// orchestration view (`Ctrl+B O`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MailNote {
+    /// Seconds since 1970.
+    pub at: u64,
+    /// The pane here that sent or got it.
+    pub pane: PaneId,
+    /// The other side's address, as `imkr msg` takes it.
+    pub peer: String,
+    /// Sent by the pane here, else got.
+    pub sent: bool,
+    /// Its start, on one line.
+    pub text: String,
 }
 
 #[cfg(test)]

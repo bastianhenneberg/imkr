@@ -73,6 +73,8 @@ pub enum Command {
     TogglePopup,
     /// Every agent here and elsewhere, to jump to.
     Agents,
+    /// Who hands work to whom (`imkr msg`), to look at a worker or jump.
+    Crew,
     /// The agents everywhere that wait for the user or are done, with what
     /// they ask, to answer from the list.
     Inbox,
@@ -456,6 +458,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "all agents…",
         group: Group::Navigate,
         keys: &[(Key::plain(Char('A')), C::Agents)],
+    },
+    Binding {
+        label: "O",
+        description: "orchestration…",
+        group: Group::Navigate,
+        keys: &[(Key::plain(Char('O')), C::Crew)],
     },
     Binding {
         label: "W",
@@ -1057,6 +1065,9 @@ pub const AGENT_LIST_KEYS: &[KeyHint] = &[
 ];
 
 /// The keys of the inbox (`Ctrl+B i`).
+/// The keys of the orchestration view (`Ctrl+B O`).
+pub const CREW_KEYS: &[KeyHint] = &[("↑↓", "select"), ("Enter", "go there"), ("Esc", "close")];
+
 pub const INBOX_KEYS: &[KeyHint] = &[
     ("↑↓", "select"),
     ("digit", "choose that option"),
@@ -1129,6 +1140,7 @@ pub const LISTS: &[(&str, &str, &[KeyHint])] = &[
     ("Move window", "w m", MOVE_LIST_KEYS),
     ("Agents", "A", AGENT_LIST_KEYS),
     ("Inbox (answer waiting agents)", "i", INBOX_KEYS),
+    ("Orchestration (who works for whom)", "O", CREW_KEYS),
     ("Windows everywhere", "W", CHOOSE_LIST_KEYS),
     ("Panes everywhere", "P", CHOOSE_LIST_KEYS),
     ("Marks (Alt+1 … 9 jumps)", "M", MARK_LIST_KEYS),

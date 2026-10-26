@@ -349,6 +349,14 @@ agent's screen, on any machine.</p>
 to your laptop. A message for a machine out of reach waits in the sender's outbox (<code>imkr
 outbox</code>), and the machine it is for picks it up when it next asks that one, every 5 seconds
 while its imkr runs, so a laptop that was offline gets it later.</p>
+<h3 id="who-works-for-whom">Who works for whom</h3>
+<p>When an agent hands work to others with <code>imkr msg</code>, <code>Ctrl+B O</code> shows it: each pane that sent
+messages leads as an orchestrator, its workers below, on any machine, with their state, the last
+message each way and how long ago. The box below shows the selected worker's screen and the
+latest messages; Enter goes there. A pane that only got messages shows who it works for.</p>
+<p>imkr learns this from the messages themselves: the session that delivers one notes the sender,
+and <code>imkr msg</code> tells its own session where it sent one. The newest 400 are kept, also across
+<code>imkr update</code>.</p>
 <h3 id="other-peoples-imkrs">Other people's imkrs</h3>
 <p>Colleagues with their own imkr (their machine, their Claude account) can message your agents,
 and you theirs, without ssh to each other's machines. Pair once, both sides turn on the web view
