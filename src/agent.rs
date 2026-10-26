@@ -232,6 +232,10 @@ const QUESTIONS: &[&str] = &[
     "Allow this",
     "Press Enter to continue",
     "Waiting for your approval",
+    // Claude Code's dialogs before a session starts (trust this folder,
+    // settings errors): no hook has run yet to say it waits.
+    "Enter to confirm",
+    "trust this folder",
 ];
 
 /// Whether the last lines written show a question: the bottom of the
@@ -435,6 +439,12 @@ mod tests {
         let mut tall = crate::term::Parser::new(40, 80, 0);
         tall.process(b"Edit main.rs\r\nDo you want to proceed?\r\n 1. Yes\r\n");
         assert!(asks_question(tall.screen()));
+        // Claude Code asking whether to trust a new folder, before any hook.
+        let trust = screen(
+            " Quick safety check: Is this a project you created or one you trust?\r\n \
+             ❯ No, exit\r\n   Yes, I trust this folder\r\n Enter to confirm · Esc to cancel",
+        );
+        assert!(asks_question(trust.screen()));
     }
 
     #[test]
