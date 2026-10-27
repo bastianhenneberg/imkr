@@ -287,7 +287,8 @@ says otherwise), and <code>&lt;claude@work&gt;</code> starts it in the account <
 asking. Each machine fills in its own <code>[agent_commands]</code>, and a template saved from a running
 session writes its agents this way.</p>
 <p><code>Ctrl+B s c</code> lists them: Enter puts the focused agent into the chosen account, <code>u</code> new shells of
-this session. Switching ends the agent and starts it again in the same conversation, typed into
+this session, <code>d</code> makes it the standard of this machine (like <code>imkr account default</code>), handy
+when an account is used up for the week: new shells in every session start in the other one. Switching ends the agent and starts it again in the same conversation, typed into
 its shell as <code>imkr account run claude:privat -- claude --resume &lt;id&gt;</code>, so no key shows on the
 screen; the session id comes from the hooks.</p>
 <p>When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", Codex: "You've

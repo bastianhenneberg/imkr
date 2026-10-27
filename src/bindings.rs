@@ -1018,6 +1018,10 @@ pub const ACCOUNT_LIST_KEYS: &[KeyHint] = &[
         "use: the focused agent goes on in it, else new shells",
     ),
     ("u", "new shells of this session"),
+    (
+        "d",
+        "standard for this machine (new shells in every session)",
+    ),
     ("Esc", "cancel"),
 ];
 

@@ -10933,7 +10933,8 @@ impl App {
     }
 
     /// The account list: Enter puts the focused agent into the chosen
-    /// account if it is that agent, else (and with `u`) new shells.
+    /// account if it is that agent, else (and with `u`) new shells; `d`
+    /// makes it the standard of this machine (`imkr account default`).
     fn accounts_key(&mut self, key: KeyEvent, selected: usize) {
         let (accounts, _) = self.account_items();
         let count = accounts.len().max(1);
@@ -10954,6 +10955,13 @@ impl App {
             }
             KeyCode::Enter => chosen(selected).map(|a| (a, true)),
             KeyCode::Char('u') => chosen(selected).map(|a| (a, false)),
+            KeyCode::Char('d') => {
+                if let Some(account) = chosen(selected) {
+                    self.mode = Mode::Normal;
+                    self.flash = Some(set_machine_default(&account));
+                }
+                return;
+            }
             KeyCode::Char(c) => c
                 .to_digit(10)
                 .and_then(|d| chosen((d as usize + 9) % 10))
@@ -12799,6 +12807,30 @@ struct AgentStart {
 }
 
 /// Whether `program` is on the PATH.
+/// `d` in the account list: what `imkr account default` does — new shells
+/// in every session of this machine start in `account`; running agents
+/// keep theirs. Returns the flash line.
+fn set_machine_default(account: &crate::account::Account) -> String {
+    let store = match crate::account::Store::here() {
+        Ok(store) => store,
+        Err(e) => return format!("{e:#}"),
+    };
+    if !store.logged_in(account) {
+        return format!(
+            "{} is not logged in: `imkr account login {}`",
+            account.name, account.name
+        );
+    }
+    match store.set_default(account) {
+        Ok(()) => format!(
+            "standard on this machine: {} account {} (running agents keep theirs)",
+            account.tool,
+            crate::account::shown(&store, account)
+        ),
+        Err(e) => format!("{e:#}"),
+    }
+}
+
 fn on_path(program: &str) -> bool {
     std::process::Command::new("sh")
         .args(["-c", "command -v \"$0\" >/dev/null", program])

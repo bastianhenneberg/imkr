@@ -114,7 +114,8 @@ asking. Each machine fills in its own `[agent_commands]`, and a template saved f
 session writes its agents this way.
 
 `Ctrl+B s c` lists them: Enter puts the focused agent into the chosen account, `u` new shells of
-this session. Switching ends the agent and starts it again in the same conversation, typed into
+this session, `d` makes it the standard of this machine (like `imkr account default`), handy
+when an account is used up for the week: new shells in every session start in the other one. Switching ends the agent and starts it again in the same conversation, typed into
 its shell as `imkr account run claude:privat -- claude --resume <id>`, so no key shows on the
 screen; the session id comes from the hooks.
 
