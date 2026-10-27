@@ -107,7 +107,9 @@ Projekt-Slug: `imkr`
   (5 s still) macht Working/geraten zu Failed; Idle/Blocked vom Hook bleiben. Meldung + Flash in
   `update_agents`, auch im Blick. `Pane::failure_reason` für Liste/Meldung.
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
-  (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup). pi: Erweiterung
+  (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup; StopFailure nur, wenn kein
+  `claude` im PATH älter als `STOP_FAILURE_SINCE` 2.1.78 ist, sonst verwirft Claude Code die ganze
+  settings.json, #8751). pi: Erweiterung
   `integrations/pi/imkr-agent-state.ts` (`PI_EXTENSION`, `install_pi_extension` nach
   `~/.pi/agent/extensions/` wenn `~/.pi/agent` da), ruft `imkr status` mit `session_id` auf stdin;
   Resume `pi --session {session}`. Test ohne API: Node-Skript lädt die .ts (Type-Stripping) und
@@ -457,7 +459,8 @@ Projekt-Slug: `imkr`
   (beim Öffnen gelesen, nicht je Frame) und `BINDINGS` (nur Befehle mit genau einer Taste).
 - Agents untereinander: `imkr msg` (`cli::msg`, Adresse `machine:session/pane`, `parse_address`,
   fremde Rechner per `client::remote_output` mit Text auf stdin) → `Request::Message` → `App::mailbox`,
-  `deliver_mail` (je Tick) tippt nur bei idle/done/ohne Agent, nie bei blocked, 3 s Abstand je Pane.
+  `deliver_mail` (je Tick) tippt bei idle/done/ohne Agent, bei working nur in Agents aus
+  `agent::QUEUES_INPUT` (claude reiht ein, #8800), nie bei blocked, 3 s Abstand je Pane.
   `imkr agents [--all]`, Skill-Text in `skills/imkr/SKILL.md` (`imkr skill [--install]`).
   Test-Falle: `imkr status` liest stdin (Hook-JSON) – in Heredoc-Tests `</dev/null` anhängen.
   Ausgang: scheitert `msg` per ssh an einem Rechner, `client::queue_outbox` (`<state>/outbox`,

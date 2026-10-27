@@ -40,8 +40,8 @@ imkr msg --wait api/claude "Which port does the dev server use?"   # waits, prin
 imkr msg server:api/3 < handover.md          # a long text: on stdin, no quoting needed
 ```
 
-imkr types the message into the other agent once it is idle, never while it works and
-never into a question it is asking. Every message starts with
+imkr types the message into the other agent once it is idle, never into a question it is
+asking. Claude Code also gets it while it works: it queues the message for its next step. Every message starts with
 `[imkr message from <address>, answer with: imkr msg <address> <text>]`.
 
 If the other machine cannot be reached from yours (a server answering a laptop), `imkr msg`

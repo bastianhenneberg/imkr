@@ -198,7 +198,8 @@ main { min-width: 0; }
 for you), <code>✦ done</code> (finished while you were elsewhere), <code>✓ idle</code> or <code>✗ failed</code> (its turn ended
 in an error: a used up limit, a refused login, an API error; magenta, with the reason). A window
 tab turns red when an agent there waits or failed, the bell rings, and <code>Ctrl+B a</code> takes you to it.
-An agent counts as failed when its <code>StopFailure</code> hook says so, or, without hooks (Codex), when it
+An agent counts as failed when its <code>StopFailure</code> hook says so, or, without hooks (Codex, or a
+Claude Code before 2.1.78, which <code>imkr hooks --install</code> leaves the hook out for), when it
 is quiet for 5 seconds with an error like „usage limit“ or „API Error“ at the bottom of its screen. You also get a desktop notification when an agent waits or finishes
 while you look elsewhere or are detached: through <code>notify-send</code>, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting <code>notifications = "system" | "terminal" | "off"</code>).</p>
@@ -340,8 +341,9 @@ imkr msg --wait api/3 &quot;Which port does the dev server use?&quot;   # waits,
 imkr msg server:api/claude &lt; handover.md                       # a long text from stdin
 </code></pre>
 <p>An address is <code>machine:session/pane</code>; in the own session a pane number, name or program is
-enough. imkr types the message in once the agent is idle, one at a time, never while it works
-and never into a question it asks, which stays yours. Each message says who sent it and how to
+enough. imkr types the message in once the agent is idle, one at a time, and never into a
+question it asks, which stays yours. Claude Code gets it while it works too: it shows it as a
+queued message and reads it at its next step, so a long task does not hold it back. Each message says who sent it and how to
 answer. <code>imkr skill</code> prints the guide for agents, <code>imkr skill --install</code> puts it into Claude
 Code's skills, so the agents use it on their own. <code>imkr read server:api/3</code> shows another
 agent's screen, on any machine.</p>

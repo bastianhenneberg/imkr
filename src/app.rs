@@ -2596,10 +2596,17 @@ impl App {
             let state = self
                 .shown_state(id)
                 .or_else(|| self.panes.get(&id).and_then(|pane| pane.agent_state()));
-            let ready = matches!(
-                state,
-                None | Some(AgentState::Idle | AgentState::Done | AgentState::Failed)
-            );
+            // Never into a question; into work only for agents that queue
+            // what is typed meanwhile, or a long task waits it out (#8800).
+            let ready = match state {
+                None | Some(AgentState::Idle | AgentState::Done | AgentState::Failed) => true,
+                Some(AgentState::Working) => self
+                    .panes
+                    .get(&id)
+                    .and_then(|pane| pane.program())
+                    .is_some_and(|program| agent::queues_input(&program)),
+                _ => false,
+            };
             // One at a time: after a message the agent gets a few seconds to
             // start on it, and older messages for it go first.
             let settling = self

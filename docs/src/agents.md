@@ -4,7 +4,8 @@ Every pane running a coding agent shows what it is doing: `● working`, `◆ bl
 for you), `✦ done` (finished while you were elsewhere), `✓ idle` or `✗ failed` (its turn ended
 in an error: a used up limit, a refused login, an API error; magenta, with the reason). A window
 tab turns red when an agent there waits or failed, the bell rings, and `Ctrl+B a` takes you to it.
-An agent counts as failed when its `StopFailure` hook says so, or, without hooks (Codex), when it
+An agent counts as failed when its `StopFailure` hook says so, or, without hooks (Codex, or a
+Claude Code before 2.1.78, which `imkr hooks --install` leaves the hook out for), when it
 is quiet for 5 seconds with an error like „usage limit“ or „API Error“ at the bottom of its screen. You also get a desktop notification when an agent waits or finishes
 while you look elsewhere or are detached: through `notify-send`, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting `notifications = "system" | "terminal" | "off"`).
@@ -182,8 +183,9 @@ imkr msg server:api/claude < handover.md                       # a long text fro
 ```
 
 An address is `machine:session/pane`; in the own session a pane number, name or program is
-enough. imkr types the message in once the agent is idle, one at a time, never while it works
-and never into a question it asks, which stays yours. Each message says who sent it and how to
+enough. imkr types the message in once the agent is idle, one at a time, and never into a
+question it asks, which stays yours. Claude Code gets it while it works too: it shows it as a
+queued message and reads it at its next step, so a long task does not hold it back. Each message says who sent it and how to
 answer. `imkr skill` prints the guide for agents, `imkr skill --install` puts it into Claude
 Code's skills, so the agents use it on their own. `imkr read server:api/3` shows another
 agent's screen, on any machine.

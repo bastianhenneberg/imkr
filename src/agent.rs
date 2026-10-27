@@ -103,6 +103,16 @@ pub fn is_agent(name: &str) -> bool {
     AGENTS.contains(&name) || EXTRA.read().unwrap().0.iter().any(|a| a == name)
 }
 
+/// Agents that take input while they work and queue it for their next step
+/// (Claude Code shows it as a queued message). Messages for them need not
+/// wait until they are idle, which a long task may never be.
+const QUEUES_INPUT: &[&str] = &["claude"];
+
+/// Whether a message may be typed into `agent` while it works.
+pub fn queues_input(agent: &str) -> bool {
+    QUEUES_INPUT.contains(&agent)
+}
+
 /// The agent name if `argv` (a process's command line) runs one, looking at
 /// the program and, for interpreters like node, its script: one imkr knows
 /// or one of the config's `extra_agents`.

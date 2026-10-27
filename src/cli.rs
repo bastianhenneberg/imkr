@@ -2137,6 +2137,38 @@ const HOOKS: &[(&str, &str, &str)] = &[
     ("SessionEnd", "*", "clear"),
 ];
 
+/// The first Claude Code that knows `StopFailure`; older ones reject the
+/// whole settings.json over the unknown key (#8751).
+const STOP_FAILURE_SINCE: (u32, u32, u32) = (2, 1, 78);
+
+/// The version in `claude --version` output, e.g. "2.1.20 (Claude Code)".
+fn claude_version(output: &str) -> Option<(u32, u32, u32)> {
+    let word = output.split_whitespace().next()?;
+    let mut parts = word.split('.').map(|part| part.parse().ok());
+    Some((parts.next()??, parts.next()??, parts.next()??))
+}
+
+/// The versions of every `claude` on the PATH, oldest first: they all read
+/// the same settings.json. Those that do not answer are left out.
+fn claude_versions() -> Vec<((u32, u32, u32), PathBuf)> {
+    let Some(path) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    let mut found: Vec<_> = std::env::split_paths(&path)
+        .map(|dir| dir.join("claude"))
+        .filter(|program| program.is_file())
+        .filter_map(|program| {
+            let out = Command::new(&program).arg("--version").output().ok()?;
+            Some((
+                claude_version(&String::from_utf8_lossy(&out.stdout))?,
+                program,
+            ))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
 /// The script the hooks run: finds imkr even where `~/.cargo/bin` is only
 /// on the PATH of interactive shells, and does nothing outside imkr.
 const HOOK_SCRIPT: &str = r#"#!/bin/sh
@@ -2236,7 +2268,13 @@ fn install_hooks() -> Result<()> {
         }
     }
     hooks.retain(|_, groups| groups.as_array().is_none_or(|g| !g.is_empty()));
+    let old = claude_versions()
+        .into_iter()
+        .find(|(version, _)| *version < STOP_FAILURE_SINCE);
     for &(event, matcher, state) in HOOKS {
+        if event == "StopFailure" && old.is_some() {
+            continue;
+        }
         let entry = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
         if let Some(groups) = entry.as_array_mut() {
             groups.push(serde_json::json!({ "matcher": matcher, "hooks": [{
@@ -2253,6 +2291,14 @@ fn install_hooks() -> Result<()> {
         path.display()
     );
     println!("Claude Code sessions started from now on report their state to imkr.");
+    if let Some(((major, minor, patch), program)) = old {
+        println!(
+            "Left out StopFailure: {} is Claude Code {major}.{minor}.{patch}, which rejects it \
+             (it came in 2.1.78). Errors show as failed from the screen instead; update that \
+             claude and run `imkr hooks --install` again.",
+            program.display()
+        );
+    }
     if let Some(extension) = install_pi_extension(&home)? {
         println!(
             "pi extension installed: {}; pi started from now on reports its state too.",
@@ -3834,6 +3880,16 @@ fn account_in_use(tool: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_claude_gets_no_stop_failure() {
+        let old = claude_version("2.1.20 (Claude Code)").unwrap();
+        assert!(old < STOP_FAILURE_SINCE);
+        assert!(claude_version("2.1.304 (Claude Code)\n").unwrap() >= STOP_FAILURE_SINCE);
+        assert!(claude_version("2.1.78").unwrap() >= STOP_FAILURE_SINCE);
+        assert_eq!(claude_version("mise ERROR claude not found"), None);
+        assert_eq!(claude_version(""), None);
+    }
 
     #[test]
     fn run_quotes_several_words_but_not_one_line() {
