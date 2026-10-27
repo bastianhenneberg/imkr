@@ -2598,7 +2598,7 @@ pub fn hive(args: &[String]) -> Result<()> {
 /// `imkr account …`: several accounts of Claude Code and Codex here, see
 /// `account`. A name may say its agent, `claude:privat`, where both have it.
 pub fn account(args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: imkr account [ls] | add claude|codex NAME [--url URL] [--model M] \
+    const USAGE: &str = "usage: imkr account [ls [--json]] | add claude|codex NAME [--url URL] [--model M] \
                          [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
                          | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] \
                          | default [NAME] | usage [--json]";
@@ -2655,6 +2655,36 @@ pub fn account(args: &[String]) -> Result<()> {
     let token = take_value(&mut rest, "--token")?;
     let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
     match rest.as_slice() {
+        // For programs (the AI Brain harness reads back where its MCP
+        // entry landed): every account with its directory and, for
+        // Claude, the `.claude.json` that `sync` fills.
+        ["ls", "--json"] => {
+            let mut out = Vec::new();
+            for tool in TOOLS {
+                let default = store.default_of(tool);
+                for account in store.listed(tool) {
+                    let dir = store
+                        .dir_of(&account)
+                        .unwrap_or_else(|| store.usual_dir(tool));
+                    let claude_json = (*tool == "claude").then(|| match store.dir_of(&account) {
+                        Some(dir) => dir.join(".claude.json"),
+                        None => store.home.join(".claude.json"),
+                    });
+                    out.push(serde_json::json!({
+                        "tool": tool,
+                        "name": account.name,
+                        "standard": account.name == default,
+                        "dir": dir,
+                        "claude_json": claude_json,
+                        "logged_in": store.logged_in(&account),
+                        "login": store.identity(&account).map(|who| who.shown),
+                        "provider": account.url.as_ref().map(|_| account.kind()),
+                    }));
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&out)?);
+            Ok(())
+        }
         [] | ["ls"] => {
             for tool in TOOLS {
                 println!("{tool}");

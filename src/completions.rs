@@ -130,7 +130,7 @@ const COMMANDS: &[Command] = &[
     with_subs(
         "account",
         "several Claude Code and Codex accounts",
-        &["--url", "--model", "--token-stdin", "--pane"],
+        &["--url", "--model", "--token-stdin", "--pane", "--json"],
         &[
             sub("ls", Nothing),
             sub("add", Tools),
