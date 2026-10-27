@@ -450,6 +450,9 @@ pub enum Request {
     Go { target: String },
     /// Show pane `pane` and focus it, e.g. after switching to its session.
     Reveal { pane: PaneId },
+    /// That pane `pane` has been seen elsewhere, so its ✦ can go: somebody
+    /// ticked its line off in AI Brain's inbox (#536).
+    Seen { pane: PaneId },
     /// Open a new window and ask for its name, as `Ctrl+B n` does, e.g.
     /// after switching to the session it is for.
     NewWindow,

@@ -275,6 +275,22 @@ Projekt-Slug: `imkr`
   `sh -c` vor dem Programm. `list`/`find`/`merge` (nie checkout, Konflikt → abort)/`remove`
   (ohne --force nur sauber+gemergt). CLI `imkr worktree ls|merge|rm`, `panes_in` VOR dem
   Entfernen (danach ist cwd „(deleted)“), eigenes Pane bleibt.
+- imkr-Meldungen im AI-Brain-Posteingang (#536): `src/brain.rs` (`Note`, `report` im Thread wie
+  push, `connected` = Harness im PATH + `connection.json` + **keine Testwelt** (`test_socket`),
+  `read` je `BRAIN_READ_EVERY` in `watch_places` mit eigener Sperre `imkr-brain.lock` und
+  `imkr-brain-seen.json`, mindestens einmal wie bei den Kontakten). Angedockt an `App::push`:
+  ein Tor, zwei Wege — `PUSH_AGAIN` gilt für beide, `quiet` **nur** fürs Handy (der Posteingang
+  ist eine Liste, keine Unterbrechung). Kontakt-Nachrichten meldet `contacts::tell_brain`.
+  Zurück: `Request::Seen { pane }` nimmt das ✦ (`unseen`). Einstellung `brain_inbox` (Standard
+  an; `read` liest sie aus der Datei, damit Abschalten ohne Neustart wirkt). Vertrag mit der
+  Harness: `ai-brain-harness meldung senden --art blocked|done|failed|account|message --rechner
+  R --sitzung S --pane N [--fenster N] [--agent A] [--link U] <titel>` (Text auf stdin),
+  `meldung gelesen --json` → `{"gelesen":[{id,sitzung,pane,art,rechner,abholungen}]}`,
+  `meldung bestaetigen <id>`. Drüben: MCP `report-imkr-event-tool`, `fetch-imkr-read-tool`,
+  `confirm-imkr-read-tool`, Tabelle `imkr_meldungen`, Inbox-Art `imkr` (`App\Inbox\ImkrQuelle`
+  als `AbhakbareQuelle`+`ZaehlbareQuelle`), Aufräumen nach 30 Tagen. Test: Testwelt mit
+  Schein-`ai-brain-harness` im PATH, eigenem `XDG_CONFIG_HOME` samt `ai-brain-cli/connection.json`
+  — ohne die Datei meldet imkr nichts.
 - Push (#8566): `src/push.rs` (`[push]`: ntfy-Themenadresse → JSON an die Server-Wurzel,
   webhook → `push::Event` als JSON, per `curl` im Thread). `App::notify(id, kind, what)` ruft
   `App::push`: `wants(kind)`, nicht wenn ein Client in `quiet` s getippt hat (`user_at`), je

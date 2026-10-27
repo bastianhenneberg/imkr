@@ -12,6 +12,7 @@ session_banner = true     # the session's name on screen for a moment after a sw
 session_banner_at = "middle"  # or "top", "bottom": the middle of that third
 notes_at = "right"  # the notepad (Ctrl+B t): "right", "middle" or "bottom" of its pane
 nerd_font = false   # the terminal font is a Nerd Font: round agent dots (else ❶, an oval in many fonts)
+brain_inbox = true  # agent events also in AI Brain's inbox, see docs/ai-brain.md (needs the harness)
 hosts = []          # other machines whose sessions to show, see docs/machines.md
 name = "laptop"     # this machine's name for the others, e.g. its ssh alias; default: hostname
 

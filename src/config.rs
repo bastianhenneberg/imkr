@@ -298,6 +298,12 @@ pub struct Config {
     pub nerd_font: bool,
     /// Keeps `imkr web` running, the sessions in a phone's browser.
     pub web: bool,
+    /// Puts what agents here do (waiting, done, failed, account used up, a
+    /// contact's message) in AI Brain's shared inbox, through the harness
+    /// on this machine (#536). On top of the bell and `[push]`, never
+    /// instead; nothing happens without a harness. Ticking a line off
+    /// there clears the pane's ✦ here.
+    pub brain_inbox: bool,
     /// Where `imkr web` listens, e.g. `100.97.56.232:4657`; without it on
     /// this machine's Tailscale/NetBird address, else only on 127.0.0.1.
     pub web_listen: Option<String>,
@@ -567,6 +573,7 @@ impl Default for Config {
             notes_at: NotesAt::Right,
             nerd_font: false,
             web: false,
+            brain_inbox: true,
             web_listen: None,
             name: None,
             hosts: Vec::new(),
@@ -771,6 +778,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Own window per attached terminal",
         value: |c| if c.own_window_per_client { "on" } else { "off" }.to_owned(),
         step: |c, _| c.own_window_per_client = !c.own_window_per_client,
+    },
+    Setting {
+        name: "imkr events in AI Brain's inbox",
+        value: |c| if c.brain_inbox { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.brain_inbox = !c.brain_inbox,
     },
     Setting {
         name: "Git checkpoint after each agent turn",

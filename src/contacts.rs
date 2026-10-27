@@ -410,8 +410,11 @@ fn take_in(
     };
     if trusted && runs {
         let pane = deliver(&incoming).map_err(|e| format!("{e:#}"))?;
+        tell_brain(&incoming, Some(pane));
         return Ok(serde_json::json!({ "pane": pane }));
     }
+    // Told before it is put away: the closure takes it apart.
+    tell_brain(&incoming, None);
     let id = locked(|| -> Result<u64> {
         let mut list = waiting();
         let id = list.iter().map(|m| m.id).max().unwrap_or(0) + 1;
@@ -428,6 +431,38 @@ fn take_in(
         "message from {contact} waits for you: Ctrl+B i, or `imkr connect inbox`"
     ));
     Ok(serde_json::json!({ "queued": id }))
+}
+
+/// Puts an arrived message in AI Brain's shared inbox too (#536), so it is
+/// still there when nobody was at the terminal. Nothing without a harness
+/// or with the setting off.
+///
+/// **No ✦ to clear.** `unseen` marks agents that finished unwatched, never
+/// messages — ticking this line off in the inbox therefore only closes the
+/// line. The pane is sent all the same: it is where the message went, and
+/// that is what the reader wants to know.
+fn tell_brain(incoming: &Incoming, pane: Option<u64>) {
+    if !crate::config::Config::load().0.brain_inbox {
+        return;
+    }
+    let session = incoming
+        .to
+        .split_once('/')
+        .map_or_else(protocol::session_name, |(s, _)| s.to_owned());
+    crate::brain::report(crate::brain::Note {
+        kind: "message".to_owned(),
+        machine: protocol::machine_name(),
+        session,
+        pane: pane.unwrap_or(0) as crate::layout::PaneId,
+        agent: incoming.contact.clone(),
+        title: match pane {
+            Some(_) => format!("message from {}", incoming.contact),
+            // Said apart: one is done with, the other is not.
+            None => format!("message from {} waits (^B i)", incoming.contact),
+        },
+        text: incoming.text.clone(),
+        ..crate::brain::Note::default()
+    });
 }
 
 /// Where to answer a message, as an address here: the sender's machine
@@ -533,13 +568,21 @@ pub fn set_trusted(name: &str, trusted: bool) -> Result<()> {
     })?
 }
 
+/// Whether either name of the AI Brain command is in the PATH.
+fn found(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+}
+
+/// Whether the harness is on this machine at all. Asked by `brain` before
+/// every report, so a machine without AI Brain never starts a process.
+pub fn brain_installed() -> bool {
+    found("ai-brain-harness") || found("ai-brain-cli")
+}
+
 /// The AI Brain command: `ai-brain-harness`, or `ai-brain-cli` as it was
 /// called before (October 2026) on machines not updated yet.
-fn brain_program() -> &'static str {
-    let found = |name: &str| {
-        std::env::var_os("PATH")
-            .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
-    };
+pub fn brain_program() -> &'static str {
     if !found("ai-brain-harness") && found("ai-brain-cli") {
         "ai-brain-cli"
     } else {

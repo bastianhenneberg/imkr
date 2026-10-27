@@ -630,6 +630,11 @@ const LOGINS_EVERY: Duration = Duration::from_secs(30 * 60);
 const HIVES_EVERY: Duration = Duration::from_secs(60);
 /// How often messages from contacts through AI Brain are fetched.
 const BRAIN_EVERY: Duration = Duration::from_secs(30);
+/// How often the server asks AI Brain which of its events were ticked off
+/// in the shared inbox (#536). Its own interval and its own lock, next to
+/// the contacts' fetch: the two ask different things and one may be off
+/// while the other runs.
+const BRAIN_READ_EVERY: Duration = Duration::from_secs(30);
 /// How often a server makes sure `imkr web` runs, if switched on.
 const WEB_EVERY: Duration = Duration::from_secs(60);
 
@@ -2340,6 +2345,13 @@ impl App {
                 self.reveal(pane);
                 Ok(serde_json::json!({ "pane": pane }))
             }
+            Request::Seen { pane } => {
+                // Somebody ticked the line off in AI Brain's inbox (#536).
+                // `was` so the caller can tell "cleared" from "there was
+                // nothing": only the first says the ✦ really went.
+                let was = self.unseen.remove(&pane);
+                Ok(serde_json::json!({ "pane": pane, "was": was }))
+            }
             Request::Flash { text } => {
                 self.flash = Some(text);
                 Ok(serde_json::json!({}))
@@ -3679,15 +3691,18 @@ impl App {
         self.send_notification(&format!("{who} {what}"), &place);
     }
 
-    /// Pushes what happened in pane `id` to the phone, see `push`; not
-    /// while the user typed here in the last `quiet` seconds.
+    /// Pushes what happened in pane `id` to the phone, see `push`, and
+    /// puts it in AI Brain's shared inbox, see `brain` (#536).
+    ///
+    /// **Two ways out of one gate.** They hold each other's event back
+    /// against flicker (`PUSH_AGAIN`), because it is one event. What they
+    /// do not share is `quiet`: while the user types here, the phone stays
+    /// silent — they are looking at it. The inbox is a list and not an
+    /// interruption, and leaving out what happened while somebody worked
+    /// would leave out exactly the lines they go through afterwards.
     fn push(&mut self, id: PaneId, kind: &str, who: &str, what: &str) {
-        let push = &self.config.push;
-        if !push.wants(kind) {
-            return;
-        }
-        let quiet = Duration::from_secs(push.quiet);
-        if !self.clients.is_empty() && self.user_at.is_some_and(|at| at.elapsed() < quiet) {
+        let to_brain = self.config.brain_inbox && crate::brain::connected();
+        if !self.config.push.wants(kind) && !to_brain {
             return;
         }
         let key = (id, kind.to_owned());
@@ -3696,6 +3711,13 @@ impl App {
             .get(&key)
             .is_some_and(|at| at.elapsed() < PUSH_AGAIN)
         {
+            return;
+        }
+        let quiet = Duration::from_secs(self.config.push.quiet);
+        let typing =
+            !self.clients.is_empty() && self.user_at.is_some_and(|at| at.elapsed() < quiet);
+        let to_phone = self.config.push.wants(kind) && !typing;
+        if !to_phone && !to_brain {
             return;
         }
         self.pushed.retain(|_, at| at.elapsed() < PUSH_AGAIN);
@@ -3716,21 +3738,37 @@ impl App {
                 Some(listen) if self.config.web => format!("http://{listen}"),
                 _ => String::new(),
             });
-        crate::push::send(
-            push,
-            crate::push::Event {
-                kind: kind.to_owned(),
-                machine: protocol::machine_name(),
-                session: protocol::session_name(),
-                pane: id as u64,
-                window: self.workspace_of(id).unwrap_or(0),
-                agent: who.to_owned(),
-                text: what.to_owned(),
-                task: pane.title(),
-                screen,
-                link,
-            },
-        );
+        let event = crate::push::Event {
+            kind: kind.to_owned(),
+            machine: protocol::machine_name(),
+            session: protocol::session_name(),
+            pane: id as u64,
+            window: self.workspace_of(id).unwrap_or(0),
+            agent: who.to_owned(),
+            text: what.to_owned(),
+            task: pane.title(),
+            screen,
+            link,
+        };
+        if to_brain {
+            // The same event, told differently: the phone gets machine and
+            // session in the title because a notification is one line, the
+            // inbox keeps them as fields and shows them under the line.
+            crate::brain::report(crate::brain::Note {
+                kind: event.kind.clone(),
+                machine: event.machine.clone(),
+                session: event.session.clone(),
+                pane: id,
+                window: event.window,
+                agent: event.agent.clone(),
+                title: format!("{who} {what}"),
+                text: event.message(),
+                link: event.link.clone(),
+            });
+        }
+        if to_phone {
+            crate::push::send(push, event);
+        }
     }
 
     /// The name pane `id` goes by in notifications: its name, else its
@@ -12312,6 +12350,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
         let mut noted: Vec<String> = Vec::new();
         let mut web_at: Option<Instant> = None;
         let mut brain_at: Option<Instant> = None;
+        let mut seen_at: Option<Instant> = None;
         loop {
             let own = protocol::session_name();
             let local: Vec<_> = crate::client::local_sessions()
@@ -12336,6 +12375,15 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
             {
                 brain_at = Some(Instant::now());
                 let _ = crate::contacts::fetch_brain();
+            }
+            // What was ticked off in AI Brain's inbox (#536), so the ✦ goes
+            // here too. `brain::read` leaves test worlds and machines
+            // without a harness alone by itself.
+            if seen_at.is_none_or(|at| at.elapsed() >= BRAIN_READ_EVERY) {
+                seen_at = Some(Instant::now());
+                if let Err(e) = crate::brain::read() {
+                    eprintln!("what AI Brain says was seen: {e:#}");
+                }
             }
             let web = crate::web::connected();
             let mut known = places.lock().unwrap();

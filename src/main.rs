@@ -2,6 +2,7 @@ mod account;
 mod agent;
 mod app;
 mod bindings;
+mod brain;
 mod checkpoint;
 mod cli;
 mod client;

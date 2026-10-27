@@ -2,7 +2,7 @@
 
 [AI Brain](https://brain.proxy.peppermint-digital.com) keeps tasks, knowledge and people.
 The AI Brain harness (command `ai-brain-harness`, called `ai-brain-cli` until October 2026;
-the old name still works) is its program on each machine. imkr works with it in three ways, and needs it for none
+the old name still works) is its program on each machine. imkr works with it in four ways, and needs it for none
 of its own features:
 
 - **`brain`, a conversation**: like Hermes, with Claude or Codex, the project's knowledge and AI
@@ -10,6 +10,8 @@ of its own features:
 - **CLI mode**: an agent for an AI Brain task, in an imkr window, with AI Brain's context.
 - **Messages to people**: colleagues' agents reach yours through AI Brain, without a shared
   network.
+- **Events in the shared inbox**: what your agents do lands in AI Brain's inbox, and ticking a
+  line off there clears its ✦ here.
 
 Both need `ai-brain-harness` installed and connected:
 
@@ -155,3 +157,46 @@ sequenceDiagram
 On each machine only one imkr server fetches at a time, and AI Brain does not hand out a
 message again for five minutes after it was fetched. If a fetcher dies before confirming, the
 message comes again after those five minutes.
+
+## Events in the shared inbox
+
+A bell passes, a push notification passes. With a harness connected, every event that would
+ring — an agent waiting for an answer, one finishing, one giving up, an account running dry, a
+contact's message — also goes into AI Brain's inbox under its own kind, `imkr`. It stays there
+until somebody ticks it off, next to the tasks, changes and notifications from the other
+systems.
+
+```mermaid
+flowchart LR
+    E["agent waits · is done ·<br/>fails · account used up"] --> P["App::push"]
+    P --> N["bell, ntfy, webhook"]
+    P --> H["ai-brain-harness meldung senden"]
+    H --> I[("AI Brain inbox<br/>kind 'imkr'")]
+    I -->|somebody ticks it off| R["ai-brain-harness meldung gelesen<br/>every 30 s"]
+    R --> S["✦ of that pane goes"]
+```
+
+**On top, never instead.** The bell, `[push]` and the inbox are three ways out of one event, and
+they do not replace each other. They also do not share every rule: while you type in a session,
+the phone stays quiet (`quiet` in `[push]`) because you are looking at it — the inbox gets the
+line anyway. It is a list, not an interruption, and leaving out what happened while you worked
+would leave out exactly the lines you go through afterwards. What both share is the damper
+against flicker: the same pane reports the same kind at most every two minutes.
+
+**Ticking off comes back.** imkr marks an agent that finished while nobody watched with ✦. Whoever
+ticks that line off in the inbox has seen it, so every imkr asks its harness every 30 seconds what
+was ticked off and clears the ✦ of the pane it belongs to. Delivery is at least once, the same as
+for messages: a line comes again until imkr confirms it, because clearing the same ✦ twice costs
+nothing and leaving it once does.
+
+| | |
+|---|---|
+| Switch | `brain_inbox` in the config, or `Ctrl+B ,` → *imkr events in AI Brain's inbox*; on by default |
+| Without a harness | nothing happens and nothing is run — not even the 30-second question |
+| Kinds | `blocked`, `done`, `failed`, `account`, `message` |
+| A line carries | machine, session, window and pane, the agent, what it works on, and for a question or an error the bottom of its screen |
+| Housekeeping | AI Brain drops ticked-off and confirmed lines after 30 days; unread ones stay |
+
+Each machine reports for its own agents, so the setting belongs in every machine's config
+(`imkr hosts sync` takes it along). A test world (`IMKR_SOCKET` outside the runtime directory)
+never reports, so a fake agent in a test cannot fill the real inbox.

@@ -92,3 +92,7 @@ agent works on and, for a question or an error, the bottom of its screen. Each m
 for its own agents, so the setting belongs in every machine's config (`imkr hosts sync` takes it
 along). The same pane pushes the same thing at most every two minutes. `imkr push test` sends
 a test and says whether it went out.
+
+With the AI Brain harness connected, the same events also go into AI Brain's shared inbox, where
+they stay until ticked off — see [AI Brain](ai-brain.md#events-in-the-shared-inbox). A push
+passes, a line in the inbox waits.
