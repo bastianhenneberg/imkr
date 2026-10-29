@@ -203,6 +203,7 @@ key = &quot;p&quot;                         # Ctrl+B p p opens it; optional
 mode = &quot;popup&quot;                    # or &quot;fullscreen&quot;
 status = &quot;peppermint-tui status&quot;  # its first lines show in the sidebar; optional
 interval = 30                     # seconds between them
+bar = true                        # its first status line in the bar too; optional
 enabled = true                    # false keeps the file but leaves it out
 </code></pre>
 <p>The sidebar lists every plugin under <em>Plugins</em>, <code>◇</code> until it runs and <code>◆</code> after, with its status
@@ -211,6 +212,14 @@ it runs on hidden, keeps its state, and has every popup key (<code>Ctrl+B z</cod
 <code>Ctrl+B p</code> lists the plugins' keys. Since a plugin is just a program, it can be written in
 any language and cannot take imkr down; a file with a mistake shows in the sidebar with what is
 wrong, <code>imkr plugins</code> lists them all, and <code>Ctrl+B R</code> reads them again.</p>
+<p>With <code>bar = true</code> the first of those lines also shows in the bar, next to the path, so it is
+there with the sidebar closed. Several plugins stand side by side, from the same run of the
+<code>status</code> command the sidebar uses. A line starting with <code>●</code> is green and one starting with <code>✗</code>
+is red, the rest is plain text, so keep it short: the bar is one line and stays one. When it
+gets tight a line is shortened, and when there is no room left it is left out rather than
+pushing the path away. <code>Plugin status in the bar</code> in the settings turns it off (<code>plugin_status</code>
+under <code>[bars]</code>). An imkr older than 0.21.77 does not know the field and lists such a plugin as
+broken, so put it in once every machine that reads the file runs 0.21.77 or newer.</p>
 <p>Your plugins come along: working on another machine, your terminal tells its imkr which plugins
 the machine you sit at has, and they show in its sidebar too, marked <code>⌂</code>, next to its own (one of
 its own of the same name wins). They run where you open them, so their program has to be

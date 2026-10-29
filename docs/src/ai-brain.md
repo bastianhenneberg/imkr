@@ -95,7 +95,8 @@ plugin_catalogs = ["git@github.com:peppermint-digital/imkr-plugins.git"]
 imkr plugin add ai-brain
 ```
 
-It shows the runs in the sidebar (`2 working · 1 waiting`), `Ctrl+B p a` opens a conversation,
+It shows the runs in the sidebar (`2 working · 1 waiting`) — with `bar = true` in its file also
+in the bar, see [plugins.md](plugins.md) — `Ctrl+B p a` opens a conversation,
 `Ctrl+B p t` starts an agent for a task, `Ctrl+B p l` lists the runs. The project is the AI Brain slug in the `CLAUDE.md` of the focused
 pane's directory or one above it; its tasks come from `ai-brain-harness aufgaben`. With an older
 `ai-brain-harness` without that command, it asks for a task number or an order instead.

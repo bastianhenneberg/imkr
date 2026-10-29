@@ -11,6 +11,7 @@ key = "p"                         # Ctrl+B p p opens it; optional
 mode = "popup"                    # or "fullscreen"
 status = "peppermint-tui status"  # its first lines show in the sidebar; optional
 interval = 30                     # seconds between them
+bar = true                        # its first status line in the bar too; optional
 enabled = true                    # false keeps the file but leaves it out
 ```
 
@@ -20,6 +21,15 @@ it runs on hidden, keeps its state, and has every popup key (`Ctrl+B z`, `!`, `S
 `Ctrl+B p` lists the plugins' keys. Since a plugin is just a program, it can be written in
 any language and cannot take imkr down; a file with a mistake shows in the sidebar with what is
 wrong, `imkr plugins` lists them all, and `Ctrl+B R` reads them again.
+
+With `bar = true` the first of those lines also shows in the bar, next to the path, so it is
+there with the sidebar closed. Several plugins stand side by side, from the same run of the
+`status` command the sidebar uses. A line starting with `●` is green and one starting with `✗`
+is red, the rest is plain text, so keep it short: the bar is one line and stays one. When it
+gets tight a line is shortened, and when there is no room left it is left out rather than
+pushing the path away. `Plugin status in the bar` in the settings turns it off (`plugin_status`
+under `[bars]`). An imkr older than 0.21.77 does not know the field and lists such a plugin as
+broken, so put it in once every machine that reads the file runs 0.21.77 or newer.
 
 Your plugins come along: working on another machine, your terminal tells its imkr which plugins
 the machine you sit at has, and they show in its sidebar too, marked `⌂`, next to its own (one of

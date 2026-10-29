@@ -28,6 +28,7 @@ side = "right"      # "left" or "right"
 control = "bottom"  # imkr badge, mode and hints: "top" or "bottom"
 tabs = "bottom"     # window tabs: "top", "bottom" or "off"
 path = "bottom"     # directory of the focused pane: "top", "bottom" or "off"
+plugin_status = true  # plugins with bar = true show their status in the control bar
 
 [spacing]           # in cells, all 0 by default; a cell is about twice as tall as wide
 outer_x = 0         # columns left and right of the panes

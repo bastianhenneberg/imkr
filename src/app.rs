@@ -11936,6 +11936,8 @@ impl App {
         }
         let left = Line::from(spans);
 
+        // The right half: what the plugins say, then the path.
+        let mut right: Vec<Span<'static>> = Vec::new();
         if bars.path == side
             && let Some(cwd) = self.focused_cwd()
         {
@@ -11955,28 +11957,58 @@ impl App {
             if !path.is_empty() {
                 // Plain text with a coloured marker: dimmed text is close to
                 // invisible in some colour schemes.
-                let line = Line::from(vec![
+                right.extend([
                     Span::styled("▸ ", Style::new().fg(t.cyan).add_modifier(Modifier::BOLD)),
                     Span::raw(path),
                     Span::styled(" · ", Style::new().fg(t.muted)),
                     Span::styled(machine, machine_style),
                     Span::raw(" "),
                 ]);
-                // Alone in its line the path starts on the left, where the
-                // eye is. Next to the control bar or tabs it goes right.
-                if left.width() == 0 {
-                    let area = Rect {
-                        x: area.x + 1,
-                        width: area.width.saturating_sub(1),
-                        ..area
-                    };
-                    frame.render_widget(line, area);
-                } else {
-                    frame.render_widget(line.right_aligned(), area);
+            }
+        }
+        if bars.plugin_status && bars.control() == side {
+            // What is left of the line once the left half, the path and the
+            // separator have theirs. One column too little and the right
+            // half no longer fits, which cuts its first character off.
+            let separator = if right.is_empty() { " " } else { " │ " };
+            // Plus one column, so that the status never touches the left half.
+            let used = left.width() + Line::from(right.clone()).width() + separator.len() + 1;
+            let room = usize::from(area.width).saturating_sub(used);
+            let mut status = self.bar_plugin_spans(room);
+            if !status.is_empty() {
+                status.push(Span::styled(separator, hint));
+                status.extend(right.clone());
+                // Counted in characters above; a double-wide one would make
+                // the line overflow, and then the path loses rather than
+                // the status line, so leave the status out instead.
+                if left.width() + Line::from(status.clone()).width() < usize::from(area.width) {
+                    right = status;
                 }
             }
         }
+        if !right.is_empty() {
+            let line = Line::from(right);
+            // Alone in its line the right half starts on the left, where
+            // the eye is. Next to the control bar or tabs it goes right.
+            if left.width() == 0 {
+                let area = Rect {
+                    x: area.x + 1,
+                    width: area.width.saturating_sub(1),
+                    ..area
+                };
+                frame.render_widget(line, area);
+            } else {
+                frame.render_widget(line.right_aligned(), area);
+            }
+        }
         frame.render_widget(left, area);
+    }
+
+    /// What the plugins with `bar = true` show in the bar, from the same
+    /// result the sidebar uses — no second run of their `status` command.
+    fn bar_plugin_spans(&self, room: usize) -> Vec<Span<'static>> {
+        let statuses = self.plugin_status.lock().unwrap().clone();
+        bar_plugin_spans(&self.plugins.lock().unwrap(), &statuses, room)
     }
 
     /// Workspace tabs, each in its workspace's colour: filled when it is
@@ -12969,6 +13001,69 @@ fn badge_style() -> Style {
 
 /// `path` cut down to `room` characters, keeping its end, e.g.
 /// `…/imkr/src`.
+/// The bar's spans for the plugins with `bar = true`: the first line each
+/// one's `status` command printed, side by side. The bar is one line and
+/// stays one, so a line is shortened when it is tight and left out
+/// entirely once `room` no longer holds anything worth reading.
+fn bar_plugin_spans(
+    plugins: &[crate::plugin::Plugin],
+    statuses: &HashMap<String, Vec<String>>,
+    room: usize,
+) -> Vec<Span<'static>> {
+    /// Below this many columns a line says nothing — leave it out.
+    const LEAST: usize = 8;
+    const SEPARATOR: &str = " · ";
+    let t = theme::current();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0;
+    for plugin in plugins.iter().filter(|p| p.bar) {
+        let Some(text) = statuses
+            .get(&plugin.name)
+            .and_then(|lines| lines.first())
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+        else {
+            continue;
+        };
+        let before = if spans.is_empty() {
+            0
+        } else {
+            SEPARATOR.chars().count()
+        };
+        let free = room.saturating_sub(used + before);
+        if free < text.chars().count().min(LEAST) {
+            break;
+        }
+        let text = clip(text, free);
+        // A plugin that leads with ✗ or ● means it, the bar says so.
+        let style = match text.chars().next() {
+            Some('✗') => Style::new().fg(t.danger).add_modifier(Modifier::BOLD),
+            Some('●') => Style::new().fg(t.success),
+            _ => Style::new(),
+        };
+        if before > 0 {
+            spans.push(Span::styled(SEPARATOR, Style::new().fg(t.muted)));
+        }
+        used += before + text.chars().count();
+        spans.push(Span::styled(text, style));
+    }
+    spans
+}
+
+/// `text` cut to `room` columns with an ellipsis, keeping its start: what
+/// a status line says comes first. Empty when there is no room at all.
+fn clip(text: &str, room: usize) -> String {
+    let len = text.chars().count();
+    if len <= room {
+        return text.to_owned();
+    }
+    if room < 2 {
+        return String::new();
+    }
+    let head: String = text.chars().take(room - 1).collect();
+    format!("{head}…")
+}
+
 fn shorten(path: &str, room: usize) -> String {
     let len = path.chars().count();
     if len <= room {
@@ -13236,6 +13331,72 @@ mod tests {
     }
 
     #[test]
+    fn the_bar_shows_what_plugins_say_and_drops_what_does_not_fit() {
+        use crate::plugin::Plugin;
+        let plugin = |name: &str, bar: bool| Plugin {
+            name: name.to_owned(),
+            from: None,
+            title: None,
+            command: "true".into(),
+            key: None,
+            status: Some("echo".into()),
+            interval: 30,
+            bar,
+            mode: crate::plugin::Mode::Popup,
+            enabled: true,
+            actions: Vec::new(),
+            hooks: Vec::new(),
+        };
+        let plugins = vec![
+            plugin("brain", true),
+            plugin("quiet", false),
+            plugin("deploy", true),
+        ];
+        let statuses: HashMap<String, Vec<String>> = [
+            ("brain", vec!["● AI Brain · line up", "more"]),
+            ("quiet", vec!["not in the bar"]),
+            ("deploy", vec!["✗ deploy failed"]),
+        ]
+        .into_iter()
+        .map(|(name, lines)| {
+            (
+                name.to_owned(),
+                lines.into_iter().map(str::to_owned).collect(),
+            )
+        })
+        .collect();
+
+        // Room for both: only the first line of each, a plugin without
+        // `bar = true` stays out of it.
+        let spans = bar_plugin_spans(&plugins, &statuses, 60);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "● AI Brain · line up · ✗ deploy failed");
+        let t = theme::current();
+        assert_eq!(spans[0].style.fg, Some(t.success));
+        assert_eq!(spans[2].style.fg, Some(t.danger));
+
+        // Tight: the last one is shortened rather than wrapped.
+        let spans = bar_plugin_spans(&plugins, &statuses, 34);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "● AI Brain · line up · ✗ deploy f…");
+        assert_eq!(text.chars().count(), 34);
+
+        // No room worth the name: left out, never wrapped into a second line.
+        let spans = bar_plugin_spans(&plugins, &statuses, 25);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "● AI Brain · line up");
+        assert!(bar_plugin_spans(&plugins, &statuses, 7).is_empty());
+        assert!(bar_plugin_spans(&plugins, &HashMap::new(), 60).is_empty());
+    }
+
+    #[test]
+    fn a_status_line_is_cut_at_its_end() {
+        assert_eq!(clip("● up", 8), "● up");
+        assert_eq!(clip("● all good", 6), "● all…");
+        assert_eq!(clip("● all good", 1), "");
+    }
+
+    #[test]
     fn bars_take_lines_on_their_side() {
         let screen = Rect::new(0, 0, 80, 24);
         let layout = screen_layout(screen, &Bars::default(), &Spacing::default());
@@ -13247,6 +13408,7 @@ mod tests {
             control: Placement::Bottom,
             tabs: Placement::Top,
             path: Placement::Off,
+            ..Bars::default()
         };
         let layout = screen_layout(screen, &split, &Spacing::default());
         assert_eq!(layout.top, Some(Rect::new(0, 0, 80, 1)));

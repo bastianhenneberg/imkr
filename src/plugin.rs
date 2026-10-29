@@ -8,6 +8,7 @@
 //! key = "p"                        # Ctrl+B p p, optional
 //! status = "peppermint-tui status" # lines for the sidebar, optional
 //! interval = 30                    # seconds between them
+//! bar = true                       # its first status line in the bar too
 //! mode = "popup"                   # or "fullscreen"
 //!
 //! [[actions]]                      # more commands in Ctrl+B p, optional
@@ -68,6 +69,11 @@ pub struct Plugin {
     pub status: Option<String>,
     #[serde(default = "default_interval")]
     pub interval: u64,
+    /// Show the first line of `status` in the bar as well, not only in the
+    /// sidebar. Left out of the serialized form while it is off, so that
+    /// plugins travelling to an older imkr do not trip its parser.
+    #[serde(default, skip_serializing_if = "is_off")]
+    pub bar: bool,
     #[serde(default)]
     pub mode: Mode,
     /// `false` keeps the file but leaves the plugin out.
@@ -101,6 +107,10 @@ fn default_interval() -> u64 {
 
 fn yes() -> bool {
     true
+}
+
+fn is_off(bar: &bool) -> bool {
+    !bar
 }
 
 impl Plugin {
@@ -646,6 +656,39 @@ fn run_status(command: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bar_is_off_unless_asked_for_and_stays_out_of_the_wire() {
+        let dir = std::env::temp_dir().join(format!("imkr-plugin-bar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plain.toml"),
+            "command = \"tui\"\nstatus = \"tui status\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("shown.toml"),
+            "command = \"tui\"\nstatus = \"tui status\"\nbar = true\n",
+        )
+        .unwrap();
+        let (plugins, broken) = load_from(&dir);
+        assert!(broken.is_empty(), "{broken:?}");
+        let plain = plugins.iter().find(|p| p.name == "plain").unwrap();
+        let shown = plugins.iter().find(|p| p.name == "shown").unwrap();
+        assert!(!plain.bar);
+        assert!(shown.bar);
+        // Off is left out of the serialized form, so plugins travelling to
+        // an older imkr do not trip its `deny_unknown_fields`.
+        let wire = serde_json::to_string(plain).unwrap();
+        assert!(!wire.contains("bar"), "{wire}");
+        assert!(
+            serde_json::to_string(shown)
+                .unwrap()
+                .contains("\"bar\":true")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn sources_are_told_apart() {

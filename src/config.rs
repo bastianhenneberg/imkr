@@ -176,6 +176,10 @@ pub struct Bars {
     pub tabs: Placement,
     /// The working directory of the focused pane.
     pub path: Placement,
+    /// Whether the plugins that ask for it (`bar = true`) show their
+    /// status in the control bar. No placement of its own: it rides along
+    /// with the control bar, which is always there.
+    pub plugin_status: bool,
 }
 
 impl Default for Bars {
@@ -184,6 +188,7 @@ impl Default for Bars {
             control: Placement::Bottom,
             tabs: Placement::Bottom,
             path: Placement::Bottom,
+            plugin_status: true,
         }
     }
 }
@@ -887,6 +892,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Path",
         value: |c| c.bars.path.name().to_owned(),
         step: |c, forward| c.bars.path = step_placement(c.bars.path, true, forward),
+    },
+    Setting {
+        name: "Plugin status in the bar",
+        value: |c| if c.bars.plugin_status { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.bars.plugin_status = !c.bars.plugin_status,
     },
     Setting {
         name: "Outer margin ↔",
