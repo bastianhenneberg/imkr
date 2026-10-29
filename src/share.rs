@@ -138,6 +138,16 @@ pub fn set_dir(dir: Option<&str>) -> Result<PathBuf> {
     save(&shared)
 }
 
+/// Says where the same folder is on `host`, or forgets it with `None`.
+pub fn set_elsewhere(host: &str, path: Option<&str>) -> Result<PathBuf> {
+    let mut shared = load();
+    match path.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(path) => shared.elsewhere.insert(host.to_owned(), path.to_owned()),
+        None => shared.elsewhere.remove(host),
+    };
+    save(&shared)
+}
+
 /// This machine's shared folder, `~` expanded. `None` when unset.
 pub fn dir() -> Option<PathBuf> {
     expand(cached().dir.as_deref())
@@ -329,12 +339,27 @@ pub fn run(args: &[String]) -> Result<()> {
             }
             Ok(())
         }
+        // `--rm` before the host too, because that is how it is typed
+        // half the time.
+        ["elsewhere", host, "--rm"] | ["elsewhere", "--rm", host] => {
+            set_elsewhere(host, None)?;
+            println!("{host} removed");
+            Ok(())
+        }
+        ["elsewhere", host, where_] => {
+            let path = set_elsewhere(host, Some(where_))?;
+            println!("{host}: {where_} ({})", path.display());
+            Ok(())
+        }
         ["unset"] => {
             let path = set_dir(None)?;
             println!("no shared folder any more ({})", path.display());
             Ok(())
         }
-        _ => bail!("usage: imkr share [--json] | setup [--yes] | set PATH | unset"),
+        _ => bail!(
+            "usage: imkr share [--json] | setup [--yes] | set PATH | unset \
+             | elsewhere HOST PATH | elsewhere HOST --rm"
+        ),
     }
 }
 
@@ -437,8 +462,9 @@ fn setup(yes: bool) -> Result<()> {
     let path = set_dir(Some(&chosen))?;
     println!("{chosen} written to {}", path.display());
     println!(
-        "On your other machines the same folder has another path: add it under \
-         [elsewhere] there, so imkr can name a file the way you see it."
+        "On your other machines the same folder has another path. \
+         `imkr share elsewhere HOST PATH` says which, so imkr can name a file \
+         the way you see it there."
     );
     Ok(())
 }
@@ -483,6 +509,26 @@ mod tests {
         assert!(again.contains("[elsewhere]"), "{again}");
         // A broken file is defaults, never a reason not to start.
         assert!(toml::from_str::<Shared>("dir = [1,2]").is_err());
+    }
+
+    #[test]
+    fn a_path_elsewhere_is_set_and_removed_in_the_same_map() {
+        // The write goes through `load`/`save`, so this only checks the
+        // bookkeeping that would silently lose a key.
+        let mut shared = Shared {
+            dir: Some("~/codingshare".into()),
+            ..Shared::default()
+        };
+        shared
+            .elsewhere
+            .insert("laptop".into(), "/home/b/codingshare".into());
+        shared
+            .elsewhere
+            .insert("desktop".into(), "/home/b/codingshare".into());
+        let text = toml::to_string_pretty(&shared).unwrap();
+        let back: Shared = toml::from_str(&text).unwrap();
+        assert_eq!(back.elsewhere.len(), 2);
+        assert_eq!(back.dir.as_deref(), Some("~/codingshare"));
     }
 
     #[test]

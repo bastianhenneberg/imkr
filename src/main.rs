@@ -168,6 +168,7 @@ For scripts and agents:
                 every action taken on this screen; the user's own answer
                 when `computer_use` is `ask`
   share [--json] | setup [--yes] | set PATH | unset
+        | elsewhere HOST PATH | elsewhere HOST --rm
                 the folder where imkr puts files for you to look at, e.g.
                 `screen shot --save`: an SMB or NFS mount, Syncthing,
                 Nextcloud or a plain folder. `setup` offers the ones this

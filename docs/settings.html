@@ -327,6 +327,9 @@ desktop = &quot;/home/you/Development/codingshare&quot;
 <p><code>dir</code> is this machine's path. <code>[elsewhere]</code> is the same folder as your other machines see it,
 by the name you call them — that is what lets imkr print <code>on laptop: …</code> next to a file it
 just wrote, instead of a path that only exists somewhere you are not.</p>
+<pre><code class="language-bash">imkr share elsewhere laptop /Users/you/Development/codingshare
+imkr share elsewhere laptop --rm
+</code></pre>
 <p>The file is deliberately nobody's: imkr reads and writes it, and so does the AI Brain
 harness, and each works on its own with it or without it. Two programs that need the same
 answer should not have to ask each other for it. The field names are a contract —

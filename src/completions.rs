@@ -300,6 +300,7 @@ const COMMANDS: &[Command] = &[
             sub("setup", Nothing),
             sub("set", Files),
             sub("unset", Nothing),
+            sub("elsewhere", Hosts),
         ],
     ),
     with_subs(

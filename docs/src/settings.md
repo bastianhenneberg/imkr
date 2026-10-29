@@ -141,6 +141,11 @@ desktop = "/home/you/Development/codingshare"
 by the name you call them — that is what lets imkr print `on laptop: …` next to a file it
 just wrote, instead of a path that only exists somewhere you are not.
 
+```bash
+imkr share elsewhere laptop /Users/you/Development/codingshare
+imkr share elsewhere laptop --rm
+```
+
 The file is deliberately nobody's: imkr reads and writes it, and so does the AI Brain
 harness, and each works on its own with it or without it. Two programs that need the same
 answer should not have to ask each other for it. The field names are a contract —
