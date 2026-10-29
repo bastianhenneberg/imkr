@@ -8,7 +8,7 @@
 //! key = "p"                        # Ctrl+B p p, optional
 //! status = "peppermint-tui status" # lines for the sidebar, optional
 //! interval = 30                    # seconds between them
-//! bar = true                       # its first status line in the bar too
+//! bar = true                       # its first status line in the bar too, with the title
 //! mode = "popup"                   # or "fullscreen"
 //!
 //! [[actions]]                      # more commands in Ctrl+B p, optional

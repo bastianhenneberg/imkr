@@ -11,7 +11,7 @@ key = "p"                         # Ctrl+B p p opens it; optional
 mode = "popup"                    # or "fullscreen"
 status = "peppermint-tui status"  # its first lines show in the sidebar; optional
 interval = 30                     # seconds between them
-bar = true                        # its first status line in the bar too; optional
+bar = true                        # its first status line in the bar too, with the title; optional
 enabled = true                    # false keeps the file but leaves it out
 ```
 
@@ -23,11 +23,13 @@ any language and cannot take imkr down; a file with a mistake shows in the sideb
 wrong, `imkr plugins` lists them all, and `Ctrl+B R` reads them again.
 
 With `bar = true` the first of those lines also shows in the bar, next to the path, so it is
-there with the sidebar closed. Several plugins stand side by side, from the same run of the
-`status` command the sidebar uses. A line starting with `●` is green and one starting with `✗`
-is red, the rest is plain text, so keep it short: the bar is one line and stays one. When it
-gets tight a line is shortened, and when there is no room left it is left out rather than
-pushing the path away. `Plugin status in the bar` in the settings turns it off (`plugin_status`
+there with the sidebar closed: `AI Brain ● connected`, the plugin's title in front of it,
+because the bar has no heading above the line to say which plugin it belongs to. Several
+plugins stand side by side, from the same run of the `status` command the sidebar uses. A line
+starting with `●` is green and one starting with `✗` is red, the rest is plain text, so keep it
+short: the bar is one line and stays one. When it gets tight the line is shortened (never the
+title), and when there is no room left for the title and something to read, the plugin is left
+out rather than pushing the path away. `Plugin status in the bar` in the settings turns it off (`plugin_status`
 under `[bars]`). An imkr older than 0.21.77 does not know the field and lists such a plugin as
 broken, so put it in once every machine that reads the file runs 0.21.77 or newer.
 

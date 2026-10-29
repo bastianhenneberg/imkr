@@ -203,7 +203,7 @@ key = &quot;p&quot;                         # Ctrl+B p p opens it; optional
 mode = &quot;popup&quot;                    # or &quot;fullscreen&quot;
 status = &quot;peppermint-tui status&quot;  # its first lines show in the sidebar; optional
 interval = 30                     # seconds between them
-bar = true                        # its first status line in the bar too; optional
+bar = true                        # its first status line in the bar too, with the title; optional
 enabled = true                    # false keeps the file but leaves it out
 </code></pre>
 <p>The sidebar lists every plugin under <em>Plugins</em>, <code>◇</code> until it runs and <code>◆</code> after, with its status
@@ -213,11 +213,13 @@ it runs on hidden, keeps its state, and has every popup key (<code>Ctrl+B z</cod
 any language and cannot take imkr down; a file with a mistake shows in the sidebar with what is
 wrong, <code>imkr plugins</code> lists them all, and <code>Ctrl+B R</code> reads them again.</p>
 <p>With <code>bar = true</code> the first of those lines also shows in the bar, next to the path, so it is
-there with the sidebar closed. Several plugins stand side by side, from the same run of the
-<code>status</code> command the sidebar uses. A line starting with <code>●</code> is green and one starting with <code>✗</code>
-is red, the rest is plain text, so keep it short: the bar is one line and stays one. When it
-gets tight a line is shortened, and when there is no room left it is left out rather than
-pushing the path away. <code>Plugin status in the bar</code> in the settings turns it off (<code>plugin_status</code>
+there with the sidebar closed: <code>AI Brain ● connected</code>, the plugin's title in front of it,
+because the bar has no heading above the line to say which plugin it belongs to. Several
+plugins stand side by side, from the same run of the <code>status</code> command the sidebar uses. A line
+starting with <code>●</code> is green and one starting with <code>✗</code> is red, the rest is plain text, so keep it
+short: the bar is one line and stays one. When it gets tight the line is shortened (never the
+title), and when there is no room left for the title and something to read, the plugin is left
+out rather than pushing the path away. <code>Plugin status in the bar</code> in the settings turns it off (<code>plugin_status</code>
 under <code>[bars]</code>). An imkr older than 0.21.77 does not know the field and lists such a plugin as
 broken, so put it in once every machine that reads the file runs 0.21.77 or newer.</p>
 <p>Your plugins come along: working on another machine, your terminal tells its imkr which plugins

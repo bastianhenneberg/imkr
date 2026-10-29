@@ -13001,17 +13001,19 @@ fn badge_style() -> Style {
 
 /// `path` cut down to `room` characters, keeping its end, e.g.
 /// `…/imkr/src`.
-/// The bar's spans for the plugins with `bar = true`: the first line each
-/// one's `status` command printed, side by side. The bar is one line and
-/// stays one, so a line is shortened when it is tight and left out
-/// entirely once `room` no longer holds anything worth reading.
+/// The bar's spans for the plugins with `bar = true`: each one's title and
+/// the first line its `status` command printed, side by side. The title
+/// comes along because the bar, unlike the sidebar, has no heading to say
+/// which plugin a line belongs to. The bar is one line and stays one, so a
+/// line is shortened when it is tight and left out entirely once `room` no
+/// longer holds anything worth reading.
 fn bar_plugin_spans(
     plugins: &[crate::plugin::Plugin],
     statuses: &HashMap<String, Vec<String>>,
     room: usize,
 ) -> Vec<Span<'static>> {
-    /// Below this many columns a line says nothing — leave it out.
-    const LEAST: usize = 8;
+    /// Below this many columns of status a line says nothing — leave it out.
+    const LEAST: usize = 6;
     const SEPARATOR: &str = " · ";
     let t = theme::current();
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -13030,7 +13032,12 @@ fn bar_plugin_spans(
         } else {
             SEPARATOR.chars().count()
         };
-        let free = room.saturating_sub(used + before);
+        let title = format!("{} ", plugin.title());
+        let free = room
+            .saturating_sub(used + before)
+            .saturating_sub(title.chars().count());
+        // The title is what tells the two apart, so it is never cut: too
+        // little room for it and something to read leaves the plugin out.
         if free < text.chars().count().min(LEAST) {
             break;
         }
@@ -13044,7 +13051,8 @@ fn bar_plugin_spans(
         if before > 0 {
             spans.push(Span::styled(SEPARATOR, Style::new().fg(t.muted)));
         }
-        used += before + text.chars().count();
+        used += before + title.chars().count() + text.chars().count();
+        spans.push(Span::styled(title, Style::new().fg(t.subtle)));
         spans.push(Span::styled(text, style));
     }
     spans
@@ -13348,14 +13356,17 @@ mod tests {
             hooks: Vec::new(),
         };
         let plugins = vec![
-            plugin("brain", true),
+            Plugin {
+                title: Some("AI Brain".into()),
+                ..plugin("brain", true)
+            },
             plugin("quiet", false),
             plugin("deploy", true),
         ];
         let statuses: HashMap<String, Vec<String>> = [
-            ("brain", vec!["● AI Brain · line up", "more"]),
+            ("brain", vec!["● connected", "more"]),
             ("quiet", vec!["not in the bar"]),
-            ("deploy", vec!["✗ deploy failed"]),
+            ("deploy", vec!["✗ failed"]),
         ]
         .into_iter()
         .map(|(name, lines)| {
@@ -13366,26 +13377,27 @@ mod tests {
         })
         .collect();
 
-        // Room for both: only the first line of each, a plugin without
-        // `bar = true` stays out of it.
+        // Room for both: the title (falling back to the name) and the
+        // first line of each, a plugin without `bar = true` stays out.
         let spans = bar_plugin_spans(&plugins, &statuses, 60);
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "● AI Brain · line up · ✗ deploy failed");
+        assert_eq!(text, "AI Brain ● connected · deploy ✗ failed");
         let t = theme::current();
-        assert_eq!(spans[0].style.fg, Some(t.success));
-        assert_eq!(spans[2].style.fg, Some(t.danger));
+        assert_eq!(spans[0].style.fg, Some(t.subtle));
+        assert_eq!(spans[1].style.fg, Some(t.success));
+        assert_eq!(spans[4].style.fg, Some(t.danger));
 
-        // Tight: the last one is shortened rather than wrapped.
-        let spans = bar_plugin_spans(&plugins, &statuses, 34);
+        // Tight: the last status is shortened, its title stays whole.
+        let spans = bar_plugin_spans(&plugins, &statuses, 36);
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "● AI Brain · line up · ✗ deploy f…");
-        assert_eq!(text.chars().count(), 34);
+        assert_eq!(text, "AI Brain ● connected · deploy ✗ fai…");
+        assert_eq!(text.chars().count(), 36);
 
         // No room worth the name: left out, never wrapped into a second line.
-        let spans = bar_plugin_spans(&plugins, &statuses, 25);
+        let spans = bar_plugin_spans(&plugins, &statuses, 35);
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "● AI Brain · line up");
-        assert!(bar_plugin_spans(&plugins, &statuses, 7).is_empty());
+        assert_eq!(text, "AI Brain ● connected");
+        assert!(bar_plugin_spans(&plugins, &statuses, 14).is_empty());
         assert!(bar_plugin_spans(&plugins, &HashMap::new(), 60).is_empty());
     }
 
