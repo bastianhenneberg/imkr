@@ -247,7 +247,8 @@ imkr plugin rm NAME
 <p>A repository brings the plugin files in its <code>plugins/</code> directory (or at its top, without one),
 and anything they need besides: <code>{dir}</code> in a command is the directory the plugin's file is in, e.g.
 <code>command = "{dir}/../bin/deploy"</code>. Before adding, and before taking a new version, imkr shows
-what each plugin will run, including hooks that run by themselves, and asks (<code>--yes</code> answers for
+what each plugin will run, including hooks that run by themselves and whether it asks for a
+place in the bar, and asks (<code>--yes</code> answers for
 scripts). The clone stays in <code>plugins/.sources/</code>, its files are linked into <code>plugins/</code>; a plugin
 of your own with the same name is left alone. Running sessions pick the changes up at once. A
 directory is used where it is, so its changes count right away. <code>owner/repo/dir</code> (or <code>URL#dir</code>)

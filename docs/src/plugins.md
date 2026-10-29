@@ -66,7 +66,8 @@ imkr plugin rm NAME
 A repository brings the plugin files in its `plugins/` directory (or at its top, without one),
 and anything they need besides: `{dir}` in a command is the directory the plugin's file is in, e.g.
 `command = "{dir}/../bin/deploy"`. Before adding, and before taking a new version, imkr shows
-what each plugin will run, including hooks that run by themselves, and asks (`--yes` answers for
+what each plugin will run, including hooks that run by themselves and whether it asks for a
+place in the bar, and asks (`--yes` answers for
 scripts). The clone stays in `plugins/.sources/`, its files are linked into `plugins/`; a plugin
 of your own with the same name is left alone. Running sessions pick the changes up at once. A
 directory is used where it is, so its changes count right away. `owner/repo/dir` (or `URL#dir`)

@@ -568,7 +568,13 @@ pub fn unlink_source(plugins: &Path, root: &Path) -> std::io::Result<Vec<String>
 pub fn describe(plugin: &Plugin) -> Vec<String> {
     let mut lines = vec![format!("{}: {}", plugin.title(), plugin.command)];
     if let Some(status) = &plugin.status {
-        lines.push(format!("  status every {}s: {status}", plugin.interval));
+        // Where it shows matters too: `bar = true` claims a place in the
+        // user's bar, not just a line in the sidebar.
+        let where_ = if plugin.bar { ", in the bar" } else { "" };
+        lines.push(format!(
+            "  status every {}s{where_}: {status}",
+            plugin.interval
+        ));
     }
     for action in &plugin.actions {
         lines.push(format!(
