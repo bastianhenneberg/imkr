@@ -180,8 +180,12 @@ time too.
 
 When the session you are in ends, imkr does not drop you: you land in another session running
 on this machine, with the session list open, to go on from there (`Esc` stays, `Ctrl+B d`
-leaves). Only when none runs does imkr end, and plain `imkr` then starts afresh instead of
-bringing back an empty copy of the ended one.
+leaves). Has this machine none left, you land in the session you visited last on another one,
+or in any that runs there — a machine without a session of its own is a workplace like any
+other, and from there every machine's sessions are a keystroke away. imkr remembers where you
+went, so plain `imkr` goes back there instead of starting an empty session here. Only when no
+session runs anywhere does imkr end, and plain `imkr` then starts afresh instead of bringing
+back an empty copy of the ended one.
 
 Sessions that do not run are listed with `◌`, in `Ctrl+B S` as a group of their own after the
 running ones (`o` hides them and quiet ones) and in `imkr ls`; the sidebar shows running ones only:

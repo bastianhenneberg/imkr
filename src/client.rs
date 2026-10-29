@@ -370,19 +370,57 @@ fn forget_place() {
     }
 }
 
-/// A session running on this machine besides `but`, the one used last
-/// first: something to go to when the shown one ends.
-fn other_running_session(but: Option<&str>) -> Option<String> {
+/// A session to go to when the shown one ends: one running on this machine
+/// besides `but`, the one used last first — and when this machine has none
+/// left, one on another machine. A machine without a session of its own is
+/// a workplace like any other, so the client stays in imkr rather than
+/// ending there (#1150).
+fn next_running_session(but: Option<&str>) -> Option<(Option<String>, String)> {
     let running: Vec<String> = local_sessions()
         .into_iter()
         .filter(|s| s.dormant.is_none() && Some(s.name.as_str()) != but)
         .map(|s| s.name)
         .collect();
-    let last = last_place()
+    let last = last_place();
+    if let Some(name) = last
+        .as_ref()
         .filter(|(host, _)| host.is_none())
-        .map(|(_, name)| name);
-    last.filter(|name| running.contains(name))
-        .or_else(|| running.into_iter().next())
+        .map(|(_, name)| name)
+        .filter(|name| running.contains(name))
+    {
+        return Some((None, name.clone()));
+    }
+    if let Some(name) = running.into_iter().next() {
+        return Some((None, name));
+    }
+    // Nothing here any more: the other machines, the one visited last
+    // first. One ssh per machine, and it stops at the first that answers
+    // with a session.
+    let hosts: Vec<String> = last
+        .and_then(|(host, _)| host)
+        .into_iter()
+        .chain(crate::config::Config::load().0.hosts)
+        .chain(remembered_hosts())
+        .collect();
+    let mut seen: Vec<String> = Vec::new();
+    for host in hosts {
+        if host == crate::protocol::machine_name() || seen.contains(&host) {
+            continue;
+        }
+        seen.push(host.clone());
+        let Ok(sessions) = remote_sessions(&host) else {
+            continue;
+        };
+        // A machine without a session answers with a made-up `default`
+        // that has no panes: that is not something to go to.
+        if let Some(session) = sessions
+            .into_iter()
+            .find(|s| s.dormant.is_none() && !s.is_stand_in())
+        {
+            return Some((Some(host), session.name));
+        }
+    }
+    None
 }
 
 /// Notes `host` for the session list, once it was reached.
@@ -757,9 +795,12 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
             // session list open, rather than out of imkr.
             Ok(Outcome::Exited) => {
                 let ended = name.clone();
-                let next = other_running_session(host.is_none().then_some(ended.as_str()))
-                    .and_then(|next| Some((connect(None, &next).ok()?, next)));
-                let Some((next_conn, next)) = next else {
+                let next = next_running_session(host.is_none().then_some(ended.as_str())).and_then(
+                    |(next_host, next)| {
+                        Some((connect(next_host.as_deref(), &next).ok()?, next_host, next))
+                    },
+                );
+                let Some((next_conn, next_host, next)) = next else {
                     // Else plain `imkr` would start it again, empty.
                     forget_place();
                     break Ok(Outcome::Exited);
@@ -768,10 +809,10 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
                     Some(h) => format!("{h}:{ended}"),
                     None => ended,
                 };
-                (host, name) = (None, next);
-                *SHOWN_HOST.lock().unwrap() = None;
+                (host, name) = (next_host.clone(), next);
+                *SHOWN_HOST.lock().unwrap() = next_host.clone();
                 *SHOWN_SESSION.lock().unwrap() = name.clone();
-                remember_place(None, &name);
+                remember_place(next_host.as_deref(), &name);
                 hello = Some((true, Some(format!("session {ended} ended"))));
                 conn = next_conn;
                 execute!(stdout(), Clear(ClearType::All))?;

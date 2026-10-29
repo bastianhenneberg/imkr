@@ -508,8 +508,12 @@ Saving all sessions as a hive is <code>Ctrl+B s v</code>. <code>imkr ls</code> g
 time too.</p>
 <p>When the session you are in ends, imkr does not drop you: you land in another session running
 on this machine, with the session list open, to go on from there (<code>Esc</code> stays, <code>Ctrl+B d</code>
-leaves). Only when none runs does imkr end, and plain <code>imkr</code> then starts afresh instead of
-bringing back an empty copy of the ended one.</p>
+leaves). Has this machine none left, you land in the session you visited last on another one,
+or in any that runs there — a machine without a session of its own is a workplace like any
+other, and from there every machine's sessions are a keystroke away. imkr remembers where you
+went, so plain <code>imkr</code> goes back there instead of starting an empty session here. Only when no
+session runs anywhere does imkr end, and plain <code>imkr</code> then starts afresh instead of bringing
+back an empty copy of the ended one.</p>
 <p>Sessions that do not run are listed with <code>◌</code>, in <code>Ctrl+B S</code> as a group of their own after the
 running ones (<code>o</code> hides them and quiet ones) and in <code>imkr ls</code>; the sidebar shows running ones only:
 <em>stopped</em> ones (the machine restarted, or the server crashed) and <em>closed</em> ones (ended on

@@ -396,9 +396,13 @@ Projekt-Slug: `imkr`
   Remote-Wechsel nach blocked/done erkennt `watch_places` per `remote_change` und legt sie in
   `Places::alerts`, `pass_on_alerts` meldet wie lokal (lokale Sessions melden sich selbst).
   Falle: `pkill -f <pfad>` trifft die eigene Shell, deren Befehlszeile den Pfad enthält.
-  Session endet (`ServerMsg::Exited`): Client geht per `other_running_session` in eine andere
-  laufende Session hier (Session-Liste offen, Flash), sonst Ende und `forget_place` (sonst
-  startet `imkr` die beendete leer neu). Testwelten immer mit `unset IMKR_SOCKET`!
+  Session endet (`ServerMsg::Exited`): Client geht per `next_running_session` in eine andere
+  laufende Session hier (Session-Liste offen, Flash); hat dieser Rechner keine mehr, in die
+  zuletzt besuchte auf einem anderen (Host aus `last_place`, dann Config-`hosts` +
+  `remembered_hosts`, je Host ein `remote_sessions`, Abbruch beim ersten Treffer, `is_stand_in`
+  und dormant raus) — Host wandert in `SHOWN_HOST` und `remember_place`, damit blankes `imkr`
+  dorthin geht und keine leere `default` anlegt (#1150). Läuft nirgends eine, Ende und
+  `forget_place` (sonst startet `imkr` die beendete leer neu). Testwelten immer mit `unset IMKR_SOCKET`!
   Nach einem Wechsel zeigt der neue Server den Namen 1,2 s (`draw_banner`, `BANNER_FOR`, Ort
   `Caps::banner_at` = `session_banner_at`),
   übermittelt als `Caps::banner` in den ersten Caps, Einstellung `session_banner` des Client-Rechners.
