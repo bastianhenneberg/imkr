@@ -334,6 +334,13 @@ pub struct Config {
     /// headless one made for agents (`hyprctl output create headless
     /// AGENT`), so the real screen may be off. Without it the focused
     /// screen. Local like `computer_use`: the names are this machine's.
+    ///
+    /// Not a row in the settings menu, deliberately. Its choices are
+    /// whatever screens exist right now, so the menu would have to ask
+    /// the compositor on every frame — and on a machine with no screens
+    /// at all (a build runner) the row would have one value and do
+    /// nothing when pressed, which reads as broken.
+    /// `imkr screen status` says which screen is used and why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub computer_use_monitor: Option<String>,
 }
@@ -729,33 +736,6 @@ pub const SETTINGS: &[Setting] = &[
                 &c.computer_use,
                 forward,
             )
-        },
-    },
-    Setting {
-        name: "Screen for agents",
-        value: |c| {
-            let name = c.computer_use_monitor.clone();
-            match (name, crate::screen::monitor_names().is_empty()) {
-                (None, _) => "the focused".to_owned(),
-                // A name that is not there any more is worth seeing, not
-                // hiding: a headless screen goes when the session restarts.
-                (Some(name), false) if !crate::screen::monitor_names().contains(&name) => {
-                    format!("{name} (gone)")
-                }
-                (Some(name), _) => name,
-            }
-        },
-        step: |c, forward| {
-            let mut choices: Vec<Option<String>> = vec![None];
-            choices.extend(crate::screen::monitor_names().into_iter().map(Some));
-            // A name from the config that no screen carries right now
-            // stays in the ring, so stepping never loses it silently.
-            if let Some(name) = &c.computer_use_monitor
-                && !choices.iter().any(|choice| choice.as_ref() == Some(name))
-            {
-                choices.push(Some(name.clone()));
-            }
-            c.computer_use_monitor = step_in(&choices, &c.computer_use_monitor, forward);
         },
     },
     Setting {

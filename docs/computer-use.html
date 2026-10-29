@@ -260,9 +260,9 @@ one. <code>--monitor all</code> takes the whole layout at once.</p>
 and an agent can then work on it while the real screen is off and nobody is disturbed.</p>
 <pre><code class="language-bash">hyprctl output create headless AGENT      # a screen for the agent, beside the real one
 </code></pre>
-<p>Then set <code>Screen for agents</code> in the settings (<code>Ctrl+B ,</code>) or <code>computer_use_monitor = "AGENT"</code>.
-If that screen is not there when a command runs, imkr says so and does nothing — it does not
-quietly take the real one instead.</p>
+<p>Then put <code>computer_use_monitor = "AGENT"</code> in the config. If that screen is not there when a
+command runs, imkr says so and does nothing — it does not quietly take the real one instead.
+<code>imkr screen status</code> marks the screen it would use.</p>
 <h2 id="who-may-and-for-how-long">Who may, and for how long</h2>
 <p>One setting per machine, <code>computer_use</code>, off by default:</p>
 <table>

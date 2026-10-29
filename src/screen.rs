@@ -856,16 +856,6 @@ fn running_for(pid: u32) -> Option<Duration> {
 // Doing something
 // ---------------------------------------------------------------------------
 
-/// The screens there are right now, by name, for the settings menu. An
-/// empty list where no backend answers — a headless screen made for
-/// agents comes and goes, and so does a real one that is switched off.
-pub fn monitor_names() -> Vec<String> {
-    desktop()
-        .and_then(|desk| desk.monitors())
-        .map(|ms| ms.into_iter().map(|m| m.name).collect())
-        .unwrap_or_default()
-}
-
 /// Which screen a command means: `--monitor NAME` for that one, `all` for
 /// every screen at once, else the one the settings name (a headless
 /// screen for agents, so the real one may be off), else the focused one.

@@ -89,9 +89,9 @@ and an agent can then work on it while the real screen is off and nobody is dist
 hyprctl output create headless AGENT      # a screen for the agent, beside the real one
 ```
 
-Then set `Screen for agents` in the settings (`Ctrl+B ,`) or `computer_use_monitor = "AGENT"`.
-If that screen is not there when a command runs, imkr says so and does nothing — it does not
-quietly take the real one instead.
+Then put `computer_use_monitor = "AGENT"` in the config. If that screen is not there when a
+command runs, imkr says so and does nothing — it does not quietly take the real one instead.
+`imkr screen status` marks the screen it would use.
 
 ## Who may, and for how long
 
