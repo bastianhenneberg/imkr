@@ -466,6 +466,10 @@ enum Action {
     /// Start here the archived session `host:name` in `App::confirm_target`
     /// of a machine that does not answer.
     StartArchivedHere,
+    /// Let the agent in `App::screen_ask` see or drive this machine's
+    /// screen for half an hour (#9074). Any key but `y` refuses it, which
+    /// the waiting command is told right away.
+    AllowScreen,
 }
 
 /// The sessions besides this one, here and on other machines, as the
@@ -802,6 +806,12 @@ pub struct App {
     own_plugins: Vec<crate::plugin::Plugin>,
     broken_plugins: Vec<crate::plugin::Broken>,
     plugin_status: crate::plugin::Statuses,
+    /// Who asks to see or drive this screen, and whether to look or type
+    /// (`see`, `drive`), while `Mode::Confirm(Action::AllowScreen)` is up.
+    screen_ask: Option<(String, String)>,
+    /// The permission on this machine, read every upkeep so the bar can
+    /// say that an agent may use this screen and when one just did.
+    screen_use: crate::screen::Grant,
     /// The panes marked for Alt+1 … Alt+9, in that order.
     marks: Vec<Mark>,
     /// The other sessions, here and elsewhere, kept up to date by a thread.
@@ -989,6 +999,8 @@ impl App {
             own_plugins: Vec::new(),
             broken_plugins: Vec::new(),
             plugin_status: Arc::default(),
+            screen_ask: None,
+            screen_use: crate::screen::Grant::default(),
             watched_hosts: Arc::default(),
             first_shell: None,
             agents: HashMap::new(),
@@ -1529,6 +1541,7 @@ impl App {
                 self.refresh_files();
                 self.follow_omarchy();
                 self.pass_on_alerts();
+                self.screen_use = crate::screen::grant();
                 if *self.watched_hosts.lock().unwrap() != self.config.hosts {
                     *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
                 }
@@ -2356,6 +2369,7 @@ impl App {
                 self.flash = Some(text);
                 Ok(serde_json::json!({}))
             }
+            Request::ScreenAsk { who, what } => Ok(self.screen_ask(&who, &what)),
             Request::PasteImage { data, ending } => self.paste_image(&data, &ending),
             Request::UseAccount { tool, name, pane } => {
                 let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
@@ -3715,6 +3729,64 @@ impl App {
         self.send_notification(&format!("{who} {what}"), &place);
     }
 
+    /// An agent asks to see or drive this machine's screen, with
+    /// `computer_use = "ask"` (#9074). The question goes in front of
+    /// whoever is attached, and a notification goes out as well: the
+    /// agent waits ninety seconds, and the user may be looking elsewhere.
+    ///
+    /// The answer does not travel back over this connection — the asking
+    /// command is another process, and it reads `screen::Grant`.
+    fn screen_ask(&mut self, who: &str, what: &str) -> serde_json::Value {
+        let doing = if what == "drive" {
+            "see and drive"
+        } else {
+            "see"
+        };
+        self.screen_ask = Some((who.to_owned(), what.to_owned()));
+        self.mode = Mode::Confirm(Action::AllowScreen);
+        self.flash = Some(format!("{who} wants to {doing} this screen — y allows it"));
+        self.send_notification(
+            &format!("{who} wants to {doing} this screen"),
+            &format!(
+                "imkr on {} · y allows it for {} minutes",
+                protocol::machine_name(),
+                crate::screen::GRANT_FOR.as_secs() / 60
+            ),
+        );
+        serde_json::json!({ "asked": self.attached, "session": protocol::session_name() })
+    }
+
+    /// `y` on that question: half an hour for whoever asked.
+    fn allow_screen(&mut self) {
+        let who = self
+            .screen_ask
+            .take()
+            .map(|(who, _)| who)
+            .unwrap_or_default();
+        self.flash = Some(match crate::screen::allow(&who) {
+            Ok(grant) => {
+                self.screen_use = grant;
+                format!(
+                    "{who} may use this screen for {} minutes",
+                    crate::screen::GRANT_FOR.as_secs() / 60
+                )
+            }
+            Err(e) => format!("not allowed: {e:#}"),
+        });
+    }
+
+    /// Any other key: a no, said right away so nobody waits for it.
+    fn refuse_screen(&mut self) {
+        let who = self
+            .screen_ask
+            .take()
+            .map(|(who, _)| who)
+            .unwrap_or_default();
+        let _ = crate::screen::refuse(&who);
+        self.screen_use = crate::screen::grant();
+        self.flash = Some("the screen stays yours".to_owned());
+    }
+
     /// Pushes what happened in pane `id` to the phone, see `push`, and
     /// puts it in AI Brain's shared inbox, see `brain` (#536).
     ///
@@ -4486,8 +4558,13 @@ impl App {
             }
             Mode::Confirm(action) => {
                 self.mode = Mode::Normal;
-                if matches!(key.code, KeyCode::Char('y' | 'Y')) {
+                let yes = matches!(key.code, KeyCode::Char('y' | 'Y'));
+                if yes {
                     self.perform(action);
+                } else if action == Action::AllowScreen {
+                    // A silent cancel would leave the asking command
+                    // waiting out its minute and a half for nothing.
+                    self.refuse_screen();
                 }
                 self.confirm_target = None;
                 Ok(())
@@ -4816,6 +4893,15 @@ impl App {
                 let title = Some("Accounts: usage and limits".to_owned());
                 if let Err(e) = self.toggle_popup("usage", title, &command, None) {
                     self.flash = Some(format!("no usage: {e:#}"));
+                }
+            }
+            Command::ShareFolder => {
+                let exe = std::env::current_exe()
+                    .map_or("imkr".into(), |e| e.to_string_lossy().into_owned());
+                let command = vec![exe, "share".into(), "setup".into()];
+                let title = Some("Shared folder for files".to_owned());
+                if let Err(e) = self.toggle_popup("share", title, &command, None) {
+                    self.flash = Some(format!("shared folder: {e:#}"));
                 }
             }
             Command::Hives => self.mode = Mode::Hives(0),
@@ -9451,6 +9537,7 @@ impl App {
                     self.start_archived_here(&target);
                 }
             }
+            Action::AllowScreen => self.allow_screen(),
         }
     }
 
@@ -11842,6 +11929,33 @@ impl App {
                     target()
                 ))],
             ),
+            Action::AllowScreen => {
+                let (who, what) = self.screen_ask.clone().unwrap_or_default();
+                let doing = if what == "drive" {
+                    "see this screen and drive it: move the pointer, click and type"
+                } else {
+                    "see this screen: take screenshots of it"
+                };
+                (
+                    " Let an agent use this screen ",
+                    vec![
+                        Line::from(Span::styled(
+                            who,
+                            Style::new().fg(theme::current().accent).bold(),
+                        )),
+                        Line::from(format!("wants to {doing}.")),
+                        Line::from(format!(
+                            "Allowing it holds for {} minutes, for this machine only.",
+                            crate::screen::GRANT_FOR.as_secs() / 60
+                        )),
+                        Line::from(Span::styled(
+                            "Every action goes into screen.log. imkr never unlocks a \
+                             locked session and never fills in a password.",
+                            Style::new().add_modifier(Modifier::DIM),
+                        )),
+                    ],
+                )
+            }
         };
 
         let warning = Style::new()
@@ -11957,6 +12071,11 @@ impl App {
                     Style::new().fg(t.cyan).add_modifier(Modifier::BOLD),
                 ));
             }
+            // While an agent may use this screen, the bar says so — and
+            // says it louder while one is actually doing it (#9074). An
+            // agent that sees and drives the desktop is not something the
+            // user should have to go looking for.
+            spans.extend(self.screen_spans());
         }
         let left = Line::from(spans);
 
@@ -12042,6 +12161,35 @@ impl App {
             }
         }
         frame.render_widget(left, area);
+    }
+
+    /// What the bar says while agents may see and drive this screen: how
+    /// much longer, and what is happening right now. Nothing when nobody
+    /// may — including with `computer_use = "on"` and nobody using it, so
+    /// the line means "somebody is allowed and recently acted", not "the
+    /// setting is on".
+    fn screen_spans(&self) -> Vec<Span<'static>> {
+        let t = theme::current();
+        let on = self.config.computer_use == crate::screen::ComputerUse::On;
+        let grant = &self.screen_use;
+        let left = grant.left();
+        if left.is_none() && !(on && grant.busy()) {
+            return Vec::new();
+        }
+        let mut text = String::from(" · ⦿ screen");
+        if grant.busy() {
+            // What just happened, so a click nobody asked for is visible
+            // at the moment it lands.
+            text.push_str(&format!(" {}", grant.action));
+        } else if let Some(left) = left {
+            text.push_str(&format!(" {}m", (left.as_secs() / 60).max(1)));
+        }
+        let style = if grant.busy() {
+            Style::new().fg(t.on_accent).bg(t.accent).bold()
+        } else {
+            Style::new().fg(t.warning).bold()
+        };
+        vec![Span::styled(text, style)]
     }
 
     /// What the plugins with `bar = true` show in the bar, from the same

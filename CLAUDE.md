@@ -291,6 +291,47 @@ Projekt-Slug: `imkr`
   als `AbhakbareQuelle`+`ZaehlbareQuelle`), Aufräumen nach 30 Tagen. Test: Testwelt mit
   Schein-`ai-brain-harness` im PATH, eigenem `XDG_CONFIG_HOME` samt `ai-brain-cli/connection.json`
   — ohne die Datei meldet imkr nichts.
+- Computer-Use (#9074): `src/screen.rs`, ein Trait je Fähigkeit (`Sees` Monitore+Screenshot,
+  `Points` Zeiger+Klick, `Types` Text+Taste, `Checks` Vorabprüfung; `Desktop` bündelt sie,
+  `desktop()` liefert das Backend oder sagt, was fehlt — macOS/Windows sind eine benannte
+  Lücke mit `gaps()`, nicht ein stummes Nein). Linux/Hyprland spricht den **Sockel direkt**
+  (`$XDG_RUNTIME_DIR/hypr/<sig>/.socket.sock`, Signatur und `WAYLAND_DISPLAY` selbst gesucht:
+  in einer Pane und über ssh fehlen beide), `grim -s` (rechnet auf die **logische** Größe,
+  darum ist die Rückrechnung eine Division), `grim -g` für `--region`, Zeiger per
+  `dispatch hl.dsp.cursor.move{ x = …, y = … }` (Hyprland 0.56 wertet den Rest als Lua; exakt
+  und absolut, `ydotool --absolute` sättigt), Klick per `ydotool click 0xC0`, Text per `wtype -`
+  (eigenes Keymap, Text nie in argv). **Falle:** `j/monitors` gibt `x`/`y` logisch, `width`/
+  `height` in Gerätepixeln — durch `scale` teilen. **Falle 2:** `wtype` dekodiert über die
+  Locale; unter `POSIX` verschluckt die stdin-Form ab dem ersten Nicht-ASCII-Byte den Rest
+  **still** und meldet Erfolg → `tool()` setzt `LC_ALL=C.UTF-8`, `check_utf8` fragt
+  `locale charmap` (wtype selbst zu fragen geht nicht: jede Form, die dekodiert, tippt auch).
+  Gesperrt = nichts (`session_locked`: `LOCK` in `solitaryBlockedBy`, steht auch ohne Locker;
+  dazu laufender hyprlock/swaylock). Freigabe je Rechner: `computer_use = off|ask|on` und
+  `computer_use_monitor` in der Config, **beide in `settings::LOCAL_KEYS`** (Test
+  `computer_use_stays_on_its_machine`); `ask` → `cli::permit` schreibt
+  `<state>/computer-use.json` (flock) und schickt `Request::ScreenAsk` an die Sessions
+  (`ask_sessions`: bei eigenem `IMKR_SOCKET` **nur** diese — sonst steht die Frage in den
+  echten Sessions) → `App::screen_ask` → `Mode::Confirm(Action::AllowScreen)` + Notification;
+  `y` = `allow` (30 min), jede andere Taste = `refuse_screen` (sofort, nicht auslaufen lassen).
+  Leiste: `App::screen_spans` aus `App::screen_use` (je Upkeep gelesen). Protokoll
+  `<state>/screen.log`, **lokale** Zeit, Text nur als Zeichenzahl. CLI `imkr screen
+  status|shot|move|click|type|key|log|allow|refuse` (`--host H` über `remote_output`,
+  Screenshot als base64 zurück), MCP `imkr_screen_*` (Screenshot als `image`-Block).
+  Test ohne Compositor: `Hyprland::at(socket)` + Fake-Sockel mit echter `j/monitors`-Antwort —
+  so ist „gesperrter Rechner wird abgelehnt" messbar, ohne jemandes Bildschirm zu sperren.
+  Am echten Schirm: Testwelt mit eigenem `IMKR_SOCKET`/`IMKR_CONFIG`/`XDG_STATE_HOME`, aber
+  **echtem `XDG_RUNTIME_DIR`** (sonst findet es Hyprland nicht).
+- Ablageordner (#9082): `src/share.rs`, Datei `~/.config/share-dir.toml` (`dir`, `[elsewhere]
+  host = pfad`) — **nicht** in imkrs Config: imkr und der AI-Brain-Harness lesen und schreiben
+  sie beide, jedes läuft auch allein. Feldnamen sind ein Vertrag, `imkr share --json` druckt
+  sie, `Shared::rest` (serde flatten) bewahrt fremde Schlüssel beim Schreiben. `put()`
+  verschiebt (kein zweites Bild vom Schirm liegen lassen), `elsewhere()` benennt die Datei für
+  die anderen Rechner. `imkr screen shot --save` ist der erste Nutzer; ohne Ordner läuft alles
+  weiter mit `missing()`. `imkr share setup` (auch `Ctrl+B s f`) bietet Mounts aus
+  `/proc/self/mounts` und Sync-Ordner an und **rät unbeaufsichtigt nicht** (ein erster Versuch
+  nahm den erstbesten SMB-Share). Kein SETTINGS-Eintrag: `Setting::step` muss ohne Seitenwirkung
+  umkehrbar sein, sonst schreibt der Test `stepping_back_undoes_stepping_forward` in das echte
+  `~/.config`.
 - Push (#8566): `src/push.rs` (`[push]`: ntfy-Themenadresse → JSON an die Server-Wurzel,
   webhook → `push::Event` als JSON, per `curl` im Thread). `App::notify(id, kind, what)` ruft
   `App::push`: `wants(kind)`, nicht wenn ein Client in `quiet` s getippt hat (`user_at`), je

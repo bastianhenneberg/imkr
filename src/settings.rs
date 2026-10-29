@@ -15,7 +15,14 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 /// Config keys of one machine: they never travel, and the ones there stay.
-pub const LOCAL_KEYS: &[&str] = &["name", "hosts", "web", "web_listen"];
+pub const LOCAL_KEYS: &[&str] = &[
+    "name",
+    "hosts",
+    "web",
+    "web_listen",
+    "computer_use",
+    "computer_use_monitor",
+];
 
 /// The config, as an item's path, whatever the file is called here.
 const CONFIG: &str = "config.toml";
@@ -437,6 +444,43 @@ fn base_file(host: &str) -> Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether agents may drive this screen is each machine's own answer:
+    /// a `computer_use = "on"` on a machine nobody sits at must never
+    /// turn itself on over on the laptop (#9074).
+    #[test]
+    fn computer_use_stays_on_its_machine() {
+        assert!(LOCAL_KEYS.contains(&"computer_use"));
+        let item = |text: &str, modified| Item {
+            path: CONFIG.into(),
+            modified,
+            text: text.into(),
+        };
+        let here = item("computer_use = \"off\"\nnerd_font = true\n", 1);
+        let there = item("computer_use = \"on\"\nnerd_font = false\n", 9);
+        // There is newer, so its `nerd_font` comes over — but not its
+        // permission, and ours does not go either way.
+        let (steps, _) = plan(
+            std::slice::from_ref(&here),
+            std::slice::from_ref(&there),
+            None,
+        );
+        for step in &steps {
+            assert!(
+                !step
+                    .text
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("computer_use"),
+                "a sync carried the permission: {step:?}"
+            );
+        }
+        let merged = merge_config(&here.text, &there.text).unwrap();
+        assert!(merged.contains("computer_use = \"off\""), "{merged}");
+        // And the other way round: what we hold does not land there.
+        let theirs = merge_config(&there.text, &here.text).unwrap();
+        assert!(theirs.contains("computer_use = \"on\""), "{theirs}");
+    }
 
     /// Account lists are joined: differing, they go both ways, and the
     /// other machine's newer list never replaces this one's.

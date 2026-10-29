@@ -28,9 +28,11 @@ mod push;
 mod release;
 mod render;
 mod review;
+mod screen;
 mod server;
 mod settings;
 mod shapes;
+mod share;
 mod sidebar;
 mod template;
 mod term;
@@ -151,6 +153,29 @@ For scripts and agents:
                 why a pane counts as the agent it is, in its state
   operator [--json]
                 the machine the user sits at (and the name it reaches this one by)
+  screen status [--json]
+                whether an agent may see and drive this machine's screen:
+                the backend, the screens with their logical size, the
+                tools, whether the session is locked, the setting
+                (`computer_use`) and the permission in force
+  screen shot [--monitor M] [--width W] [--out PATH] [--json]
+                a PNG of the screen, scaled down, with how its pixels map
+                onto the coordinates `click` takes
+  screen move X Y | click [X Y] [--button left|right|middle]
+                | type TEXT | key KEYS…
+                drive the screen, in logical coordinates per screen
+  screen log [--lines N] | allow | refuse
+                every action taken on this screen; the user's own answer
+                when `computer_use` is `ask`
+  share [--json] | setup [--yes] | set PATH | unset
+                the folder where imkr puts files for you to look at, e.g.
+                `screen shot --save`: an SMB or NFS mount, Syncthing,
+                Nextcloud or a plain folder. `setup` offers the ones this
+                machine has. It lives in ~/.config/share-dir.toml (`dir`,
+                and `[elsewhere]` for the same folder on your other
+                machines), which other programs read and write too
+  --host H screen …
+                the screen of machine H, through the same ssh way
   archive [ls | export | drop NAME SAVED_AT]
                 ended sessions older than the ten in `last`, by hive, on every machine
   cp SOURCE… DEST
@@ -319,7 +344,14 @@ fn main() -> Result<()> {
             (Some(here), Some(remote)) => cli::new_hosted(here, remote, &args[1..]),
             _ => bail!("no session here to show the window in"),
         },
-        _ if remote.is_some() => bail!("--host works with attach only, run other commands there"),
+        // The screen of another machine: the command runs there, a
+        // screenshot comes back as bytes.
+        ["screen", ..] if remote.is_some() => {
+            cli::screen(&args[1..], remote.as_ref().map(|r| r.host.as_str()))
+        }
+        _ if remote.is_some() => {
+            bail!("--host works with attach and screen only, run other commands there")
+        }
         ["kill-server"] => client::kill_server(),
         ["ls", ..] => cli::ls(&args[1..]),
         ["dirs"] => cli::dirs(None),
@@ -345,6 +377,8 @@ fn main() -> Result<()> {
         ["operator", ..] => cli::operator(&args[1..]),
         ["archive", ..] => cli::archive(&args[1..]),
         ["layout", ..] => cli::layout(&args[1..]),
+        ["screen", ..] => cli::screen(&args[1..], None),
+        ["share", ..] => share::run(&args[1..]),
         ["mcp"] => mcp::serve(),
         ["run", ..] => cli::run(&args[1..]),
         ["shell-integration", ..] => cli::shell_integration(&args[1..]),

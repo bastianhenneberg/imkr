@@ -324,6 +324,18 @@ pub struct Config {
     /// `Ctrl+B p`: git repositories (`owner/repo`, a URL, private ones by
     /// ssh) or directories, each a `catalog.toml` or directories of plugins.
     pub plugin_catalogs: Vec<String>,
+    /// Whether agents may see and drive this machine's screen through
+    /// `imkr screen` (#9074): `off`, `ask` (imkr asks here before the
+    /// first action, the answer holds half an hour) or `on`. Off by
+    /// default, and a local setting: it never travels with
+    /// `settings sync`, so a machine you sit at keeps its own answer.
+    pub computer_use: crate::screen::ComputerUse,
+    /// Which screen `imkr screen` means without `--monitor`, e.g. a
+    /// headless one made for agents (`hyprctl output create headless
+    /// AGENT`), so the real screen may be off. Without it the focused
+    /// screen. Local like `computer_use`: the names are this machine's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_use_monitor: Option<String>,
 }
 
 /// A shell command run in the background when `on` happens: an agent
@@ -583,6 +595,8 @@ impl Default for Config {
             name: None,
             hosts: Vec::new(),
             plugin_catalogs: Vec::new(),
+            computer_use: crate::screen::ComputerUse::Off,
+            computer_use_monitor: None,
         }
     }
 }
@@ -700,6 +714,48 @@ pub const SETTINGS: &[Setting] = &[
                 Side::Left => Side::Right,
                 Side::Right => Side::Left,
             }
+        },
+    },
+    Setting {
+        name: "Agents may use this screen",
+        value: |c| c.computer_use.word().to_owned(),
+        step: |c, forward| {
+            c.computer_use = step_in(
+                &[
+                    crate::screen::ComputerUse::Off,
+                    crate::screen::ComputerUse::Ask,
+                    crate::screen::ComputerUse::On,
+                ],
+                &c.computer_use,
+                forward,
+            )
+        },
+    },
+    Setting {
+        name: "Screen for agents",
+        value: |c| {
+            let name = c.computer_use_monitor.clone();
+            match (name, crate::screen::monitor_names().is_empty()) {
+                (None, _) => "the focused".to_owned(),
+                // A name that is not there any more is worth seeing, not
+                // hiding: a headless screen goes when the session restarts.
+                (Some(name), false) if !crate::screen::monitor_names().contains(&name) => {
+                    format!("{name} (gone)")
+                }
+                (Some(name), _) => name,
+            }
+        },
+        step: |c, forward| {
+            let mut choices: Vec<Option<String>> = vec![None];
+            choices.extend(crate::screen::monitor_names().into_iter().map(Some));
+            // A name from the config that no screen carries right now
+            // stays in the ring, so stepping never loses it silently.
+            if let Some(name) = &c.computer_use_monitor
+                && !choices.iter().any(|choice| choice.as_ref() == Some(name))
+            {
+                choices.push(Some(name.clone()));
+            }
+            c.computer_use_monitor = step_in(&choices, &c.computer_use_monitor, forward);
         },
     },
     Setting {
@@ -1069,6 +1125,30 @@ mod tests {
                 steps += 1;
                 assert!(steps <= 50, "{} never comes back", setting.name);
             }
+        }
+    }
+
+    /// Messages that tell somebody where to change a setting name the
+    /// row in the menu. Renaming the row without the message leaves a
+    /// pointer to something that is not there — and nobody notices,
+    /// because the message only shows when the answer is already no.
+    #[test]
+    fn messages_that_name_a_settings_row_name_one_that_exists() {
+        // Only the rows actually quoted somewhere are checked: the point
+        // is that every quote matches a row, not that every row is quoted.
+        let cli = include_str!("cli.rs");
+        for quoted in cli.match_indices("settings menu: ").map(|(i, _)| {
+            let rest = &cli[i + "settings menu: ".len()..];
+            let rest = rest.trim_start_matches(['\\', '"']);
+            rest.split(['\\', '"'])
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        }) {
+            assert!(
+                SETTINGS.iter().any(|s| s.name == quoted),
+                "a message points at a settings row {quoted:?} that does not exist"
+            );
         }
     }
 

@@ -529,6 +529,12 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         size: Option<(u16, u16)>,
     },
+    /// An agent asks to see or drive this machine's screen, with
+    /// `computer_use = "ask"` (#9074): the session puts the question in
+    /// front of whoever is attached here, and its answer goes into
+    /// `screen::Grant`, which the asking command reads. `what` is `see`
+    /// or `drive`.
+    ScreenAsk { who: String, what: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

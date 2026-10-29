@@ -879,7 +879,12 @@ mod tests {
         });
         for setting in SETTINGS {
             assert!(screen.contains(setting.name), "{} missing", setting.name);
-            assert!(screen.contains(&(setting.value)(&config)));
+            assert!(
+                screen.contains(&(setting.value)(&config)),
+                "the value of {:?} does not fit in 80 columns: {:?}",
+                setting.name,
+                (setting.value)(&config)
+            );
         }
         assert!(screen.contains("saved"));
     }

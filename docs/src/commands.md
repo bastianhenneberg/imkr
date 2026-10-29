@@ -109,6 +109,29 @@ For scripts and agents:
                 why a pane counts as the agent it is, in its state
   operator [--json]
                 the machine the user sits at (and the name it reaches this one by)
+  screen status [--json]
+                whether an agent may see and drive this machine's screen:
+                the backend, the screens with their logical size, the
+                tools, whether the session is locked, the setting
+                (`computer_use`) and the permission in force
+  screen shot [--monitor M] [--width W] [--out PATH] [--json]
+                a PNG of the screen, scaled down, with how its pixels map
+                onto the coordinates `click` takes
+  screen move X Y | click [X Y] [--button left|right|middle]
+                | type TEXT | key KEYS…
+                drive the screen, in logical coordinates per screen
+  screen log [--lines N] | allow | refuse
+                every action taken on this screen; the user's own answer
+                when `computer_use` is `ask`
+  share [--json] | setup [--yes] | set PATH | unset
+                the folder where imkr puts files for you to look at, e.g.
+                `screen shot --save`: an SMB or NFS mount, Syncthing,
+                Nextcloud or a plain folder. `setup` offers the ones this
+                machine has. It lives in ~/.config/share-dir.toml (`dir`,
+                and `[elsewhere]` for the same folder on your other
+                machines), which other programs read and write too
+  --host H screen …
+                the screen of machine H, through the same ssh way
   archive [ls | export | drop NAME SAVED_AT]
                 ended sessions older than the ten in `last`, by hive, on every machine
   cp SOURCE… DEST

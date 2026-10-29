@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seeing and driving the screen · imkr</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a field guide. A rail of chapters on the left, one column of reading width; wide figures and code scroll in their own frame. */
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --ink: #1d1f24;
+  --muted: #5d616b;
+  --line: #dddad1;
+  --honey: #c9861a;
+  --honey-soft: #f6e6c7;
+  --term-bg: #16181d;
+  --term-fg: #d7d9de;
+  --term-dim: #7c818c;
+  --work: #3a8fd6;
+  --block: #d9534f;
+  --done: #c9861a;
+  --idle: #4f9d69;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121317; --surface: #1a1c21; --ink: #ecebe6; --muted: #a2a6af; --line: #2c2f36;
+    --honey: #e9a83a; --honey-soft: #3a2d15; --term-bg: #0b0c0f; --term-fg: #d7d9de; --term-dim: #737884;
+    --work: #5aa9ec; --block: #ef6b66; --done: #e9a83a; --idle: #6dbb86;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121317; --surface: #1a1c21; --ink: #ecebe6; --muted: #a2a6af; --line: #2c2f36;
+  --honey: #e9a83a; --honey-soft: #3a2d15; --term-bg: #0b0c0f; --term-fg: #d7d9de; --term-dim: #737884;
+  --work: #5aa9ec; --block: #ef6b66; --done: #e9a83a; --idle: #6dbb86;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--body); }
+.page { max-width: 1080px; padding-block: 8px 40px; }
+.read { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.1; margin: 0; }
+h1 { font-size: clamp(2.6rem, 7vw, 4.6rem); font-weight: 800; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.7rem, 3.6vw, 2.3rem); font-weight: 700; letter-spacing: -0.01em; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; }
+a { color: var(--honey); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--honey); outline-offset: 2px; }
+code, kbd { font-family: var(--mono); font-size: 0.86em; }
+code { background: var(--honey-soft); padding: 0.1em 0.35em; border-radius: 4px; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; background: var(--surface); padding: 0.05em 0.4em; border-radius: 5px; white-space: nowrap; }
+.eyebrow { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; padding-block: 24px 40px; }
+.hero .lede { font-size: 1.2rem; color: var(--muted); max-width: 52ch; }
+.hero .say { font-family: var(--mono); font-size: 0.9rem; color: var(--muted); }
+.hero .say b { color: var(--honey); font-weight: 600; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.install { font-family: var(--mono); font-size: 0.85rem; background: var(--term-bg); color: var(--term-fg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; white-space: nowrap; max-width: 100%; }
+.install span { color: var(--term-dim); }
+
+/* the fake imkr screen */
+.screen-wrap { overflow-x: auto; border-radius: 12px; }
+.screen { min-width: 720px; background: var(--term-bg); color: var(--term-fg); font: 400 12.5px/1.5 var(--mono); border-radius: 12px; padding: 10px; display: grid; grid-template-columns: 1fr 1fr 230px; grid-template-rows: auto 1fr auto; gap: 8px; height: 360px; }
+.pane { border: 1px solid #343842; border-radius: 6px; padding: 8px 10px; overflow: hidden; position: relative; }
+.pane.focus { border-color: #e9a83a; }
+.pane .ttl { display: block; margin-bottom: 4px; color: #9aa0ab; font-size: 11px; border-bottom: 1px solid #2b2e36; padding-bottom: 2px; }
+.pane.focus .ttl { color: #e9a83a; }
+.tabs { grid-column: 1 / -1; display: flex; gap: 6px; font-size: 11.5px; }
+.tab { padding: 2px 10px; border-radius: 4px; background: #23262e; color: #9aa0ab; }
+.tab.on { background: #e9a83a; color: #16181d; font-weight: 600; }
+.tab.alert { background: #5a2524; color: #ffb3b0; }
+.side { grid-row: 2 / 3; grid-column: 3; border-left: 1px solid #2b2e36; padding-left: 10px; font-size: 11.5px; display: flex; flex-direction: column; gap: 3px; }
+.side .h { color: #e9a83a; margin-top: 6px; }
+.bar { grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: 11px; color: #9aa0ab; }
+.bar .badge { background: #e9a83a; color: #16181d; padding: 0 8px; border-radius: 3px; font-weight: 600; }
+.c-work { color: #5aa9ec; } .c-block { color: #ef6b66; } .c-done { color: #e9a83a; } .c-idle { color: #6dbb86; } .c-dim { color: #737884; }
+.q { background: #2a1d1d; border-left: 2px solid #ef6b66; padding: 4px 8px; margin-top: 6px; }
+
+/* chapters */
+section.ch { padding-block: 56px 8px; border-top: 1px solid var(--line); display: grid; gap: 22px; }
+.ch-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.hex { width: 30px; height: 34px; flex: none; background: var(--honey); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); align-self: center; }
+.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; overflow-x: auto; }
+.figure .cap { font-size: 0.88rem; color: var(--muted); margin-top: 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; }
+.grid2 > * { min-width: 0; }
+
+/* hierarchy */
+.nest { font-family: var(--mono); font-size: 0.85rem; display: grid; gap: 10px; }
+.box { border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; display: grid; gap: 8px; min-width: 0; }
+.box > .k { font: 600 0.7rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.box.hive { border-color: var(--honey); border-style: dashed; }
+.box.machine { background: color-mix(in srgb, var(--honey-soft) 45%, transparent); }
+.box.session { background: var(--surface); }
+.row { display: flex; flex-wrap: wrap; gap: 10px; }
+.row > .box { flex: 1 1 200px; }
+.pn { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; flex: 1 1 80px; background: var(--bg); }
+
+/* states */
+.states { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.state { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--surface); display: grid; gap: 6px; border-top: 4px solid var(--c); }
+.state .sym { font: 600 1.05rem var(--mono); color: var(--c); }
+.state p { font-size: 0.92rem; color: var(--muted); }
+
+/* steps */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: s; }
+.steps li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; align-items: start; }
+.steps li::before { counter-increment: s; content: counter(s); font: 800 1.3rem/44px var(--display); text-align: center; width: 44px; height: 50px; background: var(--honey); color: var(--bg); clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.steps h3 { margin-bottom: 4px; }
+.cmd { font-family: var(--mono); font-size: 0.82rem; background: var(--term-bg); color: var(--term-fg); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin-top: 8px; white-space: pre; }
+.cmd .cm { color: var(--term-dim); }
+
+/* tables */
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 0.72rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px 22px; }
+.keys div { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.keys div span:first-child { flex: none; min-width: 96px; }
+
+.note { border-left: 3px solid var(--honey); padding: 10px 14px; background: var(--surface); border-radius: 0 8px 8px 0; font-size: 0.95rem; }
+.docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 10px; }
+.docs a { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); background: var(--surface); }
+.docs a:hover { border-color: var(--honey); }
+.docs a span { color: var(--muted); font-size: 0.85rem; }
+footer { margin-top: 64px; color: var(--muted); font-size: 0.85rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .pane.blink .c-block { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.45; } }
+}
+.figure .diagram { border: 0; padding: 0; background: none; }
+
+.shell { display: grid; grid-template-columns: minmax(0, 230px) minmax(0, 1fr); gap: 40px;
+  max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 80px; }
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 20px); align-self: start;
+  max-height: calc(100vh - 40px); overflow-y: auto; display: grid; gap: 18px; font-size: 0.92rem; }
+.toc .brand { font: 800 1.3rem var(--display); color: var(--ink); text-decoration: none; }
+.toc .grp { display: grid; gap: 2px; }
+.toc .grp > span { margin-bottom: 4px; }
+.toc a.item { color: var(--ink); text-decoration: none; padding: 3px 10px; border-radius: 6px;
+  border-left: 2px solid transparent; }
+.toc a.item:hover { background: var(--surface); }
+.toc a.item[aria-current] { border-left-color: var(--honey); background: var(--surface); font-weight: 600; }
+.toc .groups { display: grid; gap: 18px; }
+.toc details > summary { display: none; }
+main { min-width: 0; }
+.doc { max-width: 78ch; display: grid; gap: 16px; }
+.doc h1 { margin-bottom: 8px; }
+.doc h2 { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.doc h3 { margin-top: 12px; }
+.doc ul, .doc ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+.doc pre { margin: 0; background: var(--term-bg); color: var(--term-fg); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; font: 400 0.84rem/1.55 var(--mono); }
+.doc pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+.doc blockquote { margin: 0; border-left: 3px solid var(--honey); padding: 8px 14px;
+  background: var(--surface); border-radius: 0 8px 8px 0; }
+.doc table { display: block; overflow-x: auto; }
+.doc td code, .doc th code { white-space: nowrap; }
+.diagram { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px; overflow-x: auto; text-align: center; }
+.diagram svg { max-width: 100%; height: auto; }
+.d-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .d-light { display: none; }
+  :root:not([data-theme="light"]) .d-dark { display: block; }
+}
+:root[data-theme="dark"] .d-light { display: none; }
+:root[data-theme="dark"] .d-dark { display: block; }
+.pager { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); }
+.pager a { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: 10px; text-decoration: none; color: var(--ink); background: var(--surface); min-width: 0; }
+.pager a span { font-size: 0.8rem; color: var(--muted); }
+.pager a:hover { border-color: var(--honey); }
+.edit { font-size: 0.85rem; color: var(--muted); margin-top: 16px; }
+@media (max-width: 860px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .toc { position: static; max-height: none; }
+  .toc details > summary { display: block; cursor: pointer; font-weight: 600; padding: 8px 0; }
+  .toc details:not([open]) .groups { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="toc" aria-label="Chapters"><a class="brand" href="index.html">imkr 🐝</a><details open><summary>Chapters</summary><div class="groups"><div class="grp"><span class="eyebrow">Start</span><a class="item" href="index.html">Overview</a><a class="item" href="getting-started.html">Getting started</a><a class="item" href="architecture.html">How imkr works</a></div><div class="grp"><span class="eyebrow">Guides</span><a class="item" href="install.html">Install and update</a><a class="item" href="sessions.html">Sessions, windows and panes</a><a class="item" href="screen.html">Sidebar, popups, mouse and clipboard</a><a class="item" href="agents.html">Agents</a><a class="item" href="computer-use.html" aria-current="page">Seeing and driving the screen</a><a class="item" href="ai-brain.html">imkr and AI Brain</a><a class="item" href="machines.html">Other machines</a><a class="item" href="hives.html">Hives and templates</a><a class="item" href="phone.html">On the phone</a><a class="item" href="plugins.html">Plugins</a><a class="item" href="settings.html">Settings</a></div><div class="grp"><span class="eyebrow">Reference</span><a class="item" href="keys.html">Keys</a><a class="item" href="commands.html">Commands</a><a class="item" href="comparison.html">Compared with herdr and TUIOS</a></div></div></details></nav>
+<main class="">
+<article class="doc"><h1 id="seeing-and-driving-the-screen">Seeing and driving the screen</h1>
+<p>An agent in a pane can read what you type at it and what its program prints. It cannot see
+your desktop. <code>imkr screen</code> changes that, deliberately and visibly: screenshots of a screen,
+and the pointer and keyboard on it — on this machine or on another one of yours.</p>
+<p>This is off everywhere until you turn it on, and on a machine you sit at imkr asks you first.</p>
+<pre><code class="language-bash">imkr screen status                     # may anything happen here at all?
+imkr screen shot                       # a PNG, scaled down, with how to read coordinates off it
+imkr screen click 1200 640             # logical coordinates, as the shot reports them
+imkr screen type &quot;git status&quot;
+imkr screen key Return
+imkr --host desktop screen shot        # the other machine's screen, through the usual ssh way
+</code></pre>
+<p>Agents reach the same things as MCP tools (<code>imkr_screen_status</code>, <code>imkr_screen_shot</code>,
+<code>imkr_screen_click</code>, <code>imkr_screen_move</code>, <code>imkr_screen_type</code>, <code>imkr_screen_key</code>), and a
+screenshot comes back as a picture, not as a path.</p>
+<h2 id="start-with-status">Start with status</h2>
+<p><code>imkr screen status</code> is the pre-flight check, and it is worth running before anything else —
+it is the one command that works even where nothing else would:</p>
+<pre><code class="language-text">machine   omarchy
+backend   hyprland
+setting   computer_use = ask · allowed for 27 more minutes to claude@omarchy:web/2
+screen    HDMI-A-1 3072x2048 logical at 0,0 · scale 1.25 · on
+screen    AGENT 2560x1440 logical at 3072,0 · scale 1 · on ← used without --monitor
+tool      grim ✓
+tool      ydotool ✓
+tool      wtype ✓
+note      ydotoold running for 25h
+ready     yes
+</code></pre>
+<p>It answers four different questions that all look alike from outside:</p>
+<ul>
+<li><strong>Is the session locked?</strong> Then nothing happens. imkr does not unlock a session, does not
+  drive a lock screen and does not fill in a password — ever, whatever the setting says. A
+  lock whose client has died leaves the session locked with nobody to unlock it; imkr reads
+  that off the compositor and refuses just the same.</li>
+<li><strong>Are the screens on?</strong> A screen in power saving gives black pictures. All of them off is
+  a refusal, one of them off is a note.</li>
+<li><strong>Are the tools there?</strong> <code>grim</code> for pictures, <code>ydotool</code> for clicks, <code>wtype</code> for text.</li>
+<li><strong>May this agent?</strong> See below.</li>
+</ul>
+<h2 id="coordinates">Coordinates</h2>
+<p>Everything is in <strong>logical</strong> pixels, the ones the compositor counts in — not device pixels.
+A 3840×2560 screen at scale 1.25 is 3072×2048 logical, and the screen beside it starts at
+3072. Mixing the two puts every click on the wrong screen, so imkr does the division once
+and speaks logical everywhere.</p>
+<p>A screenshot is scaled down to something an agent can look at and says how to get back:</p>
+<pre><code class="language-json">{
+  &quot;image&quot;: { &quot;width&quot;: 1280, &quot;height&quot;: 720 },
+  &quot;scale&quot;: 0.5,
+  &quot;origin&quot;: { &quot;x&quot;: 3072, &quot;y&quot;: 0 },
+  &quot;hint&quot;: &quot;click at x = 3072 + image_x / 0.5000, y = 0 + image_y / 0.5000&quot;,
+  &quot;covers&quot;: { &quot;from&quot;: { &quot;x&quot;: 3072, &quot;y&quot;: 0 }, &quot;to&quot;: { &quot;x&quot;: 5632, &quot;y&quot;: 1440 } }
+}
+</code></pre>
+<p>With <code>--monitor NAME</code> on <code>click</code> and <code>move</code>, the coordinates count from that screen's own
+corner instead — which is what you read straight off a screenshot of that one screen.</p>
+<p><strong>Small text does not survive the scaling.</strong> A whole 3072-wide screen at 1280 across is 42 %,
+and a terminal font is a blur. <code>--region X,Y,WxH</code> takes a piece at full size instead:</p>
+<pre><code class="language-bash">imkr screen shot --region 3072,0,900x300 --width 900     # readable, and a tenth the bytes
+</code></pre>
+<h2 id="which-screen">Which screen</h2>
+<p>Without <code>--monitor</code> imkr takes the screen named in the settings, and otherwise the focused
+one. <code>--monitor all</code> takes the whole layout at once.</p>
+<p>A headless screen is worth knowing about: a compositor can make one that no cable leads to,
+and an agent can then work on it while the real screen is off and nobody is disturbed.</p>
+<pre><code class="language-bash">hyprctl output create headless AGENT      # a screen for the agent, beside the real one
+</code></pre>
+<p>Then set <code>Screen for agents</code> in the settings (<code>Ctrl+B ,</code>) or <code>computer_use_monitor = "AGENT"</code>.
+If that screen is not there when a command runs, imkr says so and does nothing — it does not
+quietly take the real one instead.</p>
+<h2 id="who-may-and-for-how-long">Who may, and for how long</h2>
+<p>One setting per machine, <code>computer_use</code>, off by default:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>off</code></td>
+<td>nobody sees or drives this screen. Commands say so and name the setting.</td>
+</tr>
+<tr>
+<td><code>ask</code></td>
+<td>imkr asks <strong>here</strong>, visibly, before the first action. A yes holds for 30 minutes.</td>
+</tr>
+<tr>
+<td><code>on</code></td>
+<td>always allowed — for a machine nobody sits at.</td>
+</tr>
+</tbody>
+</table>
+<p>With <code>ask</code>, the agent's command waits while imkr puts the question in front of whoever is
+attached to a session on that machine, with a desktop notification as well:</p>
+<pre><code class="language-text">╭ ⚠ Let an agent use this screen ───────────────────────────────╮
+│  claude@omarchy:web/2                                         │
+│  wants to see this screen and drive it: move the pointer,     │
+│  click and type.                                              │
+│  Allowing it holds for 30 minutes, for this machine only.     │
+│  Every action goes into screen.log.                           │
+│   y  yes    any other key cancel                              │
+╰───────────────────────────────────────────────────────────────╯
+</code></pre>
+<p><code>y</code> allows it, any other key refuses — and the refusal reaches the waiting agent at once,
+rather than leaving it to time out. Without an answer nothing happens at all. In a terminal
+without imkr, <code>imkr screen allow</code> and <code>imkr screen refuse</code> are the same two answers.</p>
+<p>While a permission holds, the control bar says so, and says it louder while something is
+actually happening:</p>
+<pre><code class="language-text"> ⬢ imkr   1  + │ 1 pane · ^B menu · ⦿ screen 29m          ▸ ~/code · ⌂ omarchy
+ ⬢ imkr   1  + │ 1 pane · ^B menu · ⦿ screen click        ▸ ~/code · ⌂ omarchy
+</code></pre>
+<p>Every action is appended to <code>~/.local/state/imkr/screen.log</code>, and <code>imkr screen log</code> prints the
+last lines:</p>
+<pre><code class="language-text">2026-10-29 14:01:44 claude@omarchy:web/2 asked drive
+2026-10-29 14:01:51 claude@omarchy:web/2 allowed 30 minutes
+2026-10-29 14:01:51 claude@omarchy:web/2 shot AGENT 1280x720
+2026-10-29 14:01:53 claude@omarchy:web/2 click left at 4352,700
+2026-10-29 14:01:54 claude@omarchy:web/2 type 41 characters
+</code></pre>
+<p>The log says <em>how much</em> was typed, never <em>what</em>. Text goes into whatever has the keyboard
+focus, and imkr cannot tell what that is — so it does not write it down, and you should not
+type anything secret through it either.</p>
+<p><code>computer_use</code> and <code>computer_use_monitor</code> are <strong>local settings</strong>: <code>imkr settings sync</code> leaves
+them alone in both directions. A machine you sit at keeps its own answer, however the machine
+that nobody sits at is set up.</p>
+<h3 id="what-this-is-and-is-not">What this is and is not</h3>
+<p>The permission is a control, not a wall. An agent that can run commands on a machine can do
+anything that machine's user can do, including writing imkr's own files. What <code>computer_use</code>
+buys you is that imkr itself does nothing until you say so, that you see it while it lasts,
+and that there is a record afterwards. If you do not want an agent on a machine at all, do
+not give it a shell there.</p>
+<h2 id="where-the-pictures-go">Where the pictures go</h2>
+<p>Without <code>--save</code>, a screenshot is written where imkr keeps its working files and the path is
+printed; an agent gets the picture itself and needs nothing more.</p>
+<p>A <strong>person</strong> needs the file somewhere they can open it, and that is usually not the machine
+the screenshot came from. <code>--save</code> puts it in the shared folder:</p>
+<pre><code class="language-bash">imkr screen shot --save
+# saved to /home/you/codingshare/screenshots/shot-1793278960.png
+# on laptop: /Users/you/codingshare/screenshots/shot-1793278960.png
+</code></pre>
+<p>See <a href="settings.html#the-shared-folder">the shared folder</a> for setting that up. Without one,
+<code>--save</code> says so and the plain form keeps working.</p>
+<h2 id="other-systems">Other systems</h2>
+<p>Only Linux under <strong>Hyprland</strong> is supported so far. macOS and Windows are a gap, not a
+promise:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>macOS</td>
+<td>screenshots through ScreenCaptureKit (the <code>xcap</code> crate), input through CGEvent (the <code>enigo</code> crate), both behind the Screen Recording and Accessibility permissions in System Settings</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td>screenshots through the Desktop Duplication API (<code>xcap</code>), input through SendInput (<code>enigo</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>imkr screen status</code> prints exactly that where there is no backend, instead of a blank no.
+Everything above the backend — the commands, the coordinates, the permission, the log — is
+written to survive another one being added: one trait per ability (<code>Sees</code>, <code>Points</code>, <code>Types</code>,
+<code>Checks</code>), and the commands never learn which one answered.</p>
+<h2 id="under-the-hood-on-linux">Under the hood on Linux</h2>
+<ul>
+<li><strong>Hyprland's own socket</strong>, not <code>hyprctl</code>: inside a pane or over ssh neither
+  <code>HYPRLAND_INSTANCE_SIGNATURE</code> nor a PATH with <code>hyprctl</code> is given. imkr finds the running
+  instance in <code>$XDG_RUNTIME_DIR/hypr</code> itself, and hands the helper tools the session's
+  <code>WAYLAND_DISPLAY</code> the same way.</li>
+<li><strong><code>grim -s</code></strong> counts in logical pixels, which is what makes reading a coordinate off a
+  screenshot one division.</li>
+<li><strong>The pointer moves through the compositor</strong>, which is exact and absolute. <code>ydotool</code>'s
+  own absolute mode saturates at the right edge and needs its factor measured; only the
+  click itself goes through <code>ydotool</code>, because a button press has nowhere else to go.</li>
+<li><strong>Text goes through <code>wtype</code></strong>, which brings its own keymap, so umlauts and anything else
+  beyond ASCII arrive whatever keyboard layout is active. It is handed <code>LC_ALL=C.UTF-8</code>:
+  under a <code>POSIX</code> locale it drops everything from the first non-ASCII character <em>without
+  saying so</em>, and imkr refuses to type rather than let that happen.</li>
+<li><strong>The text never appears in a command line</strong>, here or over ssh — it goes in on standard
+  input.</li>
+</ul>
+<p>If clicks stop arriving while the pointer still moves, the input daemon has drifted; it has
+been seen to do that after weeks of uptime. <code>imkr screen status</code> says how long it has been
+running, and <code>systemctl --user restart ydotool</code> fixes it.</p></article>
+<div class="pager"><a href="agents.html"><span>← Back</span>Agents</a><a href="ai-brain.html" style="text-align:right"><span>Next →</span>imkr and AI Brain</a></div><p class="edit">Source: <a href="https://github.com/bastianhenneberg/imkr/blob/main/docs/src/computer-use.md">docs/src/computer-use.md</a></p>
+</main>
+</div>
+</body>
+</html>

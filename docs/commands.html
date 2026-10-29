@@ -191,7 +191,7 @@ main { min-width: 0; }
 </head>
 <body>
 <div class="shell">
-<nav class="toc" aria-label="Chapters"><a class="brand" href="index.html">imkr 🐝</a><details open><summary>Chapters</summary><div class="groups"><div class="grp"><span class="eyebrow">Start</span><a class="item" href="index.html">Overview</a><a class="item" href="getting-started.html">Getting started</a><a class="item" href="architecture.html">How imkr works</a></div><div class="grp"><span class="eyebrow">Guides</span><a class="item" href="install.html">Install and update</a><a class="item" href="sessions.html">Sessions, windows and panes</a><a class="item" href="screen.html">Sidebar, popups, mouse and clipboard</a><a class="item" href="agents.html">Agents</a><a class="item" href="ai-brain.html">imkr and AI Brain</a><a class="item" href="machines.html">Other machines</a><a class="item" href="hives.html">Hives and templates</a><a class="item" href="phone.html">On the phone</a><a class="item" href="plugins.html">Plugins</a><a class="item" href="settings.html">Settings</a></div><div class="grp"><span class="eyebrow">Reference</span><a class="item" href="keys.html">Keys</a><a class="item" href="commands.html" aria-current="page">Commands</a><a class="item" href="comparison.html">Compared with herdr and TUIOS</a></div></div></details></nav>
+<nav class="toc" aria-label="Chapters"><a class="brand" href="index.html">imkr 🐝</a><details open><summary>Chapters</summary><div class="groups"><div class="grp"><span class="eyebrow">Start</span><a class="item" href="index.html">Overview</a><a class="item" href="getting-started.html">Getting started</a><a class="item" href="architecture.html">How imkr works</a></div><div class="grp"><span class="eyebrow">Guides</span><a class="item" href="install.html">Install and update</a><a class="item" href="sessions.html">Sessions, windows and panes</a><a class="item" href="screen.html">Sidebar, popups, mouse and clipboard</a><a class="item" href="agents.html">Agents</a><a class="item" href="computer-use.html">Seeing and driving the screen</a><a class="item" href="ai-brain.html">imkr and AI Brain</a><a class="item" href="machines.html">Other machines</a><a class="item" href="hives.html">Hives and templates</a><a class="item" href="phone.html">On the phone</a><a class="item" href="plugins.html">Plugins</a><a class="item" href="settings.html">Settings</a></div><div class="grp"><span class="eyebrow">Reference</span><a class="item" href="keys.html">Keys</a><a class="item" href="commands.html" aria-current="page">Commands</a><a class="item" href="comparison.html">Compared with herdr and TUIOS</a></div></div></details></nav>
 <main class="">
 <article class="doc"><h1 id="commands">Commands</h1>
 <p>Every command, as <code>imkr --help</code> prints it. Generated from <code>src/main.rs</code>.</p>
@@ -301,6 +301,29 @@ For scripts and agents:
                 why a pane counts as the agent it is, in its state
   operator [--json]
                 the machine the user sits at (and the name it reaches this one by)
+  screen status [--json]
+                whether an agent may see and drive this machine's screen:
+                the backend, the screens with their logical size, the
+                tools, whether the session is locked, the setting
+                (`computer_use`) and the permission in force
+  screen shot [--monitor M] [--width W] [--out PATH] [--json]
+                a PNG of the screen, scaled down, with how its pixels map
+                onto the coordinates `click` takes
+  screen move X Y | click [X Y] [--button left|right|middle]
+                | type TEXT | key KEYS…
+                drive the screen, in logical coordinates per screen
+  screen log [--lines N] | allow | refuse
+                every action taken on this screen; the user's own answer
+                when `computer_use` is `ask`
+  share [--json] | setup [--yes] | set PATH | unset
+                the folder where imkr puts files for you to look at, e.g.
+                `screen shot --save`: an SMB or NFS mount, Syncthing,
+                Nextcloud or a plain folder. `setup` offers the ones this
+                machine has. It lives in ~/.config/share-dir.toml (`dir`,
+                and `[elsewhere]` for the same folder on your other
+                machines), which other programs read and write too
+  --host H screen …
+                the screen of machine H, through the same ssh way
   archive [ls | export | drop NAME SAVED_AT]
                 ended sessions older than the ten in `last`, by hive, on every machine
   cp SOURCE… DEST

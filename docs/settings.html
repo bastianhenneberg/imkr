@@ -191,7 +191,7 @@ main { min-width: 0; }
 </head>
 <body>
 <div class="shell">
-<nav class="toc" aria-label="Chapters"><a class="brand" href="index.html">imkr 🐝</a><details open><summary>Chapters</summary><div class="groups"><div class="grp"><span class="eyebrow">Start</span><a class="item" href="index.html">Overview</a><a class="item" href="getting-started.html">Getting started</a><a class="item" href="architecture.html">How imkr works</a></div><div class="grp"><span class="eyebrow">Guides</span><a class="item" href="install.html">Install and update</a><a class="item" href="sessions.html">Sessions, windows and panes</a><a class="item" href="screen.html">Sidebar, popups, mouse and clipboard</a><a class="item" href="agents.html">Agents</a><a class="item" href="ai-brain.html">imkr and AI Brain</a><a class="item" href="machines.html">Other machines</a><a class="item" href="hives.html">Hives and templates</a><a class="item" href="phone.html">On the phone</a><a class="item" href="plugins.html">Plugins</a><a class="item" href="settings.html" aria-current="page">Settings</a></div><div class="grp"><span class="eyebrow">Reference</span><a class="item" href="keys.html">Keys</a><a class="item" href="commands.html">Commands</a><a class="item" href="comparison.html">Compared with herdr and TUIOS</a></div></div></details></nav>
+<nav class="toc" aria-label="Chapters"><a class="brand" href="index.html">imkr 🐝</a><details open><summary>Chapters</summary><div class="groups"><div class="grp"><span class="eyebrow">Start</span><a class="item" href="index.html">Overview</a><a class="item" href="getting-started.html">Getting started</a><a class="item" href="architecture.html">How imkr works</a></div><div class="grp"><span class="eyebrow">Guides</span><a class="item" href="install.html">Install and update</a><a class="item" href="sessions.html">Sessions, windows and panes</a><a class="item" href="screen.html">Sidebar, popups, mouse and clipboard</a><a class="item" href="agents.html">Agents</a><a class="item" href="computer-use.html">Seeing and driving the screen</a><a class="item" href="ai-brain.html">imkr and AI Brain</a><a class="item" href="machines.html">Other machines</a><a class="item" href="hives.html">Hives and templates</a><a class="item" href="phone.html">On the phone</a><a class="item" href="plugins.html">Plugins</a><a class="item" href="settings.html" aria-current="page">Settings</a></div><div class="grp"><span class="eyebrow">Reference</span><a class="item" href="keys.html">Keys</a><a class="item" href="commands.html">Commands</a><a class="item" href="comparison.html">Compared with herdr and TUIOS</a></div></div></details></nav>
 <main class="">
 <article class="doc"><h1 id="settings">Settings</h1>
 <p><code>Ctrl+B</code> <code>,</code> opens the settings. Changes apply right away and are saved to
@@ -207,6 +207,8 @@ nerd_font = false   # the terminal font is a Nerd Font: round agent dots (else �
 brain_inbox = true  # agent events also in AI Brain's inbox, see docs/ai-brain.md (needs the harness)
 hosts = []          # other machines whose sessions to show, see docs/machines.md
 name = &quot;laptop&quot;     # this machine's name for the others, e.g. its ssh alias; default: hostname
+computer_use = &quot;off&quot;          # may agents see and drive this screen: &quot;off&quot;, &quot;ask&quot;, &quot;on&quot;
+computer_use_monitor = &quot;AGENT&quot;  # which screen they mean; default: the focused one
 
 [which_key]
 enabled = true      # show the key menu after Ctrl+B
@@ -270,7 +272,68 @@ run = 'paplay /usr/share/sounds/freedesktop/stereo/bell.oga'
 on = &quot;done&quot;
 run = 'imkr msg &quot;$IMKR_SESSION/reviewer&quot; &quot;Pane $IMKR_HOOK_PANE is done, please review.&quot;'
 </code></pre>
-<p>For scripts outside imkr, <code>imkr subscribe</code> gives the same as JSON lines.</p></article>
+<p>For scripts outside imkr, <code>imkr subscribe</code> gives the same as JSON lines.</p>
+<h2 id="settings-that-stay-on-their-machine">Settings that stay on their machine</h2>
+<p>Most settings travel with <code>imkr settings sync</code> (<a href="machines.html">machines</a>). A few are answers
+about <em>this</em> machine and would be wrong anywhere else, so they never go either way:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>what the other machines call this one</td>
+</tr>
+<tr>
+<td><code>hosts</code></td>
+<td>the machines this one shows</td>
+</tr>
+<tr>
+<td><code>web</code>, <code>web_listen</code></td>
+<td>whether and where the phone view listens</td>
+</tr>
+<tr>
+<td><code>computer_use</code>, <code>computer_use_monitor</code></td>
+<td>whether agents may use this screen, and which one — see <a href="computer-use.html">seeing and driving the screen</a></td>
+</tr>
+</tbody>
+</table>
+<p>A machine nobody sits at can stand on <code>computer_use = "on"</code> for good while your laptop keeps
+asking, and a sync between them changes neither.</p>
+<h2 id="the-shared-folder">The shared folder</h2>
+<p>Some things imkr makes are for a person to look at — a screenshot, so far. The machine that
+made it is often not the machine you are sitting at, so imkr needs somewhere both can reach.
+That is one folder, and it is nothing fancy: an SMB or NFS mount, Syncthing, Nextcloud,
+iCloud, or a plain folder on the machine you work at. imkr mounts nothing and does not mind
+which it is.</p>
+<pre><code class="language-bash">imkr share setup        # offers the folders this machine already has
+imkr share              # where it is, and where the same folder is elsewhere
+imkr screen shot --save # a picture goes there instead of into imkr's working files
+</code></pre>
+<p><code>Ctrl+B</code> <code>s</code> <code>f</code> opens the same setup in a popup. It lists what it finds — network mounts
+from the kernel's own mount table, and the folders the usual syncing tools make — and never
+picks one for you when there is more than one.</p>
+<p>It lives in <code>~/.config/share-dir.toml</code>, <strong>not</strong> in imkr's config:</p>
+<pre><code class="language-toml">dir = &quot;~/Development/codingshare&quot;
+
+[elsewhere]
+laptop = &quot;/Users/you/Development/codingshare&quot;
+desktop = &quot;/home/you/Development/codingshare&quot;
+</code></pre>
+<p><code>dir</code> is this machine's path. <code>[elsewhere]</code> is the same folder as your other machines see it,
+by the name you call them — that is what lets imkr print <code>on laptop: …</code> next to a file it
+just wrote, instead of a path that only exists somewhere you are not.</p>
+<p>The file is deliberately nobody's: imkr reads and writes it, and so does the AI Brain
+harness, and each works on its own with it or without it. Two programs that need the same
+answer should not have to ask each other for it. The field names are a contract —
+<code>imkr share --json</code> prints them — and anything another program adds to the file survives
+imkr writing it.</p>
+<p>Without the file nothing is written anywhere, <code>--save</code> says so and names the setting, and
+everything else keeps working.</p></article>
 <div class="pager"><a href="plugins.html"><span>← Back</span>Plugins</a><a href="keys.html" style="text-align:right"><span>Next →</span>Keys</a></div><p class="edit">Source: <a href="https://github.com/bastianhenneberg/imkr/blob/main/docs/src/settings.md">docs/src/settings.md</a></p>
 </main>
 </div>

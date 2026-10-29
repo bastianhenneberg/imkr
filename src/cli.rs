@@ -3913,6 +3913,612 @@ fn account_in_use(tool: &str, name: &str) -> bool {
     })
 }
 
+/// `imkr screen …` (#9074): seeing and driving the machine's screen.
+///
+/// Every action asks `screen::desktop()` for the backend of this system,
+/// `probe()` whether it may happen at all, and the permission on this
+/// machine whether this agent may. With `--host H` the whole command runs
+/// over there instead, and a screenshot comes back as bytes.
+pub fn screen(args: &[String], host: Option<&str>) -> Result<()> {
+    use crate::screen;
+    const USAGE: &str = "usage: imkr screen status \
+                         | shot [--monitor M] [--region X,Y,WxH] [--width W] [--out PATH] \
+                         | move X Y | click [X Y] [--button left|right|middle] \
+                         | type TEXT | key KEYS… | log [--lines N] | allow | refuse \
+                         [--host HOST] [--json]";
+    let mut rest = args.to_vec();
+    let json = take_flag(&mut rest, "--json");
+    // Carries the PNG itself in the JSON, for `--host`: the picture is
+    // taken there and has to get here somehow.
+    let want_bytes = take_flag(&mut rest, "--base64");
+    let stdin_text = take_flag(&mut rest, "--stdin");
+    let monitor = take_value(&mut rest, "--monitor")?;
+    let width = match take_value(&mut rest, "--width")? {
+        Some(w) => w
+            .parse::<u32>()
+            .with_context(|| format!("--width takes a number, not {w:?}"))?,
+        None => screen::SHOT_WIDTH,
+    };
+    let out = take_value(&mut rest, "--out")?.map(PathBuf::from);
+    let save = take_flag(&mut rest, "--save");
+    let region_spec = take_value(&mut rest, "--region")?;
+    let region = match &region_spec {
+        Some(spec) => Some(screen::Region::parse(spec)?),
+        None => None,
+    };
+    let button = match take_value(&mut rest, "--button")? {
+        Some(name) => screen::Button::parse(&name)?,
+        None => screen::Button::Left,
+    };
+    let lines = match take_value(&mut rest, "--lines")? {
+        Some(n) => n
+            .parse::<usize>()
+            .with_context(|| format!("--lines takes a number, not {n:?}"))?,
+        None => 30,
+    };
+    let Some(what) = rest.first().cloned() else {
+        bail!("{USAGE}");
+    };
+    rest.remove(0);
+
+    // Another machine: everything but the screenshot is just the same
+    // command over there. A screenshot comes back as base64 in its JSON
+    // and is written here, so the path an agent gets is a local file.
+    if let Some(host) = host {
+        return screen_on(
+            host,
+            &what,
+            &rest,
+            &monitor,
+            width,
+            out,
+            button,
+            region_spec,
+            save,
+            json,
+            lines,
+        );
+    }
+
+    // Reading the log and answering a question are the user's own, and
+    // need neither a backend nor a permission.
+    match what.as_str() {
+        "log" => {
+            let path = screen::log_path()?;
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let last: Vec<&str> = text.lines().rev().take(lines).collect();
+            for line in last.into_iter().rev() {
+                println!("{line}");
+            }
+            return Ok(());
+        }
+        "allow" => {
+            // The answer belongs to whoever sits here. In a session that
+            // is the `y` on imkr's own question; in a plain terminal this
+            // command. An agent's shell has neither.
+            if !std::io::stdin().is_terminal() {
+                bail!(
+                    "`imkr screen allow` wants a terminal: answer imkr's question with y, \
+                     or set computer_use = \"on\" in the config of the machine whose screen \
+                     it is"
+                );
+            }
+            let grant = screen::allow("the user here")?;
+            println!(
+                "agents may see and drive this screen for {} minutes",
+                grant.left().unwrap_or_default().as_secs() / 60
+            );
+            return Ok(());
+        }
+        "refuse" => {
+            screen::refuse("the user here")?;
+            println!("agents may not see or drive this screen");
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    let desk = screen::desktop();
+    // `status` answers even where there is no backend at all: that is the
+    // answer somebody is asking for.
+    if what == "status" {
+        let config = crate::config::Config::load().0;
+        let grant = screen::grant();
+        let probe = match &desk {
+            Ok(desk) => desk.probe(),
+            Err(e) => screen::Probe {
+                blocked: vec![format!("{e}")],
+                ..screen::Probe::default()
+            },
+        };
+        let allowed = match config.computer_use {
+            screen::ComputerUse::On => true,
+            screen::ComputerUse::Ask => grant.allowed(),
+            screen::ComputerUse::Off => false,
+        };
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "machine": protocol::machine_name(),
+                    "setting": config.computer_use.word(),
+                    "allowed": allowed,
+                    "allowed_for": grant.left().map(|l| l.as_secs()),
+                    "allowed_to": (!grant.who.is_empty()).then_some(grant.who.clone()),
+                    "ready": probe.ok() && allowed,
+                    "backend": probe.backend,
+                    "monitor": screen::pick_monitor(&probe.monitors, monitor.as_deref(), config.computer_use_monitor.as_deref()).ok().flatten(),
+                    "monitor_setting": config.computer_use_monitor.clone(),
+                    "blocked": probe.blocked,
+                    "gaps": probe.backend.is_empty().then(|| screen::gaps()
+                        .into_iter()
+                        .map(|(system, why)| serde_json::json!({ "system": system, "why": why }))
+                        .collect::<Vec<_>>()),
+                    "notes": probe.notes,
+                    "tools": probe.tools.iter().map(|(t, there)| serde_json::json!({ "tool": t, "there": there })).collect::<Vec<_>>(),
+                    "monitors": probe.monitors,
+                }))?
+            );
+            return Ok(());
+        }
+        println!("machine   {}", protocol::machine_name());
+        println!(
+            "backend   {}",
+            if probe.backend.is_empty() {
+                "none"
+            } else {
+                &probe.backend
+            }
+        );
+        println!(
+            "setting   computer_use = {}{}",
+            config.computer_use.word(),
+            match (config.computer_use, grant.left()) {
+                (screen::ComputerUse::Ask, Some(left)) => format!(
+                    " · allowed for {} more minutes{}",
+                    left.as_secs() / 60,
+                    if grant.who.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" to {}", grant.who)
+                    }
+                ),
+                (screen::ComputerUse::Ask, None) => " · imkr asks here first".to_owned(),
+                _ => String::new(),
+            }
+        );
+        let picked = screen::pick_monitor(
+            &probe.monitors,
+            monitor.as_deref(),
+            config.computer_use_monitor.as_deref(),
+        );
+        for m in &probe.monitors {
+            println!(
+                "screen    {} {}x{} logical at {},{} · scale {} · {}{}",
+                m.name,
+                m.width,
+                m.height,
+                m.x,
+                m.y,
+                m.scale,
+                if m.on { "on" } else { "OFF (dpms)" },
+                if picked.as_ref().ok() == Some(&Some(m.name.clone())) {
+                    " ← used without --monitor"
+                } else {
+                    ""
+                }
+            );
+        }
+        if let Err(e) = &picked {
+            println!("screen    none to use: {e}");
+        }
+        for (tool, there) in &probe.tools {
+            println!("tool      {tool} {}", if *there { "✓" } else { "MISSING" });
+        }
+        for note in &probe.notes {
+            println!("note      {note}");
+        }
+        for why in &probe.blocked {
+            println!("blocked   {why}");
+        }
+        // Where there is no backend at all, say which systems are not
+        // supported yet and what each would take — a gap named is an
+        // answer, an empty list is a riddle.
+        if probe.backend.is_empty() {
+            for (system, why) in screen::gaps() {
+                println!("gap       {system}: {why}");
+            }
+        }
+        println!(
+            "ready     {}",
+            match (probe.ok(), allowed) {
+                (true, true) => "yes".to_owned(),
+                (false, _) => "no — see blocked above".to_owned(),
+                (true, false) => format!(
+                    "no — computer_use is {} on {}",
+                    config.computer_use.word(),
+                    protocol::machine_name()
+                ),
+            }
+        );
+        return Ok(());
+    }
+
+    let desk = desk?;
+    // Nothing happens on a locked or dark screen, whatever the setting
+    // says: a lock screen is the one thing imkr must never drive.
+    let probe = desk.probe();
+    if !probe.ok() {
+        bail!(
+            "cannot use this screen ({}): {}. `imkr screen status` says more.",
+            desk.name(),
+            probe.blocked.join("; ")
+        );
+    }
+    let driving = what != "shot";
+    let who = own_address();
+    permit(&who, if driving { "drive" } else { "see" })?;
+    let monitors = desk.monitors()?;
+    let settled = crate::config::Config::load().0.computer_use_monitor;
+
+    match what.as_str() {
+        "shot" => {
+            // A region is an absolute box and picks its own screens, so
+            // only a whole-screen shot needs one chosen.
+            let on = match region {
+                Some(_) => None,
+                None => screen::pick_monitor(&monitors, monitor.as_deref(), settled.as_deref())?,
+            };
+            let shot = screen::shot(desk.as_ref(), on.as_deref(), region, width, out)?;
+            screen::acted(
+                &who,
+                "shot",
+                &format!(
+                    "{} {}x{}",
+                    match (&on, region) {
+                        (_, Some(r)) => r.geometry(),
+                        (Some(name), None) => name.clone(),
+                        (None, None) => "all".to_owned(),
+                    },
+                    shot.width,
+                    shot.height
+                ),
+            );
+            let mut answer = shot.json();
+            if want_bytes {
+                let bytes = std::fs::read(&shot.path)?;
+                answer["png"] = clipboard::base64(&bytes).into();
+            }
+            // For a person to look at: into the shared folder, named the
+            // way their own machine sees it (#9082).
+            let placed = match save {
+                true => Some(crate::share::put(&shot.path, crate::share::SHOTS)?),
+                false => None,
+            };
+            if let Some(placed) = &placed {
+                answer["path"] = placed.path.display().to_string().into();
+                answer["shared"] = placed.json();
+            }
+            if json || want_bytes {
+                println!("{}", serde_json::to_string_pretty(&answer)?);
+            } else {
+                match &placed {
+                    Some(placed) => println!("{}", placed.line()),
+                    None => println!("{}", shot.path.display()),
+                }
+                println!(
+                    "{} · {}x{} · {}",
+                    on.as_deref().unwrap_or("every screen"),
+                    shot.width,
+                    shot.height,
+                    shot.hint()
+                );
+            }
+        }
+        "move" => {
+            let (x, y) = coordinates(&rest)?;
+            // With a screen named, X and Y are its own — which is what an
+            // agent reads off a screenshot of that one screen.
+            let (x, y) = screen::place(&monitors, monitor.as_deref(), x, y)?;
+            let (x, y) = screen::move_to(desk.as_ref(), x, y)?;
+            screen::acted(&who, "move", &format!("{x},{y}"));
+            if json {
+                println!("{}", serde_json::json!({ "x": x, "y": y }));
+            } else {
+                println!("pointer at {x},{y}");
+            }
+        }
+        "click" => {
+            // Without coordinates it clicks where the pointer is; with
+            // them it moves first and makes sure it got there, so a click
+            // never lands somewhere else than it was asked to.
+            let at = match rest.is_empty() {
+                true => desk.cursor()?,
+                false => {
+                    let (x, y) = coordinates(&rest)?;
+                    let (x, y) = screen::place(&monitors, monitor.as_deref(), x, y)?;
+                    screen::move_to(desk.as_ref(), x, y)?
+                }
+            };
+            desk.click(button)?;
+            let which = match button {
+                screen::Button::Left => "left",
+                screen::Button::Right => "right",
+                screen::Button::Middle => "middle",
+            };
+            screen::acted(&who, "click", &format!("{which} at {},{}", at.0, at.1));
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "x": at.0, "y": at.1, "button": which })
+                );
+            } else {
+                println!("{which} click at {},{}", at.0, at.1);
+            }
+        }
+        "type" => {
+            let text = match stdin_text {
+                true => {
+                    let mut text = String::new();
+                    std::io::stdin().read_to_string(&mut text)?;
+                    text
+                }
+                false => rest.join(" "),
+            };
+            if text.is_empty() {
+                bail!("nothing to type: `imkr screen type TEXT` or --stdin");
+            }
+            desk.text(&text)?;
+            // The log says how much was typed, never what: it goes into
+            // whatever has the focus, and that may be a password field.
+            screen::acted(
+                &who,
+                "type",
+                &format!("{} characters", text.chars().count()),
+            );
+            if !json {
+                println!("typed {} characters", text.chars().count());
+            }
+        }
+        "key" => {
+            if rest.is_empty() {
+                bail!("which key? e.g. `imkr screen key ctrl+c` or `imkr screen key Return`");
+            }
+            let mut pressed = Vec::new();
+            for spec in &rest {
+                let key = screen::Key::parse(spec)?;
+                desk.key(&key)?;
+                pressed.push(spec.clone());
+            }
+            screen::acted(&who, "key", &pressed.join(" "));
+            if !json {
+                println!("pressed {}", pressed.join(" "));
+            }
+        }
+        other => bail!("no `imkr screen {other}`\n\n{USAGE}"),
+    }
+    Ok(())
+}
+
+/// Two numbers as a logical coordinate.
+fn coordinates(rest: &[String]) -> Result<(i32, i32)> {
+    let [x, y] = rest else {
+        bail!("X and Y, as `imkr screen status` lists the screens (logical pixels)");
+    };
+    Ok((
+        x.parse()
+            .with_context(|| format!("{x:?} is not an x coordinate"))?,
+        y.parse()
+            .with_context(|| format!("{y:?} is not a y coordinate"))?,
+    ))
+}
+
+/// Whether `who` may do `what` (`see` or `drive`) to this screen now.
+///
+/// `on` always, `off` never, `ask` once somebody here has said yes: the
+/// question goes to every session on this machine, and the answer lands in
+/// the permission file this waits on.
+fn permit(who: &str, what: &str) -> Result<()> {
+    use crate::screen;
+    let config = crate::config::Config::load().0;
+    match config.computer_use {
+        screen::ComputerUse::On => return Ok(()),
+        screen::ComputerUse::Off => bail!(
+            "{} does not let agents see or drive its screen: computer_use is off in its \
+             config (settings menu: \"Agents may use this screen\"). It is each machine's \
+             own setting and never travels with `imkr settings sync`.",
+            protocol::machine_name()
+        ),
+        screen::ComputerUse::Ask => {}
+    }
+    if screen::grant().allowed() {
+        return Ok(());
+    }
+    screen::ask(who, what)?;
+    let asked = ask_sessions(who, what);
+    let until = std::time::Instant::now() + screen::ASK_FOR;
+    while std::time::Instant::now() < until {
+        let grant = screen::grant();
+        if grant.allowed() {
+            return Ok(());
+        }
+        if grant.asking.as_ref().and_then(|a| a.answer) == Some(false) {
+            bail!("the user at {} said no", protocol::machine_name());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
+    bail!(
+        "nobody at {} answered within {} seconds{}. Ask the user to allow it \
+         (imkr shows the question in its session, or `imkr screen allow` in a \
+         terminal there).",
+        protocol::machine_name(),
+        screen::ASK_FOR.as_secs(),
+        if asked == 0 {
+            " — no imkr session runs there to ask in"
+        } else {
+            ""
+        }
+    )
+}
+
+/// Puts the question in front of the sessions on this machine; how many
+/// took it.
+///
+/// A socket of its own outside the runtime directory (a test world) means
+/// that one session and no other — asking the machine's real sessions
+/// from a test would put a dialog in front of somebody's actual work.
+/// Inside a pane `IMKR_SOCKET` points into the runtime directory and is
+/// not such a socket, so a question from an agent reaches every session,
+/// which is the point: whichever one the user is looking at can answer.
+fn ask_sessions(who: &str, what: &str) -> usize {
+    let request = || Request::ScreenAsk {
+        who: who.to_owned(),
+        what: what.to_owned(),
+    };
+    let sockets: Vec<PathBuf> = match protocol::test_socket() {
+        Some(path) => vec![path],
+        None => protocol::sessions()
+            .iter()
+            .filter_map(|name| protocol::session_socket(name).ok())
+            .collect(),
+    };
+    sockets
+        .iter()
+        .filter(|path| client::request_at(path, request()).is_ok())
+        .count()
+}
+
+/// `imkr screen … --host H`: the same command over there. A screenshot
+/// comes back in its JSON and is written here, so the path in the answer
+/// is a file on this machine.
+#[allow(clippy::too_many_arguments)]
+fn screen_on(
+    host: &str,
+    what: &str,
+    rest: &[String],
+    monitor: &Option<String>,
+    width: u32,
+    out: Option<PathBuf>,
+    button: crate::screen::Button,
+    region: Option<String>,
+    save: bool,
+    json: bool,
+    lines: usize,
+) -> Result<()> {
+    use crate::screen;
+    let mut line: Vec<String> = vec!["screen".into(), what.into()];
+    line.extend(rest.iter().cloned());
+    let mut input = String::new();
+    if let Some(name) = monitor {
+        line.extend(["--monitor".to_owned(), name.clone()]);
+    }
+    if let Some(region) = region {
+        line.extend(["--region".to_owned(), region]);
+    }
+    match what {
+        "shot" => {
+            line.push("--base64".into());
+            line.extend(["--width".to_owned(), width.to_string()]);
+        }
+        "type" => {
+            // The text goes over on stdin, not in the command line of an
+            // ssh call: a password typed into a prompt would otherwise sit
+            // in the process list of two machines.
+            input = match rest.is_empty() {
+                true => {
+                    let mut text = String::new();
+                    std::io::stdin().read_to_string(&mut text)?;
+                    text
+                }
+                false => rest.join(" "),
+            };
+            line = vec!["screen".into(), "type".into(), "--stdin".into()];
+        }
+        "click" => {
+            line.extend([
+                "--button".to_owned(),
+                match button {
+                    screen::Button::Left => "left",
+                    screen::Button::Right => "right",
+                    screen::Button::Middle => "middle",
+                }
+                .to_owned(),
+            ]);
+        }
+        "status" | "log" => {
+            line.extend(["--lines".to_owned(), lines.to_string()]);
+            if what == "status" {
+                line.pop();
+                line.pop();
+            }
+            if json {
+                line.push("--json".into());
+            }
+        }
+        _ => {}
+    }
+    if json && !matches!(what, "status" | "log" | "shot") {
+        line.push("--json".into());
+    }
+    let words: Vec<&str> = line.iter().map(String::as_str).collect();
+    let answer = client::remote_output(host, &words, &input)?;
+    if what != "shot" {
+        print!("{answer}");
+        return Ok(());
+    }
+    let mut shot: serde_json::Value =
+        serde_json::from_str(&answer).with_context(|| format!("{host} answered {answer:?}"))?;
+    let png = shot["png"]
+        .as_str()
+        .context("the screenshot came back without its picture")?;
+    let bytes = clipboard::unbase64(png).context("the picture is not base64")?;
+    let path = match out {
+        Some(path) => path,
+        None => {
+            let dir = crate::persist::state_dir()?.join("screenshots");
+            std::fs::create_dir_all(&dir)?;
+            dir.join(format!(
+                "shot-{host}-{}.png",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            ))
+        }
+    };
+    std::fs::write(&path, &bytes)?;
+    shot["png"] = serde_json::Value::Null;
+    shot["path"] = path.display().to_string().into();
+    shot["machine"] = host.into();
+    // The picture came over as bytes, so it is a file on THIS machine —
+    // and the shared folder that matters is the one of the machine the
+    // user sits at, not the one whose screen was photographed (#9082).
+    let placed = match save {
+        true => Some(crate::share::put(&path, crate::share::SHOTS)?),
+        false => None,
+    };
+    if let Some(placed) = &placed {
+        shot["path"] = placed.path.display().to_string().into();
+        shot["shared"] = placed.json();
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&shot)?);
+    } else {
+        match &placed {
+            Some(placed) => println!("{}", placed.line()),
+            None => println!("{}", path.display()),
+        }
+        println!(
+            "{}x{} · {}",
+            shot["image"]["width"],
+            shot["image"]["height"],
+            // As a string, not as JSON: `shot["hint"]` prints its quotes.
+            shot["hint"].as_str().unwrap_or_default()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

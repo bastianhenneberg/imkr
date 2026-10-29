@@ -44,6 +44,10 @@ pub enum Command {
     Archive,
     /// Each account's limits and the tokens used, in a popup.
     Usage,
+    /// Where files for you to look at go, see `share` (#9082). A popup
+    /// rather than a row in the settings menu: the answer is a path, and
+    /// the setup offers the folders this machine really has.
+    ShareFolder,
     /// What the agents did while no terminal was attached.
     Recap,
     PickPane,
@@ -978,6 +982,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "while you were away…",
         group: Group::Sessions,
         keys: &[(Key::plain(Char('l')), C::Recap)],
+    },
+    Binding {
+        label: "f",
+        description: "shared folder for files…",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('f')), C::ShareFolder)],
     },
     Binding {
         label: "⌫",

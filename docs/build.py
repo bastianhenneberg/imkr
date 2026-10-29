@@ -35,8 +35,8 @@ REPO = "https://github.com/bastianhenneberg/imkr"
 # The chapters, in the order of the menu and of prev/next.
 GROUPS = [
     ("Start", ["index", "getting-started", "architecture"]),
-    ("Guides", ["install", "sessions", "screen", "agents", "ai-brain",
-                "machines", "hives", "phone", "plugins", "settings"]),
+    ("Guides", ["install", "sessions", "screen", "agents", "computer-use",
+                "ai-brain", "machines", "hives", "phone", "plugins", "settings"]),
     ("Reference", ["keys", "commands", "comparison"]),
 ]
 

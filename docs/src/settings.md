@@ -15,6 +15,8 @@ nerd_font = false   # the terminal font is a Nerd Font: round agent dots (else �
 brain_inbox = true  # agent events also in AI Brain's inbox, see docs/ai-brain.md (needs the harness)
 hosts = []          # other machines whose sessions to show, see docs/machines.md
 name = "laptop"     # this machine's name for the others, e.g. its ssh alias; default: hostname
+computer_use = "off"          # may agents see and drive this screen: "off", "ask", "on"
+computer_use_monitor = "AGENT"  # which screen they mean; default: the focused one
 
 [which_key]
 enabled = true      # show the key menu after Ctrl+B
@@ -90,3 +92,60 @@ run = 'imkr msg "$IMKR_SESSION/reviewer" "Pane $IMKR_HOOK_PANE is done, please r
 ```
 
 For scripts outside imkr, `imkr subscribe` gives the same as JSON lines.
+
+
+## Settings that stay on their machine
+
+Most settings travel with `imkr settings sync` ([machines](machines.md)). A few are answers
+about *this* machine and would be wrong anywhere else, so they never go either way:
+
+| | |
+|---|---|
+| `name` | what the other machines call this one |
+| `hosts` | the machines this one shows |
+| `web`, `web_listen` | whether and where the phone view listens |
+| `computer_use`, `computer_use_monitor` | whether agents may use this screen, and which one — see [seeing and driving the screen](computer-use.md) |
+
+A machine nobody sits at can stand on `computer_use = "on"` for good while your laptop keeps
+asking, and a sync between them changes neither.
+
+## The shared folder
+
+Some things imkr makes are for a person to look at — a screenshot, so far. The machine that
+made it is often not the machine you are sitting at, so imkr needs somewhere both can reach.
+That is one folder, and it is nothing fancy: an SMB or NFS mount, Syncthing, Nextcloud,
+iCloud, or a plain folder on the machine you work at. imkr mounts nothing and does not mind
+which it is.
+
+```bash
+imkr share setup        # offers the folders this machine already has
+imkr share              # where it is, and where the same folder is elsewhere
+imkr screen shot --save # a picture goes there instead of into imkr's working files
+```
+
+`Ctrl+B` `s` `f` opens the same setup in a popup. It lists what it finds — network mounts
+from the kernel's own mount table, and the folders the usual syncing tools make — and never
+picks one for you when there is more than one.
+
+It lives in `~/.config/share-dir.toml`, **not** in imkr's config:
+
+```toml
+dir = "~/Development/codingshare"
+
+[elsewhere]
+laptop = "/Users/you/Development/codingshare"
+desktop = "/home/you/Development/codingshare"
+```
+
+`dir` is this machine's path. `[elsewhere]` is the same folder as your other machines see it,
+by the name you call them — that is what lets imkr print `on laptop: …` next to a file it
+just wrote, instead of a path that only exists somewhere you are not.
+
+The file is deliberately nobody's: imkr reads and writes it, and so does the AI Brain
+harness, and each works on its own with it or without it. Two programs that need the same
+answer should not have to ask each other for it. The field names are a contract —
+`imkr share --json` prints them — and anything another program adds to the file survives
+imkr writing it.
+
+Without the file nothing is written anywhere, `--save` says so and names the setting, and
+everything else keeps working.
