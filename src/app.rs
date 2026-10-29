@@ -13068,7 +13068,11 @@ fn bar_plugin_spans(
             spans.push(Span::styled(SEPARATOR, Style::new().fg(t.muted)));
         }
         used += before + title.chars().count() + text.chars().count();
-        spans.push(Span::styled(title, Style::new().fg(t.subtle)));
+        // `muted`, the colour of the bar's other hints, not `subtle`: that
+        // one is the theme's selection colour and sits one shade off the
+        // bar's own surface, which makes the title vanish there
+        // (tokyo-night: #292e42 on #24283b).
+        spans.push(Span::styled(title, Style::new().fg(t.muted)));
         spans.push(Span::styled(text, style));
     }
     spans
@@ -13399,7 +13403,7 @@ mod tests {
         let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text, "AI Brain ● connected · deploy ✗ failed");
         let t = theme::current();
-        assert_eq!(spans[0].style.fg, Some(t.subtle));
+        assert_eq!(spans[0].style.fg, Some(t.muted));
         assert_eq!(spans[1].style.fg, Some(t.success));
         assert_eq!(spans[4].style.fg, Some(t.danger));
 
