@@ -68,6 +68,43 @@ one a session of its own. Together with `--window 0` the command then takes the 
 empty shell a new session starts with: one window, one pane, the agent in it, reachable as
 `session/1`. In a session that already runs, `--window 0` opens a window of its own as before.
 
+### Sessions started for an agent
+
+An agent that opens a session for each of its workers leaves a mark on them, so that a list of
+twelve sessions still says which belongs to whom:
+
+```bash
+imkr -s api new --start --window 0 --by laptop:imker/0 -- claude
+imkr agents --all --by laptop:imker/0     # only the agents in sessions started for that pane
+```
+
+Typed **in** a pane, `--start` sets it by itself: the session is marked as started for the pane
+the command ran in (`machine:session/pane`), and `--by` is only needed to name another one. A
+`new` in a session that already runs marks nothing — the session somebody works in is not its
+own agent's errand.
+
+The mark belongs to the session and lives in its saved layout: it survives a restart, a crash,
+`imkr revive` and `imkr update`. Everywhere sessions are listed — the sidebar, `Ctrl+B S`,
+`imkr ls`, `imkr ls --json` (`by`) — a session started for another sits under it with an arrow:
+
+```text
+Sessions
+  imker
+  ↳ api                 ❶
+  ↳ web                 ❷
+  nightly
+    by laptop:imker/0 — gone
+```
+
+Only within one machine, because those lists group by machine; a session whose orchestrator
+sits on another one keeps its place and names it instead. `Ctrl+B O` shows the whole tree
+across machines, orchestrator above and its sessions below with their state.
+
+**When the orchestrator is gone** — its pane closed, its session ended — the session says
+`— gone` and goes back to the top level. It keeps running: the mark says who asked for the
+work, not who is allowed to live. A machine that cannot be reached says nothing either way,
+so a laptop that is off does not make its workers look orphaned.
+
 ### Several accounts, and the next one when one is used up
 
 One machine, several Claude Code and Codex subscriptions, and providers Claude Code reaches by
@@ -212,7 +249,8 @@ latest messages; Enter goes there. A pane that only got messages shows who it wo
 
 imkr learns this from the messages themselves: the session that delivers one notes the sender,
 and `imkr msg` tells its own session where it sent one. The newest 400 are kept, also across
-`imkr update`.
+`imkr update`. Sessions started with `--by` show there as well, under the pane they work for,
+even before a single message has gone out.
 
 ### Other people's imkrs
 

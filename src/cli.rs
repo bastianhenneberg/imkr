@@ -114,8 +114,13 @@ pub fn ls(args: &[String]) -> Result<()> {
     let current = protocol::session_name();
     for info in sessions {
         if let Some(label) = info.dormant_label() {
+            let by = if info.by.is_empty() {
+                String::new()
+            } else {
+                format!(" · by {}", info.by)
+            };
             println!(
-                "◌ {:<16} {label}, {} panes in {} windows · `imkr revive {}` brings it back",
+                "◌ {:<16} {label}, {} panes in {} windows{by} · `imkr revive {}` brings it back",
                 info.name, info.panes, info.windows, info.name
             );
             continue;
@@ -136,6 +141,10 @@ pub fn ls(args: &[String]) -> Result<()> {
         if let Some(quiet) = info.quiet_for().filter(|&q| q >= 60) {
             let ago = crate::sidebar::age(std::time::Duration::from_secs(quiet));
             agents.push_str(&format!(" · {ago} ago"));
+        }
+        // Who it was started for (`imkr new --by`, #9087).
+        if !info.by.is_empty() {
+            agents.push_str(&format!(" · by {}", info.by));
         }
         println!(
             "{marker} {:<16} {} panes in {} windows{agents}",
@@ -339,6 +348,19 @@ fn message_id(id: &str) -> Result<u64> {
 /// `machine:session/who`, `session/who` or `who`, the machine left out
 /// when it is this one.
 pub(crate) fn parse_address(to: &str) -> Result<(Option<String>, Option<String>, String)> {
+    let (machine, session, who) = address_parts(to)?;
+    Ok((
+        machine.filter(|m| *m != protocol::machine_name()),
+        session,
+        who,
+    ))
+}
+
+/// The same, with the machine **as written** — this machine's name is not
+/// taken out. Which machine a name means depends on who reads it: an
+/// address another machine wrote names its own machine, and that is not
+/// ours (#9087).
+pub(crate) fn address_parts(to: &str) -> Result<(Option<String>, Option<String>, String)> {
     let to = to.rsplit_once('@').map_or(to, |(_, at)| at);
     let (machine, rest) = match to.split_once(':') {
         Some((machine, rest)) => (Some(machine.to_owned()), rest),
@@ -352,8 +374,20 @@ pub(crate) fn parse_address(to: &str) -> Result<(Option<String>, Option<String>,
     if who.is_empty() {
         bail!("{to}: say the pane, a number, name or program");
     }
-    let machine = machine.filter(|m| *m != protocol::machine_name());
     Ok((machine, session, who))
+}
+
+/// Whether two addresses name the same pane. `laptop:imker/0` and
+/// `imker/0` are the same pane when read on laptop, and a machine named
+/// in one and left out in the other is this one (#9087).
+pub(crate) fn same_address(a: &str, b: &str) -> bool {
+    match (parse_address(a), parse_address(b)) {
+        (Ok(a), Ok(b)) => {
+            let session = |s: Option<String>| s.unwrap_or_else(|| protocol::DEFAULT_SESSION.into());
+            a.0 == b.0 && session(a.1) == session(b.1) && a.2.eq_ignore_ascii_case(&b.2)
+        }
+        _ => false,
+    }
 }
 
 /// The working directory of the pane `address` means (as for `msg`): on
@@ -619,8 +653,14 @@ pub fn agents(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let json = take_flag(&mut rest, "--json");
     let all = take_flag(&mut rest, "--all");
+    // `--by ADDRESS`: only the agents of sessions started for that pane
+    // (`imkr new --by`, #9087) — an orchestrator asking after its own.
+    let by = take_value(&mut rest, "--by")?;
+    if let Some(by) = &by {
+        parse_address(by).with_context(|| format!("--by {by}"))?;
+    }
     if !rest.is_empty() {
-        bail!("usage: imkr agents [--all] [--json]");
+        bail!("usage: imkr agents [--all] [--json] [--by ADDRESS]");
     }
     let here = protocol::machine_name();
     let mut machines = vec![(here.clone(), Ok(client::local_sessions()))];
@@ -642,6 +682,12 @@ pub fn agents(args: &[String]) -> Result<()> {
             }
         };
         for session in sessions {
+            // The same pane written two ways is the same orchestrator.
+            if let Some(wanted) = &by
+                && !same_address(wanted, &session.by)
+            {
+                continue;
+            }
             for agent in session.agent_panes {
                 let address = format!("{machine}:{}/{}", session.name, agent.pane);
                 if json {
@@ -656,6 +702,7 @@ pub fn agents(args: &[String]) -> Result<()> {
                         "window_name": agent.dir,
                         "meta": agent.meta,
                         "title": agent.title,
+                        "by": session.by,
                     }));
                 } else {
                     let at = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
@@ -669,7 +716,12 @@ pub fn agents(args: &[String]) -> Result<()> {
                     } else {
                         format!("  · {}", agent.title)
                     };
-                    println!("{address:<24} {:<8} {at}{meta}{title}", agent.state);
+                    let by = if session.by.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  · by {}", session.by)
+                    };
+                    println!("{address:<24} {:<8} {at}{meta}{title}{by}", agent.state);
                 }
             }
         }
@@ -1497,6 +1549,13 @@ pub fn new(args: &[String]) -> Result<()> {
     // for plugins that open a program to work in, like a conversation.
     let focus = take_flag(&mut options, "--focus");
     let name = take_value(&mut options, "--name")?;
+    // `--by ADDRESS`: who this session works for (#9087).
+    let by = take_value(&mut options, "--by")?;
+    if let Some(by) = &by {
+        // It is an address others answer to: say so now, not when a list
+        // tries to find the pane it names.
+        parse_address(by).with_context(|| format!("--by {by}"))?;
+    }
     // `--start`: the session is started first if it does not run.
     let mut fresh = false;
     if take_flag(&mut options, "--start") {
@@ -1512,12 +1571,23 @@ pub fn new(args: &[String]) -> Result<()> {
     if let Some(unknown) = options.first() {
         bail!("unknown option {unknown:?}, put the command after --");
     }
+    // Without `--by`, a session started by this very command belongs to
+    // the pane the command was typed in: that is what an orchestrating
+    // agent means by `imkr -s worker new --start -- claude …`. A pane in
+    // a session that already runs marks nothing — the user's own session
+    // would then be its own agent's errand.
+    let by = match by {
+        Some(by) => Some(by),
+        None if fresh => protocol::caller(),
+        None => None,
+    };
     let value = client::request(Request::New {
         command,
         float,
         workspace,
         cwd: dir.or_else(|| std::env::current_dir().ok()),
         fresh,
+        by,
     })?;
     if let (Some(name), Some(window)) = (name, value["workspace"].as_u64()) {
         client::request(Request::Rename {
@@ -1593,6 +1663,7 @@ pub fn new_hosted(here: &std::path::Path, remote: &client::Remote, args: &[Strin
             workspace: Some(workspace.unwrap_or(0)),
             cwd: None,
             fresh: false,
+            by: None,
         },
     )?;
     let window = value["workspace"].as_u64().unwrap_or_default() as u8;
@@ -4659,5 +4730,26 @@ mod tests {
         );
         assert!(parse_address("server:api").is_err());
         assert!(parse_address("api/").is_err());
+        // The machine as written, for a list that reads addresses other
+        // machines wrote (#9087).
+        assert_eq!(
+            address_parts(&format!("{here}:api/3")).unwrap(),
+            (Some(here.clone()), Some("api".into()), "3".into())
+        );
+    }
+
+    /// `imkr agents --by` is given an address by hand: the same pane
+    /// written in another way is the same pane (#9087).
+    #[test]
+    fn the_same_pane_written_two_ways_is_the_same_orchestrator() {
+        let here = protocol::machine_name();
+        assert!(same_address("imker/0", &format!("{here}:imker/0")));
+        assert!(same_address("claude@laptop:imker/0", "laptop:imker/0"));
+        assert!(same_address("laptop:imker/CLAUDE", "laptop:imker/claude"));
+        // The session left out is the default one.
+        assert!(same_address("3", "default/3"));
+        assert!(!same_address("imker/0", "imker/1"));
+        assert!(!same_address("laptop:imker/0", "desktop:imker/0"));
+        assert!(!same_address("imker/0", "nonsense"));
     }
 }

@@ -351,7 +351,7 @@ const COMMANDS: &[Command] = &[
     cmd(
         "agents",
         "every agent with its address",
-        &["--all", "--json"],
+        &["--all", "--json", "--by"],
         Nothing,
     ),
     cmd("msg", "message an agent", &["--wait", "--from"], Addresses),
@@ -371,7 +371,9 @@ const COMMANDS: &[Command] = &[
     cmd(
         "new",
         "start a command in a new pane",
-        &["--float", "--window", "--dir", "--focus", "--name"],
+        &[
+            "--float", "--window", "--dir", "--focus", "--name", "--start", "--by",
+        ],
         Nothing,
     ),
     cmd(

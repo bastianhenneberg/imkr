@@ -492,6 +492,13 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                 windows.dedup();
                 info.panes = panes.len();
                 info.windows = windows.len();
+                // Session-wide, carried on every pane of the reply like
+                // the window's name; older servers send none (#9087).
+                info.by = panes
+                    .first()
+                    .and_then(|p| p["by"].as_str())
+                    .unwrap_or_default()
+                    .to_owned();
                 for pane in &panes {
                     let state = pane["state"].as_str();
                     if let Some(state) = state {
@@ -539,6 +546,7 @@ pub fn local_sessions() -> Vec<SessionInfo> {
             windows: dormant.layout.workspaces.len(),
             dormant: Some(if dormant.closed { "closed" } else { "stopped" }.to_owned()),
             dormant_since: dormant.since,
+            by: dormant.layout.by.clone().unwrap_or_default(),
             ..SessionInfo::default()
         });
     }

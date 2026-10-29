@@ -62,6 +62,12 @@ pub struct SessionRow {
     pub offline: bool,
     /// Not running, but it can come back: stopped or closed.
     pub dormant: bool,
+    /// Who had it started, as `by laptop:imker/0` — only when that
+    /// session is not right above it in the list (#9087).
+    pub by: Option<String>,
+    /// How far under its orchestrator it sits: 0 for a session of its
+    /// own, 1 and more for one started for another on the same machine.
+    pub depth: usize,
 }
 
 pub struct AgentRow {
@@ -312,17 +318,22 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 ));
                 continue;
             }
+            // A session started for another sits under it, with the
+            // arrow in place of the blank marker (#9087).
             let marker = if session.current {
                 "▸ "
             } else if session.dormant {
                 "◌ "
+            } else if session.depth > 0 {
+                "↳ "
             } else {
                 "  "
             };
+            let under = "  ".repeat(session.depth);
             let parts = agent_dots(&session.dots);
             let right: String = parts.iter().map(|(_, part)| part.as_str()).collect();
             let left = fit(
-                &format!("{indent}{marker}{}", session.name),
+                &format!("{indent}{under}{marker}{}", session.name),
                 width.saturating_sub(right.chars().count() + 1),
             );
             let pad = width.saturating_sub(left.chars().count() + right.chars().count());
@@ -339,6 +350,13 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             }
             let target = (!session.current && !session.offline).then_some(Target::Session(i));
             out.push((Line::from(spans), target));
+            // Its orchestrator is not above it: somewhere else, or gone.
+            if let Some(by) = &session.by {
+                out.push((
+                    Line::styled(fit(&format!("{indent}    {by}"), width), dim),
+                    target,
+                ));
+            }
         }
     }
 
@@ -971,6 +989,8 @@ mod tests {
             problem: None,
             offline: false,
             dormant: false,
+            by: None,
+            depth: 0,
         };
         let mut data = data();
         data.sessions = vec![
@@ -1014,6 +1034,63 @@ mod tests {
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));
         assert_eq!(find("not reachable").unwrap().1, None);
+    }
+
+    /// A session started for another sits under it with an arrow; one
+    /// whose orchestrator is elsewhere or gone says so underneath, and
+    /// that line goes to the same session (#9087).
+    #[test]
+    fn worker_sessions_sit_under_their_orchestrator() {
+        let mut data = data();
+        data.sessions = vec![
+            SessionRow {
+                host: None,
+                machine: None,
+                name: "imker".into(),
+                current: true,
+                dots: Vec::new(),
+                problem: None,
+                offline: false,
+                dormant: false,
+                by: None,
+                depth: 0,
+            },
+            SessionRow {
+                host: None,
+                machine: None,
+                name: "worker".into(),
+                current: false,
+                dots: Vec::new(),
+                problem: None,
+                offline: false,
+                dormant: false,
+                by: None,
+                depth: 1,
+            },
+            SessionRow {
+                host: None,
+                machine: None,
+                name: "lonely".into(),
+                current: false,
+                dots: Vec::new(),
+                problem: None,
+                offline: false,
+                dormant: false,
+                by: Some("by laptop:imker/0 — gone".into()),
+                depth: 0,
+            },
+        ];
+        let rows: Vec<(String, Option<Target>)> = lines(&data, 32)
+            .into_iter()
+            .map(|(line, target)| (line.to_string(), target))
+            .collect();
+        let find = |text: &str| rows.iter().find(|(line, _)| line.contains(text)).cloned();
+        assert!(find("↳ worker").is_some(), "{rows:#?}");
+        assert_eq!(find("↳ worker").unwrap().1, Some(Target::Session(1)));
+        // No arrow for the one whose orchestrator is not above it.
+        assert!(find("  lonely").is_some());
+        let orphan = find("by laptop:imker/0 — gone").unwrap();
+        assert_eq!(orphan.1, Some(Target::Session(2)));
     }
 
     #[test]

@@ -301,6 +301,30 @@ attached to a session on that machine, with a desktop notification as well:</p>
 <p><code>y</code> allows it, any other key refuses — and the refusal reaches the waiting agent at once,
 rather than leaving it to time out. Without an answer nothing happens at all. In a terminal
 without imkr, <code>imkr screen allow</code> and <code>imkr screen refuse</code> are the same two answers.</p>
+<h3 id="two-keys-without-waiting-to-be-asked">Two keys, without waiting to be asked</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+B s e</code></td>
+<td>steps the setting on: <code>off</code> → <code>ask</code> → <code>on</code> → <code>off</code>, saved to the config at once</td>
+</tr>
+<tr>
+<td><code>Ctrl+B s E</code></td>
+<td>gives the half hour right now — or takes it back while one holds</td>
+</tr>
+</tbody>
+</table>
+<p>Both say in the bar what they did. <code>Ctrl+B s E</code> with the setting <code>off</code> gives nothing and says
+so: an agent is turned away before the permission is ever looked at, so a half hour that
+nobody can use would only read like a yes.</p>
+<p>These are this machine's settings, and the key presses stay on it. <code>Ctrl+B s e</code> writes the
+config file, as every switch in imkr does: the values are kept, comments in the file are not.</p>
 <p>While a permission holds, the control bar says so, and says it louder while something is
 actually happening:</p>
 <pre><code class="language-text"> ⬢ imkr   1  + │ 1 pane · ^B menu · ⦿ screen 29m          ▸ ~/code · ⌂ omarchy

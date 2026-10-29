@@ -48,6 +48,12 @@ pub enum Command {
     /// rather than a row in the settings menu: the answer is a path, and
     /// the setup offers the folders this machine really has.
     ShareFolder,
+    /// Step `computer_use` on: off → ask → on, saved to the config
+    /// (#9095). Local to this machine like the setting itself.
+    ComputerUse,
+    /// Allow agents to see and drive this screen for half an hour now, or
+    /// take a permission back (as `imkr screen allow|refuse`).
+    AllowScreenNow,
     /// What the agents did while no terminal was attached.
     Recap,
     PickPane,
@@ -988,6 +994,20 @@ pub const BINDINGS: &[Binding] = &[
         description: "shared folder for files…",
         group: Group::Sessions,
         keys: &[(Key::plain(Char('f')), C::ShareFolder)],
+    },
+    // `x` in this menu ends the session: a switch for a setting does not
+    // belong next to the one destructive key, so `e` and `E` it is (#9095).
+    Binding {
+        label: "e",
+        description: "agents may use this screen: off/ask/on",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('e')), C::ComputerUse)],
+    },
+    Binding {
+        label: "E",
+        description: "allow this screen now, or take it back",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('E')), C::AllowScreenNow)],
     },
     Binding {
         label: "⌫",

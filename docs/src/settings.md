@@ -107,7 +107,8 @@ about *this* machine and would be wrong anywhere else, so they never go either w
 | `computer_use`, `computer_use_monitor` | whether agents may use this screen, and which one — see [seeing and driving the screen](computer-use.md) |
 
 A machine nobody sits at can stand on `computer_use = "on"` for good while your laptop keeps
-asking, and a sync between them changes neither.
+asking, and a sync between them changes neither. `Ctrl+B s e` steps that setting on the machine
+you are looking at, and `Ctrl+B s E` gives the half hour right away — both stay there too.
 
 ## The shared folder
 

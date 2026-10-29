@@ -121,6 +121,20 @@ attached to a session on that machine, with a desktop notification as well:
 rather than leaving it to time out. Without an answer nothing happens at all. In a terminal
 without imkr, `imkr screen allow` and `imkr screen refuse` are the same two answers.
 
+### Two keys, without waiting to be asked
+
+| | |
+|---|---|
+| `Ctrl+B s e` | steps the setting on: `off` → `ask` → `on` → `off`, saved to the config at once |
+| `Ctrl+B s E` | gives the half hour right now — or takes it back while one holds |
+
+Both say in the bar what they did. `Ctrl+B s E` with the setting `off` gives nothing and says
+so: an agent is turned away before the permission is ever looked at, so a half hour that
+nobody can use would only read like a yes.
+
+These are this machine's settings, and the key presses stay on it. `Ctrl+B s e` writes the
+config file, as every switch in imkr does: the values are kept, comments in the file are not.
+
 While a permission holds, the control bar says so, and says it louder while something is
 actually happening:
 

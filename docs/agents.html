@@ -250,6 +250,33 @@ OSC 9 to the terminal, or none) and shows up in the control bar as well.</p>
 one a session of its own. Together with <code>--window 0</code> the command then takes the place of the
 empty shell a new session starts with: one window, one pane, the agent in it, reachable as
 <code>session/1</code>. In a session that already runs, <code>--window 0</code> opens a window of its own as before.</p>
+<h3 id="sessions-started-for-an-agent">Sessions started for an agent</h3>
+<p>An agent that opens a session for each of its workers leaves a mark on them, so that a list of
+twelve sessions still says which belongs to whom:</p>
+<pre><code class="language-bash">imkr -s api new --start --window 0 --by laptop:imker/0 -- claude
+imkr agents --all --by laptop:imker/0     # only the agents in sessions started for that pane
+</code></pre>
+<p>Typed <strong>in</strong> a pane, <code>--start</code> sets it by itself: the session is marked as started for the pane
+the command ran in (<code>machine:session/pane</code>), and <code>--by</code> is only needed to name another one. A
+<code>new</code> in a session that already runs marks nothing — the session somebody works in is not its
+own agent's errand.</p>
+<p>The mark belongs to the session and lives in its saved layout: it survives a restart, a crash,
+<code>imkr revive</code> and <code>imkr update</code>. Everywhere sessions are listed — the sidebar, <code>Ctrl+B S</code>,
+<code>imkr ls</code>, <code>imkr ls --json</code> (<code>by</code>) — a session started for another sits under it with an arrow:</p>
+<pre><code class="language-text">Sessions
+  imker
+  ↳ api                 ❶
+  ↳ web                 ❷
+  nightly
+    by laptop:imker/0 — gone
+</code></pre>
+<p>Only within one machine, because those lists group by machine; a session whose orchestrator
+sits on another one keeps its place and names it instead. <code>Ctrl+B O</code> shows the whole tree
+across machines, orchestrator above and its sessions below with their state.</p>
+<p><strong>When the orchestrator is gone</strong> — its pane closed, its session ended — the session says
+<code>— gone</code> and goes back to the top level. It keeps running: the mark says who asked for the
+work, not who is allowed to live. A machine that cannot be reached says nothing either way,
+so a laptop that is off does not make its workers look orphaned.</p>
 <h3 id="several-accounts-and-the-next-one-when-one-is-used-up">Several accounts, and the next one when one is used up</h3>
 <p>One machine, several Claude Code and Codex subscriptions, and providers Claude Code reaches by
 address and key (OpenRouter, a local Ollama). Each account is an environment the agent starts
@@ -365,7 +392,8 @@ message each way and how long ago. The box below shows the selected worker's scr
 latest messages; Enter goes there. A pane that only got messages shows who it works for.</p>
 <p>imkr learns this from the messages themselves: the session that delivers one notes the sender,
 and <code>imkr msg</code> tells its own session where it sent one. The newest 400 are kept, also across
-<code>imkr update</code>.</p>
+<code>imkr update</code>. Sessions started with <code>--by</code> show there as well, under the pane they work for,
+even before a single message has gone out.</p>
 <h3 id="other-peoples-imkrs">Other people's imkrs</h3>
 <p>Colleagues with their own imkr (their machine, their Claude account) can message your agents,
 and you theirs, without ssh to each other's machines. Pair once, both sides turn on the web view

@@ -30,6 +30,11 @@ pub struct Saved {
     /// The accounts new shells start with, by agent, see `account`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub accounts: BTreeMap<String, String>,
+    /// Who had this session started (`imkr new --by`), as an address: it
+    /// outlives a restart, a revive and an update, because the session
+    /// belongs under its orchestrator in every list (#9087).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -81,6 +86,7 @@ impl Saved {
             panes,
             template: None,
             accounts: BTreeMap::new(),
+            by: None,
         }
     }
 }

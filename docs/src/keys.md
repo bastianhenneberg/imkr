@@ -97,6 +97,8 @@ Sessions and hives (Ctrl+B, s, then)
   u              accounts: usage and limits
   l              while you were away…
   f              shared folder for files…
+  e              agents may use this screen: off/ask/on
+  E              allow this screen now, or take it back
   ⌫              back
   Esc            cancel
 

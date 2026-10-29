@@ -321,6 +321,33 @@ Projekt-Slug: `imkr`
   so ist „gesperrter Rechner wird abgelehnt" messbar, ohne jemandes Bildschirm zu sperren.
   Am echten Schirm: Testwelt mit eigenem `IMKR_SOCKET`/`IMKR_CONFIG`/`XDG_STATE_HOME`, aber
   **echtem `XDG_RUNTIME_DIR`** (sonst findet es Hyprland nicht).
+- Sessions mit Auftraggeber (#9087): `imkr new --by ADRESSE` (`cli::new`) setzt `Request::New.by`
+  → `App::by`, gespeichert in `Saved::by` (und damit im Handover über `saved`), also über
+  Neustart, `revive` und `update`. Ohne `--by` nimmt `new` den Aufrufer, **aber nur wenn
+  `--start` den Server in genau diesem Aufruf gestartet hat** (`fresh`, #9068) —
+  `protocol::remember_caller`/`caller()` liest `IMKR_PANE`+`IMKR_SESSION` in `main`, **bevor
+  `-s NAME` IMKR_SESSION überschreibt**. Weg nach außen: `App::list` trägt `by` auf **jedem**
+  Pane (wie `workspace_name`; das Reply ist eine Liste), `client::local_sessions` nimmt es vom
+  ersten, ruhende aus `Dormant::layout.by` → `SessionInfo::by` → `ls`, `ls --json`, remote.
+  Anzeige: `App::boss` (`Boss::Running|Gone|Unknown`; `Gone` nur über Rechner, die antworten,
+  `Places::polled` trennt „noch nicht gefragt“ von „läuft nicht“), `App::by_place` (Maschine
+  **wie geschrieben**, `cli::address_parts` ohne das Wegfiltern des eigenen Namens),
+  `App::by_label`, `App::boss_map` (einmal je Adresse, nicht je Zeile je Frame), freie Funktion
+  `tree_order` (Kinder direkt hinter dem Eltern-Eintrag, nur innerhalb **eines** Rechners: die
+  Listen gruppieren nach Rechner und eine Gruppe muss zusammenhängen; Zyklen bleiben Wurzeln).
+  Sidebar `SessionRow::by`/`depth` (`↳`, Unterzeile `by …`), `Ctrl+B S` über `SessionEntry`
+  (6. Feld), `Ctrl+B O` über `App::commissioned`/`crew_session` (Baum **über** Rechner, Gruppe
+  je Auftraggeber, auch wenn er keine Nachricht geschickt hat). Verwaist = nur Marke, nie Ende.
+  `imkr agents --by ADRESSE` (`cli::same_address`). Test: zwei Welten mit Fake-ssh; Falle:
+  `new --start --window 0` legt das Programm auf Pane **1**, `--by host:session/0` zeigt dort
+  ins Leere (und wird korrekt „gone“).
+- Hotkeys Computer-Use (#9095): `Ctrl+B s e` = `Command::ComputerUse` → `App::step_computer_use`
+  (`screen::ComputerUse::ALL` + `config::step_in`, dieselbe Reihenfolge wie das Menü, speichert
+  sofort), `Ctrl+B s E` = `Command::AllowScreenNow` → `App::allow_screen_now` (`screen::allow`/
+  `refuse` als „the user here“, bei `off` gibt es nichts: `cli::permit` weist vorher ab).
+  `s x` ist „end this session“ — ein Schalter gehört nicht neben die zerstörendste Taste.
+  Das Speichern schreibt die **ganze** Config (Test `stepping_computer_use_keeps_the_rest_of_the_config`):
+  Werte bleiben, Kommentare nicht — so war es bei jedem Schalter schon vorher.
 - Ablageordner (#9082): `src/share.rs`, Datei `~/.config/share-dir.toml` (`dir`, `[elsewhere]
   host = pfad`) — **nicht** in imkrs Config: imkr und der AI-Brain-Harness lesen und schreiben
   sie beide, jedes läuft auch allein. Feldnamen sind ein Vertrag, `imkr share --json` druckt

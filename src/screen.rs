@@ -1040,6 +1040,9 @@ pub enum ComputerUse {
 }
 
 impl ComputerUse {
+    /// In the order the settings menu and `Ctrl+B s e` step through.
+    pub const ALL: [ComputerUse; 3] = [ComputerUse::Off, ComputerUse::Ask, ComputerUse::On];
+
     pub fn word(self) -> &'static str {
         match self {
             ComputerUse::Off => "off",

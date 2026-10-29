@@ -220,7 +220,9 @@ which machine, if others are known, is asked first),
 <code>x</code> ends the selected one, <code>r</code> renames it (like <code>imkr rename-session NAME</code>, <code>-s OLD</code> for
 another one), <code>s</code> saves all running sessions as a hive and <code>h</code> opens the hives.
 Every list (sessions, agents, hives, marks, machines) takes <code>/</code> to search: typing narrows it to
-what matches every word, in name, machine, session or directory, Esc clears the search.</p>
+what matches every word, in name, machine, session or directory, Esc clears the search.
+Sessions an agent started for its workers (<code>imkr new --by</code>) sit under it with an arrow — see
+<a href="agents.html#sessions-started-for-an-agent">sessions started for an agent</a>.</p>
 <p><code>Ctrl+B w m</code> moves the active window to another session: pick a running one, or <code>n</code> for a new
 one, started for it. E.g. to gather the windows of one project in a session of their own
 (<code>imkr move-window --window N NAME</code> from a script). Its programs keep running, nothing restarts: the ptys are passed to the other

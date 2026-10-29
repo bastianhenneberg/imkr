@@ -211,14 +211,16 @@ enum Spot {
 }
 
 /// A session in the session list before it becomes a line: where it is,
-/// the hint, its agents by state, what it says when it does not run, and
-/// how long its agents are quiet (`App::quiet_for`).
+/// the hint, its agents by state, what it says when it does not run, how
+/// long its agents are quiet (`App::quiet_for`), and who had it started
+/// (`SessionInfo::by`, #9087).
 type SessionEntry = (
     Place,
     String,
     BTreeMap<String, usize>,
     Option<String>,
     Option<u64>,
+    Option<String>,
 );
 
 /// An agent in the agent list before it becomes a line: its state, how
@@ -493,6 +495,84 @@ struct Places {
     tailnet: Vec<String>,
     /// The devices that have `imkr web` of this machine open.
     web: Vec<crate::web::Seen>,
+    /// Whether the thread has filled this in once. Before it has, an
+    /// empty `local` means "not asked yet" and not "nothing runs" —
+    /// which is the difference between a session whose orchestrator is
+    /// gone and one nobody has looked for yet (#9087).
+    polled: bool,
+}
+
+/// Orders sessions so that each one that was started for another follows
+/// it right away, and says how deep each one sits (#9087).
+///
+/// Only sessions of the same machine are put under each other: every list
+/// groups by machine, and a group has to stay in one piece
+/// (`MenuItem::group`). One whose orchestrator sits elsewhere stays a
+/// root and says `by …` instead.
+fn tree_order<T>(
+    items: Vec<T>,
+    key: impl Fn(&T) -> (Option<String>, String),
+    boss: impl Fn(&T) -> Option<(Option<String>, String)>,
+) -> Vec<(T, usize)> {
+    let keys: Vec<(Option<String>, String)> = items.iter().map(&key).collect();
+    let parent: Vec<Option<usize>> = items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let wanted = boss(item)?;
+            keys.iter().position(|k| *k == wanted).filter(|p| *p != i)
+        })
+        .collect();
+    let mut order: Vec<(usize, usize)> = Vec::with_capacity(items.len());
+    let mut done = vec![false; items.len()];
+    for root in 0..items.len() {
+        if parent[root].is_some() {
+            continue;
+        }
+        let mut stack = vec![(root, 0usize)];
+        while let Some((i, depth)) = stack.pop() {
+            if done[i] {
+                continue;
+            }
+            done[i] = true;
+            order.push((i, depth));
+            // Reversed, so that popping gives them back in their order.
+            let mut kids: Vec<usize> = (0..items.len())
+                .filter(|&kid| parent[kid] == Some(i))
+                .collect();
+            kids.reverse();
+            for kid in kids {
+                // Three levels are plenty; deeper would only eat width.
+                stack.push((kid, (depth + 1).min(3)));
+            }
+        }
+    }
+    // Whoever is left works for each other in a circle: in their own order.
+    for (i, done) in done.iter().enumerate() {
+        if !done {
+            order.push((i, 0));
+        }
+    }
+    let mut taken: Vec<Option<T>> = items.into_iter().map(Some).collect();
+    order
+        .into_iter()
+        .filter_map(|(i, depth)| Some((taken[i].take()?, depth)))
+        .collect()
+}
+
+/// What a session's `by` address points at, as far as this machine can
+/// see (#9087). A machine that does not answer says nothing about its
+/// sessions, so "gone" is only ever said about one that does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Boss {
+    /// It runs: that session is there, and so is the pane.
+    Running(Place),
+    /// The session or its pane is not there any more. The session it
+    /// started keeps running — it is only on its own now.
+    Gone,
+    /// Not visible from here: another machine that is off, or nothing
+    /// asked yet.
+    Unknown,
 }
 
 /// A session to switch to: on this machine (`host` is `None`) or another.
@@ -812,6 +892,11 @@ pub struct App {
     /// The permission on this machine, read every upkeep so the bar can
     /// say that an agent may use this screen and when one just did.
     screen_use: crate::screen::Grant,
+    /// Who had this session started, as an address (`laptop:imker/0`),
+    /// from `imkr new --by` (#9087). An agent that orchestrates others
+    /// opens a session per worker; the mark puts them under it in every
+    /// list and survives a restart through `Saved::by`.
+    by: Option<String>,
     /// The panes marked for Alt+1 … Alt+9, in that order.
     marks: Vec<Mark>,
     /// The other sessions, here and elsewhere, kept up to date by a thread.
@@ -1001,6 +1086,7 @@ impl App {
             plugin_status: Arc::default(),
             screen_ask: None,
             screen_use: crate::screen::Grant::default(),
+            by: None,
             watched_hosts: Arc::default(),
             first_shell: None,
             agents: HashMap::new(),
@@ -1146,6 +1232,7 @@ impl App {
         };
         self.carry_idle(&saved);
         self.accounts = saved.accounts.clone();
+        self.by = saved.by.clone();
 
         let template = saved.template.clone();
         let resume_commands = self.config.resume_commands();
@@ -1302,6 +1389,7 @@ impl App {
         let saved = handover.saved;
         self.carry_idle(&saved);
         self.accounts = saved.accounts.clone();
+        self.by = saved.by.clone();
         let mut handed = handover.panes;
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
@@ -1470,6 +1558,7 @@ impl App {
             .collect();
         let mut saved = Saved::new(self.workspace, workspaces, panes);
         saved.accounts = self.accounts.clone();
+        saved.by = self.by.clone();
         saved
     }
 
@@ -2448,7 +2537,15 @@ impl App {
                 workspace,
                 cwd,
                 fresh,
-            } => self.new_pane(&command, float, workspace, cwd, fresh),
+                by,
+            } => {
+                // Who asked for the session, not for the pane: given, it
+                // marks this session from now on (#9087).
+                if let Some(by) = by.map(|by| by.trim().to_owned()) {
+                    self.by = Some(by).filter(|by| !by.is_empty());
+                }
+                self.new_pane(&command, float, workspace, cwd, fresh)
+            }
             Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
             Request::Layout { name, save } => self
                 .layout(&name, save)
@@ -2512,6 +2609,10 @@ impl App {
                     "session": pane.session,
                     "name": pane.name,
                     "workspace_name": ws.name,
+                    // The session's, repeated per pane like its window's
+                    // name: the reply is a list of panes, and this is how
+                    // `client::local_sessions` reads session-wide things.
+                    "by": self.by,
                     "meta": pane.meta().map(agent::Meta::label),
                     "title": Some(pane.title()).filter(|t| !t.is_empty()),
                     "account": pane.account(),
@@ -3775,6 +3876,66 @@ impl App {
         });
     }
 
+    /// `Ctrl+B s e`: off → ask → on and back to off, saved right away
+    /// (#9095). The same step the settings menu takes, so there is one
+    /// order of the three values (`ComputerUse::ALL`).
+    ///
+    /// **It writes the config file, and the file is the whole config.**
+    /// `computer_use` is one of `settings::LOCAL_KEYS` and never travels
+    /// to another machine, but saving here is no different from the
+    /// settings menu or `Ctrl+B b`: what imkr parsed, it writes back.
+    /// Keys it does not know and comments are not kept — that is older
+    /// than this key and the same for every switch in imkr.
+    fn step_computer_use(&mut self) {
+        self.config.computer_use = crate::config::step_in(
+            &crate::screen::ComputerUse::ALL,
+            &self.config.computer_use,
+            true,
+        );
+        let word = self.config.computer_use.word();
+        let note = match self.config.computer_use {
+            crate::screen::ComputerUse::Off => "nobody sees or drives this screen",
+            crate::screen::ComputerUse::Ask => "imkr asks here first, E allows it now",
+            crate::screen::ComputerUse::On => "agents may see and drive this screen",
+        };
+        self.flash = Some(match self.config.save() {
+            Ok(_) => format!("agents may use this screen: {word} — {note}"),
+            Err(e) => format!("agents may use this screen: {word} (not saved: {e:#})"),
+        });
+    }
+
+    /// `Ctrl+B s E`: the permission `imkr screen allow` gives, from here —
+    /// and the way back when one holds. The answer belongs to whoever
+    /// sits at this machine, and that is who pressed the key.
+    ///
+    /// With the setting off it gives nothing: `cli::permit` turns agents
+    /// away before it ever looks at the permission, so a half-hour grant
+    /// would say yes on the bar and no to every agent.
+    fn allow_screen_now(&mut self) {
+        if self.config.computer_use == crate::screen::ComputerUse::Off {
+            self.flash =
+                Some("agents may not use this screen at all — e steps that to ask".to_owned());
+            return;
+        }
+        let holds = crate::screen::grant().allowed();
+        self.flash = Some(if holds {
+            match crate::screen::refuse("the user here") {
+                Ok(()) => "the screen stays yours".to_owned(),
+                Err(e) => format!("not taken back: {e:#}"),
+            }
+        } else {
+            match crate::screen::allow("the user here") {
+                Ok(grant) => format!(
+                    "agents may use this screen for {} minutes",
+                    grant.left().unwrap_or_default().as_secs() / 60
+                ),
+                Err(e) => format!("not allowed: {e:#}"),
+            }
+        });
+        self.screen_use = crate::screen::grant();
+        self.screen_ask = None;
+    }
+
     /// Any other key: a no, said right away so nobody waits for it.
     fn refuse_screen(&mut self) {
         let who = self
@@ -4102,6 +4263,10 @@ impl App {
             } else {
                 info.dots()
             },
+            // The address as it stands; the label and the indent come
+            // once the whole list is in (`tree_order`).
+            by: Some(info.by.clone()).filter(|by| !by.is_empty()),
+            depth: 0,
             host,
             name: info.name.clone(),
             problem: None,
@@ -4127,6 +4292,8 @@ impl App {
                         problem: Some("no session yet".into()),
                         offline: false,
                         dormant: false,
+                        by: None,
+                        depth: 0,
                     });
                 }
                 Ok(sessions) => {
@@ -4142,6 +4309,8 @@ impl App {
                         problem: Some(short_problem(e)),
                         offline: true,
                         dormant: false,
+                        by: None,
+                        depth: 0,
                     });
                     // What ran there when it last answered, greyed out.
                     let seen = places.last_seen.get(host).cloned().unwrap_or_default();
@@ -4155,13 +4324,52 @@ impl App {
                             problem: None,
                             offline: true,
                             dormant: false,
+                            by: None,
+                            depth: 0,
                         });
                     }
                 }
             }
         }
         rows.retain(|row| !row.dormant);
-        rows
+        // Every session that was started for another, right under it;
+        // the own session's mark comes from this server, not the poll.
+        if let Some(mine) = rows
+            .iter_mut()
+            .find(|row| row.current && row.host.is_none())
+        {
+            mine.by = self.by.clone();
+        }
+        let bosses = self.boss_map(rows.iter().filter_map(|row| row.by.as_deref()));
+        let running = |by: &str| matches!(bosses.get(by), Some(Boss::Running(_)));
+        let ordered = tree_order(
+            rows,
+            |row| (row.host.clone(), row.name.clone()),
+            |row| {
+                let by = row.by.as_deref()?;
+                // An orchestrator whose pane is gone keeps no worker
+                // under it: the session is on its own, and says so.
+                running(by).then_some(())?;
+                let place = self.by_place(by, row.host.as_deref())?;
+                Some((place.host, place.name))
+            },
+        );
+        ordered
+            .into_iter()
+            .map(|(mut row, depth)| {
+                row.depth = depth;
+                // Under its orchestrator the arrow says it; otherwise the
+                // line underneath names it, and says when it is gone.
+                row.by = match (depth, row.by.take()) {
+                    (0, Some(by)) => {
+                        let boss = bosses.get(&by).cloned().unwrap_or(Boss::Unknown);
+                        Some(Self::by_label(&by, &boss))
+                    }
+                    _ => None,
+                };
+                row
+            })
+            .collect()
     }
 
     /// This machine's name as the user knows it: the name their client
@@ -4904,6 +5112,8 @@ impl App {
                     self.flash = Some(format!("shared folder: {e:#}"));
                 }
             }
+            Command::ComputerUse => self.step_computer_use(),
+            Command::AllowScreenNow => self.allow_screen_now(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::Accounts => self.mode = Mode::Accounts(0),
             Command::NewAgent => self.new_agent(),
@@ -6027,6 +6237,14 @@ impl App {
                 .find(|s| s.name == name)
                 .and_then(protocol::SessionInfo::quiet_for)
         };
+        // Who had it started, as the address stands (#9087).
+        let by_of = |infos: &[protocol::SessionInfo], name: &str| {
+            infos
+                .iter()
+                .find(|s| s.name == name)
+                .map(|s| s.by.clone())
+                .filter(|by| !by.is_empty())
+        };
         let mut own = BTreeMap::new();
         for &id in self.panes.keys() {
             if let Some(state) = self.shown_state(id) {
@@ -6054,7 +6272,13 @@ impl App {
             } else {
                 quiet_of(&places.local, &name)
             };
-            entries.push((Place { host: None, name }, hint, agents, dormant, quiet));
+            // This server knows its own mark; the poll leaves it out.
+            let by = if name == current {
+                self.by.clone()
+            } else {
+                by_of(&places.local, &name)
+            };
+            entries.push((Place { host: None, name }, hint, agents, dormant, quiet, by));
         }
         // The machine the active client sits at, to go back to.
         if let Some(origin) = self.origin.clone() {
@@ -6066,7 +6290,15 @@ impl App {
                 let agents = agents_of(&origin.infos, &place.name);
                 let dormant = dormant_of(&origin.infos, &place.name);
                 let quiet = quiet_of(&origin.infos, &place.name);
-                entries.push((place, format!("⌂ {}", origin.host), agents, dormant, quiet));
+                let by = by_of(&origin.infos, &place.name);
+                entries.push((
+                    place,
+                    format!("⌂ {}", origin.host),
+                    agents,
+                    dormant,
+                    quiet,
+                    by,
+                ));
             }
         }
         // Machines that answer but run nothing yet: going there starts one.
@@ -6089,12 +6321,13 @@ impl App {
                     session.agents.clone(),
                     dormant,
                     session.quiet_for(),
+                    Some(session.by.clone()).filter(|by| !by.is_empty()),
                 ));
             }
         }
         let old: Vec<Place> = entries
             .iter()
-            .filter(|(place, _, _, dormant, _)| {
+            .filter(|(place, _, _, dormant, ..)| {
                 let current = place.host.is_none() && place.name == current;
                 is_old_session(current, empty.contains(place), dormant.is_some())
             })
@@ -6170,22 +6403,50 @@ impl App {
                     BTreeMap::new(),
                     Some(format!("archived {day}").trim_end().to_owned()),
                     None,
+                    None,
                 ));
             }
         }
+        // Every session that was started for another goes right under it,
+        // as long as both are the same machine's: the groups below are
+        // per machine and have to stay in one piece (#9087).
+        // What does not run orchestrates nobody and sits under nobody: the
+        // marker in the key makes a dormant session unmatchable, and the
+        // sort below moves it into the group of its own either way.
+        let bosses = self.boss_map(entries.iter().filter_map(|(.., by)| by.as_deref()));
+        let entries: Vec<(SessionEntry, usize)> = tree_order(
+            entries,
+            |(place, _, _, dormant, ..)| {
+                let asleep = if dormant.is_some() { "◌" } else { "" };
+                (place.host.clone(), format!("{asleep}{}", place.name))
+            },
+            |(place, _, _, dormant, _, by)| {
+                dormant.is_none().then_some(())?;
+                let by = by.as_deref()?;
+                // Its pane is gone: on its own, see `session_rows`.
+                matches!(bosses.get(by), Some(Boss::Running(_))).then_some(())?;
+                let found = self.by_place(by, place.host.as_deref())?;
+                Some((found.host, found.name))
+            },
+        );
         let (places, items): (Vec<Place>, Vec<menu::MenuItem>) = entries
             .into_iter()
             .enumerate()
-            .map(|(i, (place, hint, agents, dormant, quiet))| {
+            .map(|(i, ((place, hint, agents, dormant, quiet, by), depth))| {
                 if let Some(dormant) = dormant {
                     let hint = if hint.is_empty() {
                         format!("{dormant} · Enter brings it back")
                     } else {
                         format!("{dormant} · {hint}")
                     };
+                    // Who it was started for, also while it is asleep.
+                    let hint = match by {
+                        Some(by) => format!("{hint} · by {by}"),
+                        None => hint,
+                    };
                     let item = menu::MenuItem {
                         key: list_key_char(i),
-                        title: format!("◌ {}", place.name),
+                        title: format!("◌ {}{}", "  ".repeat(depth), place.name),
                         hint,
                         danger: false,
                         apart: false,
@@ -6223,6 +6484,19 @@ impl App {
                     (false, true) => counts,
                     (false, false) => format!("{counts} · {hint}"),
                 };
+                // Under its orchestrator the arrow says it; a session
+                // whose orchestrator sits elsewhere or is gone says so.
+                let by = by.filter(|_| depth == 0).map(|by| {
+                    let boss = bosses.get(&by).cloned().unwrap_or(Boss::Unknown);
+                    Self::by_label(&by, &boss)
+                });
+                let hint = match (by, hint.is_empty()) {
+                    (None, _) => hint,
+                    (Some(by), true) => by,
+                    (Some(by), false) => format!("{hint} · {by}"),
+                };
+                let under = "  ".repeat(depth);
+                let arrow = if depth > 0 { "↳ " } else { "" };
                 let item = menu::MenuItem {
                     key: if i < 9 {
                         char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
@@ -6230,8 +6504,10 @@ impl App {
                         ' '
                     },
                     title: match urgent {
-                        Some(state) => format!("{} {}", state.symbol(), place.name),
-                        None => format!("  {}", place.name),
+                        Some(state) => {
+                            format!("{} {under}{arrow}{}", state.symbol(), place.name)
+                        }
+                        None => format!("  {under}{arrow}{}", place.name),
                     },
                     hint,
                     danger: false,
@@ -7334,6 +7610,16 @@ impl App {
     /// newest exchange first. The orchestrators (panes that sent) lead.
     fn crew_rows(&self) -> Vec<CrewRow> {
         let others = self.other_agents();
+        // The worker sessions, by the pane here they work for (#9087).
+        let commissioned = self.commissioned();
+        let mut mine: Vec<(PaneId, usize)> = Vec::new();
+        let mut elsewhere: Vec<usize> = Vec::new();
+        for (i, (by, ..)) in commissioned.iter().enumerate() {
+            match self.pane_of_address(by) {
+                Some(id) => mine.push((id, i)),
+                None => elsewhere.push(i),
+            }
+        }
         let mut panes: Vec<(bool, u64, PaneId)> = Vec::new();
         for note in self.mail_log.iter().rev() {
             if !self.panes.contains_key(&note.pane) {
@@ -7342,6 +7628,14 @@ impl App {
             match panes.iter_mut().find(|(_, _, p)| *p == note.pane) {
                 Some(entry) => entry.0 |= note.sent,
                 None => panes.push((note.sent, note.at, note.pane)),
+            }
+        }
+        // A pane that started sessions orchestrates, whether or not it has
+        // sent a message yet.
+        for (id, _) in &mine {
+            match panes.iter_mut().find(|(_, _, p)| p == id) {
+                Some(entry) => entry.0 = true,
+                None => panes.push((true, 0, *id)),
             }
         }
         panes.sort_by_key(|(sent, at, _)| (!*sent, std::cmp::Reverse(*at)));
@@ -7358,12 +7652,20 @@ impl App {
                     peers.push(&note.peer);
                 }
             }
-            let workers = notes
+            let sessions: Vec<usize> = mine
+                .iter()
+                .filter(|(pane, _)| *pane == id)
+                .map(|(_, i)| *i)
+                .collect();
+            let mut told = notes
                 .iter()
                 .filter(|n| n.sent)
-                .map(|n| &n.peer)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len();
+                .map(|n| n.peer.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            for i in &sessions {
+                told.insert(commissioned[*i].1.name.clone());
+            }
+            let workers = told.len();
             let group = Some(if sent {
                 format!("{label} · orchestrates {workers}")
             } else {
@@ -7406,8 +7708,174 @@ impl App {
                     item: crew_item(state, format!("  {label}"), hint.join("  "), group.clone()),
                 });
             }
+            // The sessions this pane had started, under it.
+            for i in sessions {
+                let (_, place, info) = &commissioned[i];
+                let mut row = self.crew_session(place, info, &others);
+                row.item.group = group.clone();
+                rows.push(row);
+            }
+        }
+        // Sessions whose orchestrator is not a pane here: a group of its
+        // own, headed by whoever it works for, wherever that is.
+        let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+        for i in elsewhere {
+            let by = commissioned[i].0.clone();
+            match groups
+                .iter_mut()
+                .find(|(other, _)| crate::cli::same_address(other, &by))
+            {
+                Some((_, found)) => found.push(i),
+                None => groups.push((by, vec![i])),
+            }
+        }
+        for (by, found) in groups {
+            let (at, state, label, tail) = self.crew_peer(&by, &others);
+            let gone = self.boss(&by) == Boss::Gone;
+            let label = if gone {
+                format!("{label} — gone")
+            } else {
+                label
+            };
+            let group = Some(format!("{label} · orchestrates {}", found.len()));
+            rows.push(CrewRow {
+                at,
+                preview: tail,
+                item: crew_item(state, label, String::from("itself"), group.clone()),
+            });
+            for i in found {
+                let (_, place, info) = &commissioned[i];
+                let mut row = self.crew_session(place, info, &others);
+                row.item.group = group.clone();
+                rows.push(row);
+            }
         }
         rows
+    }
+
+    /// The pane of this session an address names, by number, name or
+    /// program — `None` when it names another session or is not here.
+    fn pane_of_address(&self, address: &str) -> Option<PaneId> {
+        let (machine, session, who) = crate::cli::parse_address(address).ok()?;
+        if machine.is_some() || session.is_some_and(|s| s != protocol::session_name()) {
+            return None;
+        }
+        let wanted = who.to_lowercase();
+        who.parse::<PaneId>()
+            .ok()
+            .filter(|id| self.panes.contains_key(id))
+            .or_else(|| {
+                self.panes.iter().find_map(|(&id, pane)| {
+                    let name = pane.name.clone().or_else(|| pane.program())?;
+                    (name.to_lowercase() == wanted).then_some(id)
+                })
+            })
+    }
+
+    /// Every session, here and elsewhere, that was started for a pane
+    /// (`imkr new --by`): the address it works for and where it is
+    /// (#9087). This session with its own mark among them.
+    fn commissioned(&self) -> Vec<(String, Place, protocol::SessionInfo)> {
+        let places = self.places.lock().unwrap().clone();
+        let mut out: Vec<(String, Place, protocol::SessionInfo)> = Vec::new();
+        let mut take = |host: Option<String>, info: &protocol::SessionInfo| {
+            if info.by.is_empty() || info.dormant.is_some() {
+                return;
+            }
+            out.push((
+                info.by.clone(),
+                Place {
+                    host,
+                    name: info.name.clone(),
+                },
+                info.clone(),
+            ));
+        };
+        for info in &places.local {
+            take(None, info);
+        }
+        if let Some(origin) = &self.origin {
+            for info in &origin.infos {
+                take(Some(origin.host.clone()), info);
+            }
+        }
+        for (host, sessions) in &self.known_hosts() {
+            for info in sessions.iter().flatten() {
+                take(Some(host.clone()), info);
+            }
+        }
+        // This session's own mark comes from this server; the poll leaves
+        // its own session out.
+        if let Some(by) = &self.by {
+            let mut own = protocol::SessionInfo {
+                name: protocol::session_name(),
+                panes: self.panes.len(),
+                windows: 1 + self.hidden.len(),
+                by: by.clone(),
+                ..Default::default()
+            };
+            for id in self.panes.keys() {
+                if let Some(state) = self.shown_state(*id) {
+                    *own.agents.entry(state.name().to_owned()).or_default() += 1;
+                }
+            }
+            out.push((
+                by.clone(),
+                Place {
+                    host: None,
+                    name: own.name.clone(),
+                },
+                own,
+            ));
+        }
+        out
+    }
+
+    /// One worker session in the orchestration view: where it is, what
+    /// its agents do, and the agent to jump to.
+    fn crew_session(
+        &self,
+        place: &Place,
+        info: &protocol::SessionInfo,
+        others: &[(Place, protocol::AgentInfo)],
+    ) -> CrewRow {
+        let machine = self
+            .machine_label(place.host.as_deref())
+            .or_else(|| place.host.clone())
+            .unwrap_or_else(protocol::machine_name);
+        let own = place.host.is_none() && place.name == protocol::session_name();
+        let mut hint = info
+            .counts()
+            .into_iter()
+            .map(|(state, n)| format!("{}{n}", state.symbol()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if own {
+            hint = format!("this session  {hint}");
+        }
+        if let Some(quiet) = info.quiet_for().filter(|&q| q >= 60) {
+            let ago = sidebar::age(Duration::from_secs(quiet));
+            hint = format!("{hint}  {ago} ago");
+        }
+        // Enter goes to the agent that needs the user first.
+        let at = others
+            .iter()
+            .enumerate()
+            .filter(|(_, (there, _))| there == place)
+            .min_by_key(|(_, (_, agent))| {
+                AgentState::from_name(&agent.state).map_or(9, sidebar::urgency)
+            })
+            .map(|(i, _)| AgentAt::Other(i));
+        CrewRow {
+            at,
+            preview: String::new(),
+            item: crew_item(
+                info.urgent().map(|(state, _)| state),
+                format!("  ↳ {machine} › {}", place.name),
+                hint.trim().to_owned(),
+                None,
+            ),
+        }
     }
 
     /// A pane here as the orchestration view shows it: state, where it is
@@ -8564,6 +9032,121 @@ impl App {
                     .find(|(h, _)| h == host)
                     .and_then(|(_, sessions)| find(&sessions.ok()?))
             }
+        }
+    }
+
+    /// The session an address names, as a place in the lists here: which
+    /// machine (`None` for this one) and which session. `host` is the
+    /// machine of whoever wrote the address — a session on another
+    /// machine names its own machine, and `machine_name()` here is not
+    /// it (#9087).
+    ///
+    /// `None` when the address is no address, or names a machine other
+    /// than `host`: such a session stays where it is and says `by …`
+    /// instead of moving under an orchestrator somewhere else.
+    fn by_place(&self, by: &str, host: Option<&str>) -> Option<Place> {
+        let (machine, session, _) = crate::cli::address_parts(by).ok()?;
+        let name = session?;
+        let here = machine.as_deref().is_none_or(|m| match host {
+            Some(host) => m == host,
+            None => m == protocol::machine_name() || m == protocol::hostname(),
+        });
+        here.then(|| Place {
+            host: host.map(str::to_owned),
+            name,
+        })
+    }
+
+    /// `by laptop:imker/0`, without this machine's name when it is this
+    /// one, and said to be gone when the orchestrator is not there any
+    /// more (#9087).
+    fn by_label(by: &str, boss: &Boss) -> String {
+        let short = by
+            .strip_prefix(&format!("{}:", protocol::machine_name()))
+            .unwrap_or(by);
+        match boss {
+            Boss::Gone => format!("by {short} — gone"),
+            _ => format!("by {short}"),
+        }
+    }
+
+    /// Looks `boss` up once per address, for a list that asks about the
+    /// same orchestrator in every row and is drawn every frame.
+    fn boss_map<'a>(&self, addresses: impl Iterator<Item = &'a str>) -> HashMap<String, Boss> {
+        let mut map: HashMap<String, Boss> = HashMap::new();
+        for by in addresses {
+            if !map.contains_key(by) {
+                map.insert(by.to_owned(), self.boss(by));
+            }
+        }
+        map
+    }
+
+    /// Whether the session that had `by` started it is still there
+    /// (#9087). A session is never ended over this — the mark only says
+    /// that nobody is waiting for its work any more.
+    fn boss(&self, by: &str) -> Boss {
+        let Ok((machine, session, who)) = crate::cli::parse_address(by) else {
+            return Boss::Unknown;
+        };
+        let place = Place {
+            host: machine,
+            name: session.unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned()),
+        };
+        let named = |name: Option<String>| name.is_some_and(|name| name.eq_ignore_ascii_case(&who));
+        // This session answers for itself: its panes are right here.
+        if place.host.is_none() && place.name == protocol::session_name() {
+            let here = who
+                .parse::<PaneId>()
+                .is_ok_and(|id| self.panes.contains_key(&id))
+                || self
+                    .panes
+                    .values()
+                    .any(|p| named(p.name.clone().or_else(|| p.program())));
+            return if here {
+                Boss::Running(place)
+            } else {
+                Boss::Gone
+            };
+        }
+        match &place.host {
+            // Nothing asked yet is not the same as nothing running.
+            None if !self.places.lock().unwrap().polled => return Boss::Unknown,
+            None => {}
+            // A machine that does not answer keeps its sessions to itself.
+            Some(host) => {
+                let answers = self
+                    .known_hosts()
+                    .into_iter()
+                    .any(|(h, sessions)| h == *host && sessions.is_ok())
+                    || self
+                        .origin
+                        .as_ref()
+                        .is_some_and(|o| o.host == *host && !o.infos.is_empty());
+                if !answers {
+                    return Boss::Unknown;
+                }
+            }
+        }
+        let Some(info) = self.session_info(&place) else {
+            return Boss::Gone;
+        };
+        if info.dormant.is_some() {
+            return Boss::Gone;
+        }
+        // Versions before list no panes at all: that the session runs is
+        // everything they say, and it is enough not to call it gone.
+        if info.all_panes.is_empty() {
+            return Boss::Running(place);
+        }
+        let there = info
+            .all_panes
+            .iter()
+            .any(|p| p.pane.to_string() == who || p.program.eq_ignore_ascii_case(&who));
+        if there {
+            Boss::Running(place)
+        } else {
+            Boss::Gone
         }
     }
 
@@ -12617,6 +13200,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
             let mut known = places.lock().unwrap();
             known.local = local;
             known.web = web;
+            known.polled = true;
             drop(known);
 
             if hives_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {
@@ -13347,6 +13931,72 @@ fn with_title(label: String, title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Sessions started for another sit under it, in the order they came,
+    /// and only within the same machine (#9087).
+    #[test]
+    fn worker_sessions_come_under_their_orchestrator() {
+        // (machine, name, who it works for)
+        let of = |m: Option<&str>, n: &str, by: Option<(Option<&str>, &str)>| {
+            (
+                m.map(str::to_owned),
+                n.to_owned(),
+                by.map(|(m, n)| (m.map(str::to_owned), n.to_owned())),
+            )
+        };
+        let items = vec![
+            of(None, "imker", None),
+            of(None, "beta", Some((None, "imker"))),
+            of(Some("laptop"), "work", None),
+            of(None, "alpha", Some((None, "imker"))),
+            // Its orchestrator is on another machine: stays a root.
+            of(None, "far", Some((Some("laptop"), "work"))),
+            of(None, "deep", Some((None, "alpha"))),
+        ];
+        let ordered = super::tree_order(
+            items,
+            |(m, n, _)| (m.clone(), n.clone()),
+            // What `App::by_place` does: an orchestrator on another
+            // machine is none for this list.
+            |(m, _, by)| by.clone().filter(|(there, _)| there == m),
+        );
+        let seen: Vec<(&str, usize)> = ordered
+            .iter()
+            .map(|((_, name, _), depth)| (name.as_str(), *depth))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("imker", 0),
+                ("beta", 1),
+                ("alpha", 1),
+                ("deep", 2),
+                // Roots keep the order they came in, machine by machine.
+                ("work", 0),
+                ("far", 0),
+            ]
+        );
+    }
+
+    /// Two sessions that started each other must not take the list with
+    /// them: each still shows, once.
+    #[test]
+    fn sessions_that_point_at_each_other_still_show() {
+        let items = vec![
+            (String::from("a"), Some(String::from("b"))),
+            (String::from("b"), Some(String::from("a"))),
+            (String::from("c"), None),
+        ];
+        let ordered = super::tree_order(
+            items,
+            |(name, _)| (None, name.clone()),
+            |(_, by)| by.clone().map(|by| (None, by)),
+        );
+        let mut names: Vec<String> = ordered.iter().map(|((n, _), _)| n.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a", "b", "c"]);
+        assert!(ordered.iter().all(|(_, depth)| *depth == 0));
+    }
 
     #[test]
     fn words_move_like_vim_big_words() {

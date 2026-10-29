@@ -137,6 +137,12 @@ pub struct SessionInfo {
     /// When it stopped or was closed, seconds since 1970.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub dormant_since: u64,
+    /// Who had this session started, as an address (`laptop:imker/0`):
+    /// an agent that orchestrates others opens sessions for them, and
+    /// they belong under it in every list (#9087). Empty for a session
+    /// the user started, and from versions before.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub by: String,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -512,6 +518,12 @@ pub enum Request {
         /// servers do not know the field and behave as before.
         #[serde(default)]
         fresh: bool,
+        /// Who asked for this session, as an address: `imkr new --by
+        /// laptop:imker/0`, or the pane the command was typed in when
+        /// `--start` started the server right here (#9087). `None`
+        /// leaves the session's own mark alone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
     },
     /// Shows pane `pane` on this connection from now on: after the reply,
     /// its history and screen and then its output come as
@@ -674,6 +686,27 @@ pub fn test_socket() -> Option<PathBuf> {
     std::env::var_os("IMKR_SOCKET")
         .map(PathBuf::from)
         .filter(|path| path.parent() != runtime_dir().ok().as_deref())
+}
+
+/// The pane this command was typed in, as an address
+/// (`machine:session/pane`), or `None` outside an imkr pane.
+///
+/// Remembered once, in `main`, **before `-s NAME` overwrites
+/// `IMKR_SESSION`**: `imkr -s other new --start` would otherwise read the
+/// session it is about to start as the one that asked for it.
+static CALLER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Remembers it. Called once in `main`, before `-s` is taken out.
+pub fn remember_caller() {
+    let caller = std::env::var("IMKR_PANE")
+        .ok()
+        .filter(|pane| pane.parse::<PaneId>().is_ok())
+        .map(|pane| format!("{}:{}/{pane}", machine_name(), session_name()));
+    let _ = CALLER.set(caller);
+}
+
+pub fn caller() -> Option<String> {
+    CALLER.get().cloned().flatten()
 }
 
 pub fn session_name() -> String {
@@ -894,6 +927,7 @@ mod tests {
                 workspace: Some(2),
                 cwd: None,
                 fresh: false,
+                by: Some("laptop:imker/0".into()),
             }),
             ClientMsg::Request(Request::Tap {
                 pane: 4,

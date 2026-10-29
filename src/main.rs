@@ -60,7 +60,7 @@ Commands:
                 images). E.g. `imkr --host server -s work`
   proxy [--start]
                 connect stdin/stdout to the session, used by --host
-  ls [--json]   list the running sessions
+  ls [--json]   list the running sessions, with who each was started for
   dirs [DIR]    the directories in DIR (or the one on stdin) as JSON, for
                 completing a session's directory from another machine
   hive ls       list the hives: saved groups of sessions
@@ -197,9 +197,10 @@ For scripts and agents:
   subscribe [--snapshot]
                 what changes, as JSON lines: agent states, panes opened,
                 closed and moved, in every session here (-s: only that one)
-  agents [--all] [--json]               every agent in every session here, with
+  agents [--all] [--json] [--by A]      every agent in every session here, with
                                         --all also on the other machines, and
-                                        its address for msg
+                                        its address for msg; --by only those in
+                                        sessions started for that pane
   push test                             send a test push the way [push] in the
                                         config says (ntfy, webhook): agents that
                                         need you, fail or run out reach the phone
@@ -214,13 +215,18 @@ For scripts and agents:
   notify [--title T] [--pane N] <text>  show a notification (desktop, terminal or
                                         off, as set in the settings)
   new [--float] [--window N] [--dir D] [--focus] [--name NAME] [--start]
-      [-- command args...]              start a command in a new pane (window 0:
+      [--by ADDRESS] [-- command args...]
+                                        start a command in a new pane (window 0:
                                         a new window); --focus goes there,
                                         --name names a new window; --start
                                         starts the session first if it does not
                                         run, and with window 0 the command then
                                         takes the place of the empty shell it
-                                        starts with, in window 1
+                                        starts with, in window 1. --by ADDRESS
+                                        marks the session as started for that
+                                        pane (`machine:session/pane`): the
+                                        lists show it under its orchestrator.
+                                        From a pane, --start sets it by itself
   --host H new [--dir D] [-- command]   a window here whose program runs on H
   note [--pane N] [<text> | ls]          put a thought on a pane's notepad
                                         (Ctrl+B t), or list it; its agent
@@ -280,8 +286,10 @@ fn main() -> Result<()> {
         None => None,
     };
     // The session asked from, before `-s` changes it: a hosted window
-    // shows up there.
+    // shows up there, and `imkr new` marks the session it starts as that
+    // pane's (#9087).
     let here = protocol::socket_path().ok();
+    protocol::remember_caller();
     let mut session = None;
     // `-s NAME` anywhere, or `attach -t NAME` as in tmux, picks the session.
     if let Some(i) = args.iter().position(|a| {

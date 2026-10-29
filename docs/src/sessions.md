@@ -31,6 +31,8 @@ which machine, if others are known, is asked first),
 another one), `s` saves all running sessions as a hive and `h` opens the hives.
 Every list (sessions, agents, hives, marks, machines) takes `/` to search: typing narrows it to
 what matches every word, in name, machine, session or directory, Esc clears the search.
+Sessions an agent started for its workers (`imkr new --by`) sit under it with an arrow — see
+[sessions started for an agent](agents.md#sessions-started-for-an-agent).
 
 `Ctrl+B w m` moves the active window to another session: pick a running one, or `n` for a new
 one, started for it. E.g. to gather the windows of one project in a session of their own

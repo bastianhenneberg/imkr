@@ -675,7 +675,7 @@ fn step_placement(p: Placement, allow_off: bool, forward: bool) -> Placement {
 
 /// The item after (or before) `current` in `items`, wrapping around. The
 /// first item when `current` is not among them.
-fn step_in<T: Clone + PartialEq>(items: &[T], current: &T, forward: bool) -> T {
+pub(crate) fn step_in<T: Clone + PartialEq>(items: &[T], current: &T, forward: bool) -> T {
     let len = items.len();
     let next = match items.iter().position(|item| item == current) {
         Some(i) if forward => (i + 1) % len,
@@ -727,15 +727,7 @@ pub const SETTINGS: &[Setting] = &[
         name: "Agents may use this screen",
         value: |c| c.computer_use.word().to_owned(),
         step: |c, forward| {
-            c.computer_use = step_in(
-                &[
-                    crate::screen::ComputerUse::Off,
-                    crate::screen::ComputerUse::Ask,
-                    crate::screen::ComputerUse::On,
-                ],
-                &c.computer_use,
-                forward,
-            )
+            c.computer_use = step_in(&crate::screen::ComputerUse::ALL, &c.computer_use, forward)
         },
     },
     Setting {
@@ -1141,6 +1133,64 @@ mod tests {
             (setting.step)(&mut config, false);
             assert_eq!((setting.value)(&config), before, "{}", setting.name);
         }
+    }
+
+    /// `Ctrl+B s e` writes the config file, and `Config::save` writes
+    /// the whole config — so the question is whether anything else gets
+    /// lost on the way (#9095). Everything imkr knows survives,
+    /// `computer_use` among the keys that stay on this machine
+    /// (`settings::LOCAL_KEYS`): the switch changes one value and
+    /// nothing else.
+    #[test]
+    fn stepping_computer_use_keeps_the_rest_of_the_config() {
+        let text = "\
+theme = \"catppuccin\"
+default_agent = \"codex\"
+nerd_font = true
+images = false
+name = \"codingmachine\"
+hosts = [\"laptop\", \"desktop\"]
+plugin_catalogs = [\"imkr/plugins\"]
+web = true
+web_listen = \"100.64.0.1:4657\"
+computer_use = \"off\"
+computer_use_monitor = \"AGENT\"
+extra_agents = [\"pi\"]
+
+[sidebar]
+enabled = false
+width = 30
+
+[bars]
+tabs = \"top\"
+
+[which_key]
+position = \"right\"
+
+[push]
+ntfy = \"https://ntfy.sh/imkr\"
+
+[agent_commands]
+claude = \"claude --resume\"
+
+[[commands]]
+key = \"g\"
+name = \"lazygit\"
+command = \"lazygit\"
+
+[[hooks]]
+on = \"blocked\"
+run = \"notify-send blocked\"
+";
+        let before = Config::parse(text).unwrap();
+        let mut after = before.clone();
+        after.computer_use = step_in(&crate::screen::ComputerUse::ALL, &after.computer_use, true);
+        // What `Config::save` would write, read back as imkr reads it.
+        let written = Config::parse(&toml::to_string_pretty(&after).unwrap()).unwrap();
+        assert_eq!(written.computer_use, crate::screen::ComputerUse::Ask);
+        let mut back = written;
+        back.computer_use = before.computer_use;
+        assert_eq!(back, before);
     }
 
     #[test]
