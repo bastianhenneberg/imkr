@@ -518,12 +518,31 @@ fn yes() -> bool {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AccountFallback {
-    /// Say so, with the next free account, and switch on a key.
+    /// Say so, with the freest account, and switch on a key.
     #[default]
     Ask,
-    /// Go on in the next free account right away.
+    /// Go on in the freest account right away.
     Auto,
     Off,
+}
+
+impl AccountFallback {
+    /// In the order the settings menu and `Ctrl+B s U` step through, as
+    /// `screen::ComputerUse::ALL` does for the screen: one order, so the
+    /// key and the menu never disagree about what comes next.
+    pub const ALL: [AccountFallback; 3] = [
+        AccountFallback::Off,
+        AccountFallback::Ask,
+        AccountFallback::Auto,
+    ];
+
+    pub fn word(self) -> &'static str {
+        match self {
+            AccountFallback::Ask => "ask",
+            AccountFallback::Auto => "auto",
+            AccountFallback::Off => "off",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -731,25 +750,10 @@ pub const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
-        name: "Account used up: switch to the next",
-        value: |c| {
-            match c.account_fallback {
-                AccountFallback::Ask => "ask",
-                AccountFallback::Auto => "auto",
-                AccountFallback::Off => "off",
-            }
-            .to_owned()
-        },
+        name: "Account used up: switch to the freest",
+        value: |c| c.account_fallback.word().to_owned(),
         step: |c, forward| {
-            c.account_fallback = step_in(
-                &[
-                    AccountFallback::Ask,
-                    AccountFallback::Auto,
-                    AccountFallback::Off,
-                ],
-                &c.account_fallback,
-                forward,
-            )
+            c.account_fallback = step_in(&AccountFallback::ALL, &c.account_fallback, forward)
         },
     },
     Setting {
@@ -1190,6 +1194,48 @@ run = \"notify-send blocked\"
         assert_eq!(written.computer_use, crate::screen::ComputerUse::Ask);
         let mut back = written;
         back.computer_use = before.computer_use;
+        assert_eq!(back, before);
+    }
+
+    /// The hotkey `Ctrl+B s U` and the settings menu step the same three
+    /// values in the same order (#9102), and saving from the key keeps the
+    /// rest of the config — the key writes the whole file, as every switch
+    /// in imkr does.
+    #[test]
+    fn account_fallback_steps_the_same_way_for_key_and_menu() {
+        let text = "theme = \"catppuccin\"
+account_fallback = \"off\"
+hosts = [\"laptop\"]
+
+[agent_commands]
+claude = \"claude --resume\"
+";
+        let before = Config::parse(text).unwrap();
+        assert_eq!(before.account_fallback, AccountFallback::Off);
+        let setting = SETTINGS
+            .iter()
+            .find(|s| s.name == "Account used up: switch to the freest")
+            .unwrap();
+        let (mut key, mut menu) = (before.clone(), before.clone());
+        for expected in [
+            AccountFallback::Ask,
+            AccountFallback::Auto,
+            AccountFallback::Off,
+        ] {
+            // As `App::step_account_fallback` steps it.
+            key.account_fallback = step_in(&AccountFallback::ALL, &key.account_fallback, true);
+            (setting.step)(&mut menu, true);
+            assert_eq!(key.account_fallback, expected);
+            assert_eq!(menu.account_fallback, expected);
+            assert_eq!((setting.value)(&menu), expected.word());
+        }
+        // What the key saves, read back as imkr reads it: only the one
+        // value differs.
+        key.account_fallback = AccountFallback::Auto;
+        let written = Config::parse(&toml::to_string_pretty(&key).unwrap()).unwrap();
+        assert_eq!(written.account_fallback, AccountFallback::Auto);
+        let mut back = written;
+        back.account_fallback = before.account_fallback;
         assert_eq!(back, before);
     }
 

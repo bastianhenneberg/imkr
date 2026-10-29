@@ -447,16 +447,55 @@ impl Store {
             })
     }
 
-    /// The account to fall back to after `current` of `tool`: the next in
-    /// their order, round, that is logged in and not used up.
-    pub fn next_free(&self, tool: &str, current: &str) -> Option<Account> {
+    /// The accounts that could take over from `current` of `tool`: those
+    /// logged in and not used up, the next after `current` first, round.
+    /// `freest` picks among them; on its own this order decides only
+    /// where no numbers do.
+    fn free_after(&self, tool: &str, current: &str) -> Vec<Account> {
         let all = self.of_tool(tool);
         let used_up = self.used_up();
         let at = all.iter().position(|a| a.name == current).unwrap_or(0);
         (1..all.len())
             .map(|step| &all[(at + step) % all.len()])
-            .find(|a| self.logged_in(a) && self.used_up_for(a, &used_up).is_none())
+            .filter(|a| self.logged_in(a) && self.used_up_for(a, &used_up).is_none())
             .cloned()
+            .collect()
+    }
+
+    /// The account to go on in after `current` of `tool`: of those
+    /// `free_after` offers, the one with most of its limit left by
+    /// `numbers` (a `usage::report`) — its week first, its five hours
+    /// second, see `usage::fullness` — together with the window that
+    /// decided, so a message can name it.
+    ///
+    /// Accounts the numbers say nothing about keep `free_after`'s order
+    /// and come after those they do — a number beats a guess, and without
+    /// any numbers this is plainly the next free account. So is a tie:
+    /// `sort_by` is stable, and the first of two equally free accounts is
+    /// the next in the list.
+    pub fn freest(
+        &self,
+        tool: &str,
+        current: &str,
+        numbers: &[crate::usage::AccountUsage],
+    ) -> Option<(Account, Option<crate::usage::Window>)> {
+        let free = self.free_after(tool, current);
+        let mut rated: Vec<(&Account, (f64, f64), &crate::usage::Window)> = free
+            .iter()
+            .filter_map(|account| {
+                let usage = crate::usage::numbers_for(numbers, tool, &account.name)?;
+                Some((
+                    account,
+                    crate::usage::fullness(usage)?,
+                    crate::usage::deciding(usage)?,
+                ))
+            })
+            .collect();
+        rated.sort_by(|(_, a, _), (_, b, _)| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        if let Some((account, _, window)) = rated.first() {
+            return Some(((*account).clone(), Some((*window).clone())));
+        }
+        free.into_iter().next().map(|account| (account, None))
     }
 
     /// Who is logged in to a subscription account, as far as its login
@@ -935,7 +974,115 @@ mod tests {
             .mark_used_up(&find(STANDARD), crate::persist::now() + 3600)
             .unwrap();
         assert!(store.used_up_until(&find("twin")).is_some());
-        assert_eq!(store.next_free("claude", STANDARD).unwrap().name, "other");
+        assert_eq!(
+            store.freest("claude", STANDARD, &[]).unwrap().0.name,
+            "other"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The numbers decide, not the list order (#9102): Bastian's case was
+    /// `stelljes` at 88 % of its week and `department` at 12 %, with a
+    /// third account standing between them in the list.
+    #[test]
+    fn the_freest_account_is_picked_by_its_numbers_not_by_the_order() {
+        let base = std::env::temp_dir().join(format!("imkr-freest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        claude_login(&store.home, "me@x", "org1");
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        for name in ["middle", "department", "twin"] {
+            store
+                .add(Account {
+                    name: name.into(),
+                    tool: "claude".into(),
+                    ..Account::default()
+                })
+                .unwrap();
+        }
+        let dir = |name: &str| store.root.join("claude").join(name);
+        claude_login(&dir("middle"), "middle@x", "org2");
+        claude_login(&dir("department"), "dep@x", "org3");
+        // `twin` shares the subscription of `standard`, the account left.
+        claude_login(&dir("twin"), "me@x", "org1");
+        let window = |label: &str, used: f64| crate::usage::Window {
+            label: label.into(),
+            used,
+            resets_at: None,
+        };
+        let numbers =
+            |names: &[&str], windows: Vec<crate::usage::Window>| crate::usage::AccountUsage {
+                tool: "claude".into(),
+                name: names[0].into(),
+                names: names.iter().map(|n| (*n).to_owned()).collect(),
+                default: false,
+                plan: None,
+                windows,
+                note: None,
+            };
+        let all = vec![
+            numbers(&[STANDARD, "twin"], vec![window("week", 88.0)]),
+            numbers(&["middle"], vec![window("week", 55.0)]),
+            // Two thirds of its five hours gone, its week nearly whole:
+            // the week decides, so this is the account to go to. A five
+            // hour window that runs out is over in five hours — and were
+            // it out already, `used_up` would keep it out of the list.
+            numbers(
+                &["department"],
+                vec![window("5h", 61.0), window("week", 12.0)],
+            ),
+        ];
+        // Without numbers the next in the list wins; with them, the freest
+        // — and the window that bound is named for the message.
+        assert_eq!(
+            store.freest("claude", STANDARD, &[]).unwrap().0.name,
+            "middle"
+        );
+        let (picked, bound) = store.freest("claude", STANDARD, &all).unwrap();
+        assert_eq!(picked.name, "department");
+        let bound = bound.unwrap();
+        assert_eq!((bound.label.as_str(), bound.used), ("week", 12.0));
+        // `standard` used up takes `twin` with it — one subscription, one
+        // limit. From `middle` only `department` is left to go to, and
+        // from `department` only `middle`: nobody is sent to a used up
+        // account, and nobody to the account they already run in.
+        store
+            .mark_used_up(
+                &store.find("claude", STANDARD).unwrap(),
+                crate::persist::now() + 3600,
+            )
+            .unwrap();
+        let names: Vec<String> = ["middle", "department"]
+            .iter()
+            .map(|from| store.freest("claude", from, &all).unwrap().0.name)
+            .collect();
+        assert_eq!(names, ["department", "middle"]);
+        // An account the numbers say nothing about comes after one they
+        // do: a number beats a guess.
+        let only_middle = vec![numbers(&["middle"], vec![window("week", 99.0)])];
+        assert_eq!(
+            store
+                .freest("claude", STANDARD, &only_middle)
+                .unwrap()
+                .0
+                .name,
+            "middle"
+        );
+        // Equal weeks: the five hours break the tie, and only then.
+        let tied = vec![
+            numbers(&["middle"], vec![window("week", 40.0), window("5h", 70.0)]),
+            numbers(
+                &["department"],
+                vec![window("week", 40.0), window("5h", 10.0)],
+            ),
+        ];
+        assert_eq!(
+            store.freest("claude", STANDARD, &tied).unwrap().0.name,
+            "department"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1275,18 +1422,18 @@ model = "qwen3-coder"
         // Falling back skips what is used up and what has no login.
         std::fs::write(dir.join(".credentials.json"), "x").unwrap();
         assert_eq!(
-            store.next_free("claude", "standard").unwrap().name,
+            store.freest("claude", "standard", &[]).unwrap().0.name,
             "privat"
         );
         store
             .mark_used_up(&account, crate::persist::now() + 3600)
             .unwrap();
         assert_eq!(
-            store.next_free("claude", "standard").unwrap().name,
+            store.freest("claude", "standard", &[]).unwrap().0.name,
             "router"
         );
         assert_eq!(
-            store.next_free("claude", "router").unwrap().name,
+            store.freest("claude", "router", &[]).unwrap().0.name,
             "standard"
         );
         assert!(store.used_up_until(&account).is_some());

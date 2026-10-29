@@ -67,13 +67,27 @@ Projekt-Slug: `imkr`
 - Konten: `src/account.rs` (`Store` mit `root` = `<state>/accounts`, `home`; je Konto Ordner
   mit Links auf `~/.claude`/`~/.codex` außer Login (`own_file`), `.claude.json` als Kopie ohne
   Identität (`account_bound`), MCP-Server bei `sync` neu; Anbieter per `url`/`token`/`model` →
-  `env`; `used-up.json`, `next_free`, `used_up_in` erkennt die Limit-Sätze samt Reset-Zeit).
+  `env`; `used-up.json`, `freest`, `used_up_in` erkennt die Limit-Sätze samt Reset-Zeit).
   `Pane::accounts`/`App::accounts` (je Tool, `standard` = kein Eintrag), über `Spawn::accounts`
   in die Shell-Umgebung, gespeichert in `Saved`/`SavedPane`, im Handover über `saved`.
   `Request::UseAccount` (ohne `pane`: neue Shells; mit: `switch_account` = SIGTERM per
   `Pane::stop_foreground`, dann `finish_switches` tippt `imkr account run T:N -- <resume>`).
   `check_used_up` je Tick (nur nicht-working, `USED_UP_LINES`, `USED_UP_QUIET`), Einstellung
-  `account_fallback` ask/auto/off. UI `Ctrl+B s c` (`Mode::Accounts`).
+  `account_fallback` off/ask/auto (`AccountFallback::ALL`, eine Reihenfolge für Menü und Taste).
+  UI `Ctrl+B s c` (`Mode::Accounts`).
+  Freiestes Konto statt nächstes (#9102): `usage::report` legt die Zahlen in
+  `<state>/accounts/usage.json` (`keep_in`, `cached`, `FRESH` 120 s), `Store::freest(tool,
+  current, numbers)` sortiert die Kandidaten nach `usage::fullness` = (Woche, 5h) — die Woche
+  entscheidet (kommt erst in Tagen zurück), 5h nur bei Gleichstand; wirklich am Limit stehende
+  Konten sind über `used_up` ohnehin draußen. Ohne Zahlen bleibt die Listenreihenfolge
+  (`free_after`). Entschieden wird nicht sofort: `check_used_up` und `Ctrl+B s C` legen einen
+  `AccountChoice` ab, `measure_usage` misst im Thread (schreibt nur den Cache), `decide_accounts`
+  am ENDE von `update_agents` (sonst überdeckt „stopped: limit reached" die Meldung) handelt,
+  sobald der Cache frisch ist oder `USAGE_WAIT` (25 s) um ist. Meldungen nennen beide Konten mit
+  Prozent und den Namen aus `account::shown`, nicht den Registernamen. Tasten: `Ctrl+B s C`
+  (`FreestAccount` → `move_to_freest_account`, fokussiertes Pane), `Ctrl+B s U`
+  (`AccountFallback` → `step_account_fallback`); `imkr account` und die Kontoliste zeigen die
+  Woche aus dem Cache (600 s), fragen aber nie selbst — das tut `imkr account usage`.
   Logins: `src/login.rs` (`take_renewer` = `renew.lock`, ein imkr je Rechner meldet in
   `App::watch_logins` alle `LOGINS_EVERY` einmal `dead` und `ending` (3 Tage vorher) per
   `send_notification`; `renew` = Claude Code ein Wort antworten lassen, mit Sperre je Konto in

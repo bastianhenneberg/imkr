@@ -277,7 +277,7 @@ across machines, orchestrator above and its sessions below with their state.</p>
 <code>— gone</code> and goes back to the top level. It keeps running: the mark says who asked for the
 work, not who is allowed to live. A machine that cannot be reached says nothing either way,
 so a laptop that is off does not make its workers look orphaned.</p>
-<h3 id="several-accounts-and-the-next-one-when-one-is-used-up">Several accounts, and the next one when one is used up</h3>
+<h3 id="several-accounts-and-the-freest-one-when-one-is-used-up">Several accounts, and the freest one when one is used up</h3>
 <p>One machine, several Claude Code and Codex subscriptions, and providers Claude Code reaches by
 address and key (OpenRouter, a local Ollama). Each account is an environment the agent starts
 with: a subscription gets a directory of its own (<code>CLAUDE_CONFIG_DIR</code>, <code>CODEX_HOME</code>) holding only
@@ -321,14 +321,32 @@ asking. Each machine fills in its own <code>[agent_commands]</code>, and a templ
 session writes its agents this way.</p>
 <p><code>Ctrl+B s c</code> lists them: Enter puts the focused agent into the chosen account, <code>u</code> new shells of
 this session, <code>d</code> makes it the standard of this machine (like <code>imkr account default</code>), handy
-when an account is used up for the week: new shells in every session start in the other one. Switching ends the agent and starts it again in the same conversation, typed into
+when an account is used up for the week: new shells in every session start in the other one.
+Each account also shows how full its week is where that was measured in the last ten minutes,
+so the list says what it costs to pick one. Switching ends the agent and starts it again in the same conversation, typed into
 its shell as <code>imkr account run claude:privat -- claude --resume &lt;id&gt;</code>, so no key shows on the
 screen; the session id comes from the hooks.</p>
 <p>When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", Codex: "You've
 hit your usage limit"), imkr notes that account as used up until then and, as <em>Account used up</em>
-in the settings says, tells you which account is next (<code>ask</code>, the default), goes on in it by
-itself (<code>auto</code>), or does nothing (<code>off</code>). The next one is the next in the list that is logged in
-and not used up, round. Accounts and keys live in <code>~/.local/state/imkr/accounts/</code> (0600).</p>
+in the settings says, tells you which account to go on in (<code>ask</code>, the default), moves the agent
+there by itself (<code>auto</code>), or does nothing (<code>off</code>). <code>Ctrl+B s U</code> steps those three without the
+settings menu. Accounts and keys live in <code>~/.local/state/imkr/accounts/</code> (0600).</p>
+<p>Which account that is, it measures: of those logged in and not used up, the one with most of
+its <strong>week</strong> left. The week is the scarce window — it comes back in days, the five hours in
+hours — so the week decides and the five hours only break a tie. An account that has actually
+hit a limit is no candidate at all, it is noted as used up until it resets; so a half-spent
+five-hour window says nothing worse than <em>this one may stop again later today</em>.</p>
+<p>The numbers are the ones below, asked of Anthropic per account and kept for two minutes, so a
+decision is quick without being stale. Asking takes a moment, and an agent at its limit has
+stopped anyway; after 25 seconds without an answer — a machine offline, say — the next account
+in the list takes over, as it always did, and so it does when there are no numbers at all. The
+message names both accounts: <em>account stelljes (88 % week) used up until today 19:00: goes on
+in department (12 % week)</em>.</p>
+<p><code>Ctrl+B s C</code> does the same on demand: the agent in the focused pane moves to the freest account
+right away, in the same conversation, whether or not anything is used up. It is the key the
+<code>ask</code> message points at — in <em>that</em> pane, which the message names in front, since the key goes
+by the focus — and the one to press when an account is nearly full and you would rather not
+wait for the limit.</p>
 <p>Limits belong to the subscription, not to the account's name. <code>imkr account</code> shows who each one
 is logged in as, and <code>add</code> and <code>login</code> warn when an account is logged in to a subscription that
 has one already; nothing is removed for it. One used up counts for every account of the same
@@ -350,7 +368,9 @@ that end. So imkr says it ahead: three days before, <code>imkr account</code> an
 is logged out, each with the <code>imkr account login</code> that logs it in again.</p>
 <h4 id="how-much-each-account-has-used">How much each account has used</h4>
 <p><code>Ctrl+B s u</code> shows every account with its plan and limit windows, a bar each, yellow from 80 %
-and red from 95 %, with when each resets; <code>imkr account usage</code> prints the same, <code>--json</code> too.</p>
+and red from 95 %, with when each resets; <code>imkr account usage</code> prints the same, <code>--json</code> too.
+Every such overview also keeps its numbers for the account list and for falling back, where
+they are what decides which account is freest.</p>
 <pre><code class="language-text">Claude
   henneberg (standard)  Max 20x   5h          █░░░░░░░░░  14 %  resets today 21:00
                                   week        ████░░░░░░  40 %  resets 22.10. 05:00

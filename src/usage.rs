@@ -6,13 +6,13 @@
 
 use crate::account::{Account, Store};
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// One limit window: how much of it is used and when it starts anew.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Window {
     /// `5h`, `week`, or e.g. `week opus`.
     pub label: String,
@@ -23,11 +23,16 @@ pub struct Window {
 }
 
 /// An account with its plan and windows, or why they are unknown.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountUsage {
     pub tool: String,
     /// As the frame shows it: who is logged in, or provider and model.
     pub name: String,
+    /// The registered names these numbers hold for: the account asked and
+    /// every other one logged in to the same subscription, as the limit is
+    /// the subscription's. `numbers_for` looks an account up by them.
+    #[serde(default)]
+    pub names: Vec<String>,
     /// The account new shells start in.
     pub default: bool,
     pub plan: Option<String>,
@@ -37,14 +42,14 @@ pub struct AccountUsage {
 }
 
 /// Tokens an agent used, all its accounts together.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tokens {
     pub tool: String,
     pub last_5h: u64,
     pub last_7d: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     pub accounts: Vec<AccountUsage>,
     pub tokens: Vec<Tokens>,
@@ -54,22 +59,22 @@ const HOUR: u64 = 3600;
 const DAY: u64 = 24 * HOUR;
 
 /// Every account of this machine, each subscription once, with its usage.
+/// Keeps the answer for `cached`, so picking an account does not have to
+/// ask Anthropic again.
 pub fn report() -> Result<Report> {
     let store = Store::here()?;
     let now = crate::persist::now();
     let mut accounts = Vec::new();
     for tool in crate::account::TOOLS {
         let default = store.default_of(tool);
-        let mut seen = Vec::new();
-        for account in store.listed(tool) {
-            // The same subscription twice has one limit: shown once.
-            if let Some(identity) = store.identity(&account) {
-                if seen.contains(&identity.key) {
-                    continue;
-                }
-                seen.push(identity.key);
-            }
-            accounts.push(usage_of(&store, &account, account.name == default, now));
+        for group in subscriptions(&store, tool) {
+            // The same subscription twice has one limit: asked once, and
+            // the answer counts for every name in the group.
+            let first = &group[0];
+            let default = group.iter().any(|a| a.name == default);
+            let mut usage = usage_of(&store, first, default, now);
+            usage.names = group.iter().map(|a| a.name.clone()).collect();
+            accounts.push(usage);
         }
     }
     let tokens = vec![
@@ -84,13 +89,140 @@ pub fn report() -> Result<Report> {
             last_7d: codex_tokens(&store.usual_dir("codex").join("sessions"), now, 7 * DAY),
         },
     ];
-    Ok(Report { accounts, tokens })
+    let report = Report { accounts, tokens };
+    keep_in(&store.root, &report, now);
+    Ok(report)
+}
+
+/// The accounts of `tool` grouped by subscription, in their list order:
+/// those logged in to the same one share a limit, and so one group has
+/// one set of numbers. Accounts without an identity (providers, logged
+/// out ones) stand alone.
+fn subscriptions(store: &Store, tool: &str) -> Vec<Vec<Account>> {
+    let mut groups: Vec<(Option<String>, Vec<Account>)> = Vec::new();
+    for account in store.listed(tool) {
+        let key = store.identity(&account).map(|i| i.key);
+        let group = key
+            .as_ref()
+            .and_then(|key| groups.iter_mut().find(|(k, _)| k.as_ref() == Some(key)));
+        match group {
+            Some((_, group)) => group.push(account),
+            None => groups.push((key, vec![account])),
+        }
+    }
+    groups.into_iter().map(|(_, group)| group).collect()
+}
+
+/// How long a kept report is good enough to pick an account from. Long
+/// enough that a key press answers at once, short enough that a window
+/// that ran full in the meantime is not sold as free.
+pub const FRESH: u64 = 120;
+
+/// Where the last report waits for the next decision about accounts.
+fn cache_file(root: &Path) -> PathBuf {
+    root.join("usage.json")
+}
+
+/// A report and when it was taken.
+#[derive(Serialize, Deserialize)]
+struct Kept {
+    at: u64,
+    report: Report,
+}
+
+/// Writes `report` for `cached`, with the time it was taken. A failure is
+/// none: the numbers are then simply not there, and whoever asks falls
+/// back to the list order.
+fn keep_in(root: &Path, report: &Report, at: u64) {
+    let kept = Kept {
+        at,
+        report: report.clone(),
+    };
+    if let Ok(text) = serde_json::to_string(&kept) {
+        let _ = std::fs::create_dir_all(root);
+        let _ = std::fs::write(cache_file(root), text);
+    }
+}
+
+/// The accounts of the last report under `root` if it was taken at most
+/// `max_age` seconds before `now`, else nothing: an old number about a
+/// limit window is worse than no number.
+fn cached_in(root: &Path, max_age: u64, now: u64) -> Option<Vec<AccountUsage>> {
+    let text = std::fs::read_to_string(cache_file(root)).ok()?;
+    let kept: Kept = serde_json::from_str(&text).ok()?;
+    (now.saturating_sub(kept.at) <= max_age).then_some(kept.report.accounts)
+}
+
+/// What the accounts of this machine had used when they were last asked,
+/// if that is at most `max_age` seconds ago.
+pub fn cached(max_age: u64) -> Option<Vec<AccountUsage>> {
+    let store = Store::here().ok()?;
+    cached_in(&store.root, max_age, crate::persist::now())
+}
+
+/// The numbers for the account `tool`:`name` among `accounts`, also when
+/// they were asked of another account of the same subscription.
+pub fn numbers_for<'a>(
+    accounts: &'a [AccountUsage],
+    tool: &str,
+    name: &str,
+) -> Option<&'a AccountUsage> {
+    accounts
+        .iter()
+        .find(|a| a.tool == tool && a.names.iter().any(|n| n == name))
+}
+
+/// Whether a window is one of the weekly ones (`week`, `week opus`,
+/// `week sonnet`) rather than the five hours.
+fn weekly(window: &Window) -> bool {
+    window.label.starts_with("week")
+}
+
+/// The window a choice between accounts is made on: the fullest weekly
+/// one, else the fullest window there is. The week is what is scarce — it
+/// comes back in days, the five hours in hours — so it is what gets named
+/// when imkr says how free an account is.
+pub fn deciding(usage: &AccountUsage) -> Option<&Window> {
+    let fullest = |weeks: bool| {
+        usage
+            .windows
+            .iter()
+            .filter(|w| weekly(w) == weeks)
+            .max_by(|a, b| a.used.total_cmp(&b.used))
+    };
+    fullest(true).or_else(|| fullest(false))
+}
+
+/// How full an account is, for picking the freest: its week first, its
+/// five hours second.
+///
+/// The week decides because it is the scarce one. An account that has
+/// *hit* a limit is no candidate at all — `Store::used_up` has it noted
+/// until it resets — so the five hours here only say how soon an account
+/// might stop, and that stop is over within five hours while a full week
+/// lasts days. They break a tie, nothing more. `None` for an account
+/// whose windows are unknown.
+pub fn fullness(usage: &AccountUsage) -> Option<(f64, f64)> {
+    let week = deciding(usage)?.used;
+    let hours = usage
+        .windows
+        .iter()
+        .filter(|w| !weekly(w))
+        .map(|w| w.used)
+        .fold(f64::NEG_INFINITY, f64::max);
+    Some((week, if hours.is_finite() { hours } else { 0.0 }))
+}
+
+/// A window as a message names it: `88 % week`.
+pub fn window_label(window: &Window) -> String {
+    format!("{:.0} % {}", window.used, window.label)
 }
 
 fn usage_of(store: &Store, account: &Account, default: bool, now: u64) -> AccountUsage {
     let mut usage = AccountUsage {
         tool: account.tool.clone(),
         name: crate::account::shown(store, account),
+        names: vec![account.name.clone()],
         default,
         plan: None,
         windows: Vec::new(),
@@ -596,6 +728,71 @@ mod tests {
         assert_eq!(windows[0].label, "5h");
         assert_eq!(windows[0].resets_at, Some(1_792_177_200));
         assert_eq!(windows[1].used, 39.0);
+    }
+
+    /// Keeping and reading the numbers again, and which window binds.
+    #[test]
+    fn kept_numbers_age_and_the_fullest_window_binds() {
+        let root = std::env::temp_dir().join(format!("imkr-usage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let window = |label: &str, used: f64| Window {
+            label: label.into(),
+            used,
+            resets_at: None,
+        };
+        let account = |names: &[&str], windows: Vec<Window>| AccountUsage {
+            tool: "claude".into(),
+            name: names[0].into(),
+            names: names.iter().map(|n| (*n).to_owned()).collect(),
+            default: false,
+            plan: None,
+            windows,
+            note: None,
+        };
+        let report = Report {
+            accounts: vec![
+                account(
+                    &["stelljes", "twin"],
+                    vec![window("5h", 4.0), window("week", 88.0)],
+                ),
+                account(
+                    &["department"],
+                    vec![window("5h", 61.0), window("week", 12.0)],
+                ),
+                account(&["router"], Vec::new()),
+            ],
+            tokens: Vec::new(),
+        };
+        let now = 1_792_177_200;
+        keep_in(&root, &report, now);
+        // Within the span the numbers come back, past it nothing: an old
+        // number about a limit window is worse than none.
+        let read = cached_in(&root, FRESH, now + FRESH).expect("still fresh");
+        assert_eq!(read.len(), 3);
+        assert!(cached_in(&root, FRESH, now + FRESH + 1).is_none());
+        // The second name of a subscription finds the same numbers.
+        let numbers = read;
+        let found = |name: &str| numbers_for(&numbers, "claude", name).expect(name);
+        let said = |name: &str| deciding(found(name)).map(window_label);
+        assert_eq!(said("stelljes").as_deref(), Some("88 % week"));
+        assert_eq!(said("twin").as_deref(), Some("88 % week"));
+        // Fuller in the five hours, far freer in the week: the week is
+        // what a choice goes by, and what gets named. The five hours
+        // stand second, for a tie.
+        assert_eq!(said("department").as_deref(), Some("12 % week"));
+        assert_eq!(fullness(found("department")), Some((12.0, 61.0)));
+        assert_eq!(fullness(found("stelljes")), Some((88.0, 4.0)));
+        assert_eq!(said("router"), None);
+        assert_eq!(fullness(found("router")), None);
+        // Only one window: it is the one that decides, week or not.
+        let lone = account(&["lone"], vec![window("5h", 30.0)]);
+        assert_eq!(
+            deciding(&lone).map(window_label).as_deref(),
+            Some("30 % 5h")
+        );
+        assert_eq!(fullness(&lone), Some((30.0, 30.0)));
+        assert!(numbers_for(&numbers, "codex", "stelljes").is_none());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

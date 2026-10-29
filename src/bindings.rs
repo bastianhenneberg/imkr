@@ -138,6 +138,10 @@ pub enum Command {
     PluginMarket,
     /// The agents' accounts: for this session, or the focused agent now.
     Accounts,
+    /// Moves the agent in the focused pane to the freest account.
+    FreestAccount,
+    /// Steps `account_fallback`: off, ask, auto.
+    AccountFallback,
     /// Jump like flash.nvim: type a few characters, every match on screen
     /// gets a label, the label's key puts the copy cursor there.
     Jump,
@@ -994,6 +998,21 @@ pub const BINDINGS: &[Binding] = &[
         description: "shared folder for files…",
         group: Group::Sessions,
         keys: &[(Key::plain(Char('f')), C::ShareFolder)],
+    },
+    // `C` next to `c` (the account list) and `U` next to `u` (what the
+    // accounts have used): both are about accounts, and both are far from
+    // `x`, which ends the session (#9102).
+    Binding {
+        label: "C",
+        description: "this agent onto the freest account",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('C')), C::FreestAccount)],
+    },
+    Binding {
+        label: "U",
+        description: "account used up: off/ask/auto",
+        group: Group::Sessions,
+        keys: &[(Key::plain(Char('U')), C::AccountFallback)],
     },
     // `x` in this menu ends the session: a switch for a setting does not
     // belong next to the one destructive key, so `e` and `E` it is (#9095).

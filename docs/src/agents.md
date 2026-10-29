@@ -105,7 +105,7 @@ across machines, orchestrator above and its sessions below with their state.
 work, not who is allowed to live. A machine that cannot be reached says nothing either way,
 so a laptop that is off does not make its workers look orphaned.
 
-### Several accounts, and the next one when one is used up
+### Several accounts, and the freest one when one is used up
 
 One machine, several Claude Code and Codex subscriptions, and providers Claude Code reaches by
 address and key (OpenRouter, a local Ollama). Each account is an environment the agent starts
@@ -159,15 +159,36 @@ session writes its agents this way.
 
 `Ctrl+B s c` lists them: Enter puts the focused agent into the chosen account, `u` new shells of
 this session, `d` makes it the standard of this machine (like `imkr account default`), handy
-when an account is used up for the week: new shells in every session start in the other one. Switching ends the agent and starts it again in the same conversation, typed into
+when an account is used up for the week: new shells in every session start in the other one.
+Each account also shows how full its week is where that was measured in the last ten minutes,
+so the list says what it costs to pick one. Switching ends the agent and starts it again in the same conversation, typed into
 its shell as `imkr account run claude:privat -- claude --resume <id>`, so no key shows on the
 screen; the session id comes from the hooks.
 
 When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", Codex: "You've
 hit your usage limit"), imkr notes that account as used up until then and, as *Account used up*
-in the settings says, tells you which account is next (`ask`, the default), goes on in it by
-itself (`auto`), or does nothing (`off`). The next one is the next in the list that is logged in
-and not used up, round. Accounts and keys live in `~/.local/state/imkr/accounts/` (0600).
+in the settings says, tells you which account to go on in (`ask`, the default), moves the agent
+there by itself (`auto`), or does nothing (`off`). `Ctrl+B s U` steps those three without the
+settings menu. Accounts and keys live in `~/.local/state/imkr/accounts/` (0600).
+
+Which account that is, it measures: of those logged in and not used up, the one with most of
+its **week** left. The week is the scarce window — it comes back in days, the five hours in
+hours — so the week decides and the five hours only break a tie. An account that has actually
+hit a limit is no candidate at all, it is noted as used up until it resets; so a half-spent
+five-hour window says nothing worse than *this one may stop again later today*.
+
+The numbers are the ones below, asked of Anthropic per account and kept for two minutes, so a
+decision is quick without being stale. Asking takes a moment, and an agent at its limit has
+stopped anyway; after 25 seconds without an answer — a machine offline, say — the next account
+in the list takes over, as it always did, and so it does when there are no numbers at all. The
+message names both accounts: *account stelljes (88 % week) used up until today 19:00: goes on
+in department (12 % week)*.
+
+`Ctrl+B s C` does the same on demand: the agent in the focused pane moves to the freest account
+right away, in the same conversation, whether or not anything is used up. It is the key the
+`ask` message points at — in *that* pane, which the message names in front, since the key goes
+by the focus — and the one to press when an account is nearly full and you would rather not
+wait for the limit.
 
 Limits belong to the subscription, not to the account's name. `imkr account` shows who each one
 is logged in as, and `add` and `login` warn when an account is logged in to a subscription that
@@ -196,6 +217,8 @@ is logged out, each with the `imkr account login` that logs it in again.
 
 `Ctrl+B s u` shows every account with its plan and limit windows, a bar each, yellow from 80 %
 and red from 95 %, with when each resets; `imkr account usage` prints the same, `--json` too.
+Every such overview also keeps its numbers for the account list and for falling back, where
+they are what decides which account is freest.
 
 ```text
 Claude

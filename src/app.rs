@@ -994,6 +994,12 @@ pub struct App {
     /// When an agent's used up account was last noticed, so that the
     /// message still on its screen does not count again.
     used_up_seen: HashMap<PaneId, Instant>,
+    /// Agents waiting for a decision about their account until the usage
+    /// of the others is measured, see `decide_accounts`.
+    account_choices: Vec<AccountChoice>,
+    /// Since when a measurement of the accounts runs in a thread; it
+    /// writes `usage::cached`, it does not answer here.
+    measuring_usage: Option<Instant>,
     /// The directories listed on other machines for the directory prompt,
     /// by machine and directory; `None` while ssh is still asking.
     dir_lists: DirLists,
@@ -1133,6 +1139,8 @@ impl App {
             agent_start: None,
             waiting_agents: None,
             used_up_seen: HashMap::new(),
+            account_choices: Vec::new(),
+            measuring_usage: None,
             dir_pick: None,
             picker: None,
             search: None,
@@ -3780,6 +3788,11 @@ impl App {
                 self.notify(id, "failed", &format!("stopped: {reason}"));
             }
         }
+        // Last, after the state messages: a limit makes an agent fail,
+        // and "stopped: limit reached" must not cover the line that says
+        // which account it goes on in. Also where `Ctrl+B s C` waits for
+        // its numbers, with no limit anywhere.
+        self.decide_accounts();
         self.unseen.retain(|id| seen.contains_key(id));
         self.tell_taps(&seen);
         self.deliver_mail();
@@ -4980,31 +4993,207 @@ impl App {
         let Ok(store) = crate::account::Store::here() else {
             return;
         };
+        let auto = self.config.account_fallback == crate::config::AccountFallback::Auto;
         for (id, tool, current, until) in hits {
             self.used_up_seen.insert(id, Instant::now());
             if let Some(account) = store.find(&tool, &current) {
                 let _ = store.mark_used_up(&account, until);
             }
-            let when = crate::protocol::chrono_like(until).unwrap_or_default();
-            let next = store.next_free(&tool, &current);
-            let auto = self.config.account_fallback == crate::config::AccountFallback::Auto;
-            let text = match next {
-                Some(next) if auto => match self.switch_account(id, &next) {
-                    Ok(_) => format!(
-                        "account {current} used up until {when}: goes on in {}",
-                        next.name
-                    ),
-                    Err(e) => format!("account {current} used up until {when}, not switched: {e}"),
-                },
-                Some(next) => format!(
-                    "account {current} used up until {when}: Ctrl+B s c to go on in {}",
-                    next.name
-                ),
-                None => format!("account {current} used up until {when}, no other free one"),
-            };
-            self.notify(id, "account", &text);
+            self.account_choices.push(AccountChoice {
+                pane: id,
+                tool,
+                current,
+                until: Some(until),
+                switch: auto,
+                since: Instant::now(),
+            });
+        }
+    }
+
+    /// Acts on the agents in `account_choices` once the usage of the
+    /// accounts is measured: switches to the freest one, or says which it
+    /// would be. Runs on every tick, as the measurement answers through
+    /// `usage::cached` and not through an event.
+    ///
+    /// Without fresh numbers it starts a measurement and leaves the
+    /// decision for a later tick; after `USAGE_WAIT` it decides anyway,
+    /// then by the list order (`Store::freest` falls back to it).
+    fn decide_accounts(&mut self) {
+        if self.account_choices.is_empty() {
+            return;
+        }
+        let numbers = crate::usage::cached(crate::usage::FRESH);
+        if numbers.is_none() {
+            self.measure_usage();
+        }
+        let waited = |choice: &AccountChoice| choice.since.elapsed() > USAGE_WAIT;
+        if numbers.is_none() && !self.account_choices.iter().any(waited) {
+            return;
+        }
+        let numbers = numbers.unwrap_or_default();
+        let Ok(store) = crate::account::Store::here() else {
+            return;
+        };
+        let decide: Vec<AccountChoice> = if numbers.is_empty() {
+            let mut keep = Vec::new();
+            let mut now = Vec::new();
+            for choice in self.account_choices.drain(..) {
+                if waited(&choice) { &mut now } else { &mut keep }.push(choice);
+            }
+            self.account_choices = keep;
+            now
+        } else {
+            std::mem::take(&mut self.account_choices)
+        };
+        for choice in decide {
+            let id = choice.pane;
+            let text = self.account_text(&store, &choice, &numbers);
+            if choice.until.is_some() {
+                self.notify(id, "account", &text);
+            }
             self.flash = Some(format!("pane {id}: {text}"));
         }
+    }
+
+    /// Carries out one decision of `decide_accounts` and says what came of
+    /// it: which account, how full both are, and what to press when the
+    /// setting is `ask`.
+    fn account_text(
+        &mut self,
+        store: &crate::account::Store,
+        choice: &AccountChoice,
+        numbers: &[crate::usage::AccountUsage],
+    ) -> String {
+        let AccountChoice {
+            pane: id,
+            tool,
+            current,
+            ..
+        } = choice;
+        // How full the account it leaves is, where that is known.
+        let full = crate::usage::numbers_for(numbers, tool, current)
+            .and_then(crate::usage::deciding)
+            .map(|w| format!(" ({})", crate::usage::window_label(w)))
+            .unwrap_or_default();
+        // By the subscription, as the frame and the lists name it: that
+        // is the name the user reads everywhere else, and the commands
+        // take it too.
+        let here = store
+            .find(tool, current)
+            .map(|account| crate::account::shown(store, &account))
+            .unwrap_or_else(|| current.clone());
+        let lead = match choice.until {
+            Some(until) => {
+                let when = crate::protocol::chrono_like(until).unwrap_or_default();
+                format!("account {here}{full} used up until {when}")
+            }
+            None => format!("{tool} runs in {here}{full}"),
+        };
+        let Some((next, window)) = store.freest(tool, current, numbers) else {
+            return match choice.until {
+                Some(_) => format!("{lead}, no other free one"),
+                None => format!("{lead}, no other free account"),
+            };
+        };
+        let free = window
+            .map(|w| format!(" ({})", crate::usage::window_label(&w)))
+            .unwrap_or_default();
+        let there = crate::account::shown(store, &next);
+        if !choice.switch {
+            // "there": the key moves the agent in the *focused* pane, and
+            // the pane this is about is named in front of the message.
+            return format!("{lead}: Ctrl+B s C there goes on in {there}{free}");
+        }
+        match self.switch_account(*id, &next) {
+            Ok(_) => format!("{lead}: goes on in {there}{free}"),
+            Err(e) => format!("{lead}, not switched: {e}"),
+        }
+    }
+
+    /// Measures what the accounts have used, in a thread: it asks
+    /// Anthropic per account and must not hold up the loop. The answer
+    /// lands in `usage::cached`, where `decide_accounts` picks it up.
+    fn measure_usage(&mut self) {
+        if self
+            .measuring_usage
+            .is_some_and(|at| at.elapsed() < USAGE_WAIT)
+        {
+            return;
+        }
+        self.measuring_usage = Some(Instant::now());
+        std::thread::spawn(|| {
+            // `report` keeps its answer; a failure leaves no numbers, and
+            // then the list order decides.
+            let _ = crate::usage::report();
+        });
+    }
+
+    /// `Ctrl+B s C`: moves the agent in the focused pane to the account
+    /// with most of its limit left, in the same conversation. The numbers
+    /// may have to be measured first, so the switch can come a moment
+    /// later — `decide_accounts` does it.
+    fn move_to_freest_account(&mut self) {
+        let id = self.input_pane();
+        let Some(pane) = self.panes.get(&id) else {
+            self.flash = Some(format!("no pane {id}"));
+            return;
+        };
+        let Some(tool) = pane
+            .program()
+            .filter(|p| crate::account::TOOLS.contains(&p.as_str()))
+        else {
+            self.flash = Some(format!(
+                "pane {id}: no agent runs here — {} do",
+                crate::account::TOOLS.join(" and ")
+            ));
+            return;
+        };
+        if self.account_choices.iter().any(|c| c.pane == id) {
+            self.flash = Some(format!("pane {id}: already on its way to another account"));
+            return;
+        }
+        let current = pane
+            .accounts
+            .get(&tool)
+            .cloned()
+            .unwrap_or_else(|| crate::account::STANDARD.to_owned());
+        self.account_choices.push(AccountChoice {
+            pane: id,
+            tool,
+            current,
+            until: None,
+            switch: true,
+            since: Instant::now(),
+        });
+        if crate::usage::cached(crate::usage::FRESH).is_none() {
+            self.flash = Some(format!("pane {id}: asking what the accounts have used…"));
+        }
+        self.decide_accounts();
+    }
+
+    /// `Ctrl+B s U`: what happens when an account runs out —
+    /// off, ask, auto — stepped here as the settings menu steps it
+    /// (`config::AccountFallback::ALL`, one order for both).
+    ///
+    /// **It writes the config file, and the file is the whole config:**
+    /// values are kept, comments are not. That is how every switch in
+    /// imkr saves, see `step_computer_use`.
+    fn step_account_fallback(&mut self) {
+        self.config.account_fallback = crate::config::step_in(
+            &crate::config::AccountFallback::ALL,
+            &self.config.account_fallback,
+            true,
+        );
+        let word = self.config.account_fallback.word();
+        let note = match self.config.account_fallback {
+            crate::config::AccountFallback::Off => "a used up account just stops the agent",
+            crate::config::AccountFallback::Ask => "imkr names the freest account, C switches",
+            crate::config::AccountFallback::Auto => "imkr moves the agent there by itself",
+        };
+        self.flash = Some(match self.config.save() {
+            Ok(_) => format!("account used up: {word} — {note}"),
+            Err(e) => format!("account used up: {word} (not saved: {e:#})"),
+        });
     }
 
     /// Runs the command bound to `key` after the prefix. Unbound keys just
@@ -5116,6 +5305,8 @@ impl App {
             Command::AllowScreenNow => self.allow_screen_now(),
             Command::Hives => self.mode = Mode::Hives(0),
             Command::Accounts => self.mode = Mode::Accounts(0),
+            Command::FreestAccount => self.move_to_freest_account(),
+            Command::AccountFallback => self.step_account_fallback(),
             Command::NewAgent => self.new_agent(),
             Command::Jump => {
                 self.enter_copy();
@@ -11563,6 +11754,9 @@ impl App {
             return (Vec::new(), Vec::new());
         };
         let focused = self.panes.get(&self.ws.focus);
+        // What each account has used, as last measured: read once here,
+        // never per account, and never asked of Anthropic from the loop.
+        let numbers = crate::usage::cached(ACCOUNTS_MEASURED).unwrap_or_default();
         let mut accounts = Vec::new();
         let mut items = Vec::new();
         for tool in crate::account::TOOLS {
@@ -11589,6 +11783,11 @@ impl App {
                 if let Some(ends) = crate::login::login_ends_soon(&store, &account) {
                     let when = crate::usage::reset_label(ends, crate::persist::now());
                     hint.push_str(&format!(" · login ends {when}"));
+                }
+                if let Some(window) = crate::usage::numbers_for(&numbers, tool, &account.name)
+                    .and_then(crate::usage::deciding)
+                {
+                    hint.push_str(&format!(" · {}", crate::usage::window_label(window)));
                 }
                 if let Some(until) = store.used_up_until(&account) {
                     hint.push_str(&format!(" · used up until {until}"));
@@ -13601,6 +13800,33 @@ const USED_UP_QUIET: Duration = Duration::from_secs(600);
 
 /// How long `switch_account` waits for an agent to end.
 const SWITCH_WAIT: Duration = Duration::from_secs(15);
+
+/// How old the measured usage may be to still stand in the account list.
+/// A little longer than `usage::FRESH`, which decides where an agent
+/// goes: the list only tells, and nothing is shown without a number —
+/// `Ctrl+B s C` and `s u` are what measure.
+const ACCOUNTS_MEASURED: u64 = 600;
+
+/// How long a decision about an account waits for the measurement of the
+/// others before it goes by the list order instead. Asking Anthropic per
+/// account takes a moment, and an agent at its limit has stopped anyway —
+/// but it must not wait forever on a machine that is offline.
+const USAGE_WAIT: Duration = Duration::from_secs(25);
+
+/// An agent whose account is to change as soon as the usage of the others
+/// is known (`decide_accounts`).
+struct AccountChoice {
+    pane: PaneId,
+    tool: String,
+    /// The account it runs in now.
+    current: String,
+    /// Until when `current` is used up, if a limit started this.
+    until: Option<u64>,
+    /// Whether to switch without asking: `Ctrl+B s C` and `auto` do, the
+    /// `ask` setting only says which account it would be.
+    switch: bool,
+    since: Instant,
+}
 
 /// An agent waiting for the account it starts in: a new window of one of
 /// `tools` (`Ctrl+B k`, `panes` empty), or the panes of a template that

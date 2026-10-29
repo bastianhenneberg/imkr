@@ -2763,6 +2763,10 @@ pub fn account(args: &[String]) -> Result<()> {
             Ok(())
         }
         [] | ["ls"] => {
+            // What was last measured, if recently; nothing is shown
+            // without numbers, and nothing is asked of Anthropic here —
+            // `imkr account usage` is what measures.
+            let numbers = crate::usage::cached(600).unwrap_or_default();
             for tool in TOOLS {
                 println!("{tool}");
                 let default = store.default_of(tool);
@@ -2804,6 +2808,12 @@ pub fn account(args: &[String]) -> Result<()> {
                             account.name
                         ));
                     }
+                    if let Some(window) =
+                        crate::usage::numbers_for(&numbers, account.tool.as_str(), &account.name)
+                            .and_then(crate::usage::deciding)
+                    {
+                        note.push_str(&format!("  {}", crate::usage::window_label(window)));
+                    }
                     if let Some(until) = store.used_up_until(&account) {
                         note.push_str(&format!("  used up until {until}"));
                     }
@@ -2816,7 +2826,10 @@ pub fn account(args: &[String]) -> Result<()> {
                     println!("  {name:<24}{note}");
                 }
             }
-            println!("in this order a used up account falls back to the next");
+            println!(
+                "a used up account falls back to the freest of these, by what it has used \
+                 (`imkr account usage`); without numbers, to the next in this order"
+            );
             Ok(())
         }
         // Again for an account there is, or one this person had: logged in
