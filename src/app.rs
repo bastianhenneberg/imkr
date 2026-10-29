@@ -11936,23 +11936,47 @@ impl App {
         }
         let left = Line::from(spans);
 
-        // The right half: what the plugins say, then the path.
+        // The right half: what the plugins say, then the path. Where the two
+        // share a side the status is measured first — it is short and cannot
+        // shrink, while the path shortens to its last parts anyway. The other
+        // way round a long working directory took the whole line and the
+        // status fell out of the bar.
+        const SEPARATOR: &str = " │ ";
+        /// Columns of the working directory that keep their place.
+        const FOR_PATH: usize = 8;
+        let cwd = (bars.path == side).then(|| self.focused_cwd()).flatten();
+        // Which machine this is, always: ⌂ the one the user sits at,
+        // ⇄ another.
+        let machine = cwd.as_ref().map(|_| {
+            self.machine_label(None)
+                .unwrap_or_else(|| format!("⌂ {}", protocol::machine_name()))
+        });
+        let mut status: Vec<Span<'static>> = Vec::new();
+        if bars.plugin_status && bars.control() == side {
+            // One column stays free, so the status never touches the left
+            // half; the path keeps its markers, its machine and FOR_PATH.
+            let keep = match &machine {
+                Some(machine) => SEPARATOR.chars().count() + 8 + machine.chars().count() + FOR_PATH,
+                None => 1,
+            };
+            let room = usize::from(area.width).saturating_sub(left.width() + 1 + keep);
+            status = self.bar_plugin_spans(room);
+        }
         let mut right: Vec<Span<'static>> = Vec::new();
-        if bars.path == side
-            && let Some(cwd) = self.focused_cwd()
-        {
-            // Which machine this is, always: ⌂ the one the user sits at,
-            // ⇄ another.
-            let machine = self
-                .machine_label(None)
-                .unwrap_or_else(|| format!("⌂ {}", protocol::machine_name()));
+        if let (Some(cwd), Some(machine)) = (cwd, machine) {
             let machine_style = if self.origin.is_some() {
                 Style::new().fg(t.cyan).add_modifier(Modifier::BOLD)
             } else {
                 Style::new()
             };
-            let room =
-                usize::from(area.width).saturating_sub(left.width() + 8 + machine.chars().count());
+            // The status and its separator come off the top: they were
+            // measured first, and the path is the one that can shorten.
+            let taken = match status.is_empty() {
+                true => 0,
+                false => Line::from(status.clone()).width() + SEPARATOR.chars().count(),
+            };
+            let room = usize::from(area.width)
+                .saturating_sub(left.width() + taken + 8 + machine.chars().count());
             let path = shorten(&tilde(&cwd), room);
             if !path.is_empty() {
                 // Plain text with a coloured marker: dimmed text is close to
@@ -11966,24 +11990,16 @@ impl App {
                 ]);
             }
         }
-        if bars.plugin_status && bars.control() == side {
-            // What is left of the line once the left half, the path and the
-            // separator have theirs. One column too little and the right
-            // half no longer fits, which cuts its first character off.
-            let separator = if right.is_empty() { " " } else { " │ " };
-            // Plus one column, so that the status never touches the left half.
-            let used = left.width() + Line::from(right.clone()).width() + separator.len() + 1;
-            let room = usize::from(area.width).saturating_sub(used);
-            let mut status = self.bar_plugin_spans(room);
-            if !status.is_empty() {
-                status.push(Span::styled(separator, hint));
-                status.extend(right.clone());
-                // Counted in characters above; a double-wide one would make
-                // the line overflow, and then the path loses rather than
-                // the status line, so leave the status out instead.
-                if left.width() + Line::from(status.clone()).width() < usize::from(area.width) {
-                    right = status;
-                }
+        if !status.is_empty() {
+            let separator = if right.is_empty() { " " } else { SEPARATOR };
+            status.push(Span::styled(separator, hint));
+            status.extend(right.clone());
+            // Measured in characters above; a double-wide one would make the
+            // line overflow, and a right-aligned line that does not fit
+            // loses its FIRST character — so when in doubt the status goes
+            // and the path stays.
+            if left.width() + Line::from(status.clone()).width() < usize::from(area.width) {
+                right = status;
             }
         }
         if !right.is_empty() {

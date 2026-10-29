@@ -28,8 +28,8 @@ because the bar has no heading above the line to say which plugin it belongs to.
 plugins stand side by side, from the same run of the `status` command the sidebar uses. A line
 starting with `●` is green and one starting with `✗` is red, the rest is plain text, so keep it
 short: the bar is one line and stays one. When it gets tight the line is shortened (never the
-title), and when there is no room left for the title and something to read, the plugin is left
-out rather than pushing the path away. `Plugin status in the bar` in the settings turns it off (`plugin_status`
+title); the path next to it gives way first and shows its last parts, and only when there is no
+room left for the title and something to read is the plugin left out. `Plugin status in the bar` in the settings turns it off (`plugin_status`
 under `[bars]`). An imkr older than 0.21.77 does not know the field and lists such a plugin as
 broken, so put it in once every machine that reads the file runs 0.21.77 or newer.
 
