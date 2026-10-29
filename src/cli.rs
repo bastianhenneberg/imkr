@@ -4208,7 +4208,14 @@ pub fn screen(args: &[String], host: Option<&str>) -> Result<()> {
                 }
                 println!(
                     "{} · {}x{} · {}",
-                    on.as_deref().unwrap_or("every screen"),
+                    match (&on, region) {
+                        // A region picks its own screens, so `on` is
+                        // empty there — saying "every screen" would be
+                        // the one thing it is not.
+                        (_, Some(r)) => r.geometry(),
+                        (Some(name), None) => name.clone(),
+                        (None, None) => "every screen".to_owned(),
+                    },
                     shot.width,
                     shot.height,
                     shot.hint()
