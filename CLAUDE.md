@@ -525,7 +525,10 @@ Projekt-Slug: `imkr`
   sterben; daher schreibt `Pane` über ein `dup` des Masters. Test: zwei Sessions mit eigenem
   `XDG_RUNTIME_DIR`/`XDG_STATE_HOME` (sonst echte Zustände!), Tick-Skript auf Lücken prüfen.
 - Agent-Tests ohne echten Agent: Skript namens `claude` im Scratchpad, das arbeitet und dann eine
-  Frage stellt, per `imkr new --window 2 -- <skript>` starten.
+  Frage stellt, per `imkr new --window 2 -- <skript>` starten. **Nicht für den Kontowechsel:**
+  `new -- <cmd>` legt das Pane ohne Shell an, `stop_foreground` gibt dann false (Vordergrund ==
+  Pane-Prozess) und `switch_account` kann nicht wechseln. Dafür den Fake-Agenten mit vollem Pfad
+  aus der Shell des Panes starten (`tmux send-keys`).
 - Live-Update: `imkr update` (`src/upgrade.rs`): Server execs das neue Binary im selben Prozess,
   PTY-Master-FDs, Listener und alle Client-Verbindungen (`clients`; `client` nur für ältere
   Server) ohne `FD_CLOEXEC` weiter, Rest (Layout, Screens als `state_formatted`, History als
