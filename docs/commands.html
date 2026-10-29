@@ -337,10 +337,14 @@ For scripts and agents:
                                         install it as a Claude Code skill
   notify [--title T] [--pane N] &lt;text&gt;  show a notification (desktop, terminal or
                                         off, as set in the settings)
-  new [--float] [--window N] [--dir D] [--focus] [--name NAME] [-- command args...]
-                                        start a command in a new pane (window 0:
+  new [--float] [--window N] [--dir D] [--focus] [--name NAME] [--start]
+      [-- command args...]              start a command in a new pane (window 0:
                                         a new window); --focus goes there,
-                                        --name names a new window
+                                        --name names a new window; --start
+                                        starts the session first if it does not
+                                        run, and with window 0 the command then
+                                        takes the place of the empty shell it
+                                        starts with, in window 1
   --host H new [--dir D] [-- command]   a window here whose program runs on H
   note [--pane N] [&lt;text&gt; | ls]          put a thought on a pane's notepad
                                         (Ctrl+B t), or list it; its agent

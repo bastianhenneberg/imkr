@@ -2433,7 +2433,8 @@ impl App {
                 float,
                 workspace,
                 cwd,
-            } => self.new_pane(&command, float, workspace, cwd),
+                fresh,
+            } => self.new_pane(&command, float, workspace, cwd, fresh),
             Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
             Request::Layout { name, save } => self
                 .layout(&name, save)
@@ -2921,7 +2922,7 @@ impl App {
         let (shape, even) = crate::shapes::named(name, n).ok_or(format!("no layout {name}"))?;
         let focus = self.ws.focus;
         for _ in n..shape.panes() {
-            self.new_pane(&[], false, Some(self.workspace), None)?;
+            self.new_pane(&[], false, Some(self.workspace), None, false)?;
         }
         let panes = self.ws.layout.panes();
         let layout = shape.build(&panes, even).ok_or("no panes to lay out")?;
@@ -3362,7 +3363,7 @@ impl App {
                 command = wrapped;
             }
         }
-        let reply = self.new_pane(&command, false, Some(n), Some(dir.clone()))?;
+        let reply = self.new_pane(&command, false, Some(n), Some(dir.clone()), false)?;
         if let Some(ws) = self.hidden.get_mut(&n) {
             ws.name = Some(name.to_owned());
         }
@@ -3400,10 +3401,20 @@ impl App {
         float: bool,
         workspace: Option<u8>,
         cwd: Option<PathBuf>,
+        fresh: bool,
     ) -> Reply {
         let command = &self.agent_argv(command);
+        // `imkr new --start --window 0` started this server for this very
+        // program: it belongs in the first window, in place of the empty
+        // shell that comes with a new session, not in a second window
+        // beside it (#9068). As when a window moves into a session
+        // started for it (`move_in`).
+        let replacing = self
+            .first_shell
+            .filter(|_| fresh && !float && workspace == Some(0) && self.panes.len() == 1);
         // 0: a window of its own, the first free number.
         let n = match workspace {
+            Some(0) if replacing.is_some() => self.workspace,
             Some(0) => self.free_workspace().ok_or("all 9 windows are in use")?,
             n => n.unwrap_or(self.workspace),
         };
@@ -3420,7 +3431,11 @@ impl App {
         } else {
             self.hidden.entry(n).or_insert_with(Workspace::empty)
         };
-        if float {
+        if replacing.is_some() {
+            // It gets the window the first shell had, at its full size:
+            // the shell itself runs on until the program is up.
+            *ws = Workspace::new(id);
+        } else if float {
             ws.add_float(id, body);
         } else if ws.is_empty() {
             *ws = Workspace::new(id);
@@ -3449,6 +3464,12 @@ impl App {
         match spawned {
             Ok(pane) => {
                 self.panes.insert(id, pane);
+                // Only now that the program is up: a session with a shell
+                // in it is better than one with nothing.
+                if let Some(shell) = replacing {
+                    self.close(shell);
+                    self.first_shell = None;
+                }
                 Ok(serde_json::json!({ "pane": id, "workspace": n }))
             }
             Err(e) => {
@@ -3458,7 +3479,10 @@ impl App {
                     self.hidden.get_mut(&n).expect("inserted above")
                 };
                 ws.remove(id);
-                if n != self.workspace && ws.is_empty() {
+                // The first shell keeps the window it was to make way for.
+                if let Some(shell) = replacing {
+                    *ws = Workspace::new(shell);
+                } else if n != self.workspace && ws.is_empty() {
                     self.hidden.remove(&n);
                 }
                 Err(format!("{e:#}"))

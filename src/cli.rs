@@ -1498,11 +1498,15 @@ pub fn new(args: &[String]) -> Result<()> {
     let focus = take_flag(&mut options, "--focus");
     let name = take_value(&mut options, "--name")?;
     // `--start`: the session is started first if it does not run.
+    let mut fresh = false;
     if take_flag(&mut options, "--start") {
         let path = protocol::socket_path()?;
         if std::os::unix::net::UnixStream::connect(&path).is_err() {
             let session = std::env::var("IMKR_SESSION").ok();
             client::start_server(&path, session.as_deref())?;
+            // Started for this command: it goes where the empty first
+            // shell is instead of into a window beside it (#9068).
+            fresh = true;
         }
     }
     if let Some(unknown) = options.first() {
@@ -1513,6 +1517,7 @@ pub fn new(args: &[String]) -> Result<()> {
         float,
         workspace,
         cwd: dir.or_else(|| std::env::current_dir().ok()),
+        fresh,
     })?;
     if let (Some(name), Some(window)) = (name, value["workspace"].as_u64()) {
         client::request(Request::Rename {
@@ -1587,6 +1592,7 @@ pub fn new_hosted(here: &std::path::Path, remote: &client::Remote, args: &[Strin
             float: false,
             workspace: Some(workspace.unwrap_or(0)),
             cwd: None,
+            fresh: false,
         },
     )?;
     let window = value["workspace"].as_u64().unwrap_or_default() as u8;

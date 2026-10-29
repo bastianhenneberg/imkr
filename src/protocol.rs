@@ -506,6 +506,12 @@ pub enum Request {
         float: bool,
         workspace: Option<u8>,
         cwd: Option<PathBuf>,
+        /// `imkr new --start` started this server for this very command:
+        /// with window 0 it takes the place of the empty first shell
+        /// instead of opening a second window beside it (#9068). Older
+        /// servers do not know the field and behave as before.
+        #[serde(default)]
+        fresh: bool,
     },
     /// Shows pane `pane` on this connection from now on: after the reply,
     /// its history and screen and then its output come as
@@ -881,6 +887,7 @@ mod tests {
                 float: true,
                 workspace: Some(2),
                 cwd: None,
+                fresh: false,
             }),
             ClientMsg::Request(Request::Tap {
                 pane: 4,

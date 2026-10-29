@@ -50,6 +50,8 @@ imkr list [--json]                        # panes with program, state and direct
 imkr send --pane 3 "run the tests"        # type into a pane, then Enter
 imkr new --window 2 -- claude --resume    # start a command in a new pane
 imkr new --float                          # a floating shell
+imkr -s api new --start --window 0 -- claude
+                                          # a session of its own for an agent
 imkr rename "tests"                       # name the pane this runs in
 imkr wait --pane 3 --until ready          # wait until an agent is idle or done
 imkr read --pane 3 --lines 20             # what it wrote last
@@ -60,6 +62,11 @@ imkr notify --title build "done in 42 s"  # with a title of its own
 
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.
+
+`--start` starts the session first if it does not run yet, which is how an agent gives another
+one a session of its own. Together with `--window 0` the command then takes the place of the
+empty shell a new session starts with: one window, one pane, the agent in it, reachable as
+`session/1`. In a session that already runs, `--window 0` opens a window of its own as before.
 
 ### Several accounts, and the next one when one is used up
 
