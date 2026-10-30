@@ -275,6 +275,49 @@ and `imkr msg` tells its own session where it sent one. The newest 400 are kept,
 `imkr update`. Sessions started with `--by` show there as well, under the pane they work for,
 even before a single message has gone out.
 
+### A keeper and its bees
+
+A long session that has been compressed three times works worse than a fresh one with a good
+briefing. So one session only steers — the **keeper** — and every task gets a session of its
+own — a **bee** — that starts with a fresh context and its briefing.
+
+```bash
+imkr keeper                      # session `keeper` (`keeper-2` … when taken), goes there
+imkr keeper --host server        # the same on another machine
+```
+
+The keeper's agent (`default_agent`) starts with the skill `keeper` and its folder,
+`~/.local/state/imkr/keeper/NAME/` with `briefings/` and `keeper-stand.md` for its notes. What a
+keeper does is the skill's business, not imkr's: it comes from AI Brain
+(`ai-brain-harness select --dazu skill/keeper`, then `ai-brain-harness sync --apply`), and
+`imkr keeper` says so instead of starting a keeper that does not know its job.
+
+A keeper's session is marked ⚑ (in the theme's accent) wherever sessions and agents are listed —
+the sidebar, `Ctrl+B S`, `Ctrl+B A`, `imkr ls`, `imkr agents`, the phone page — and comes first on
+its machine; its own bar and terminal title carry the mark too, so you know which window you talk
+to. The mark is kept with the session, through restarts, `imkr update` and `imkr revive`.
+`imkr keeper --mark [SESSION]` marks one afterwards (this one without a name), `--unmark` takes
+it off. Bees need no mark of their own: they sit under their keeper, as every session started
+for another does.
+
+From the keeper, one command starts a bee:
+
+```bash
+imkr spawn api-fix --brief briefings/api-fix.md --dir ~/src/api --worktree --task 9133
+imkr spawn api-fix --brief briefings/api-fix.md --host server --dir ~/src/api
+```
+
+It starts session `api-fix` with the default agent (with `--worktree` in a new git worktree
+`api-fix` of the repository, as `imkr worktree` makes them), waits until the agent is ready and
+sends it the briefing as its first message, from the pane it was called in, so answers come
+back with `imkr msg`. On another machine the briefing travels along on stdin and is kept there,
+readable only by you. It prints the bee's address (`--json` for scripts) and notes the bee in
+the keeper's `bees.json`: `Ctrl+B O` shows each bee's task, and its briefing above its screen.
+
+An agent that asks something before it starts — Claude Code's "trust this folder?" in a new
+worktree — is left asking: nothing is answered for you. `imkr spawn` says where it waits and
+what to send once you answered, and ends with an error.
+
 ### Other people's imkrs
 
 Colleagues with their own imkr (their machine, their Claude account) can message your agents,

@@ -35,6 +35,10 @@ pub struct Saved {
     /// belongs under its orchestrator in every list (#9087).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by: Option<String>,
+    /// A keeper's session (`imkr keeper`, `--mark`): marked in every list,
+    /// so the user sees which sessions they steer from (#9133).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeper: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -87,6 +91,7 @@ impl Saved {
             template: None,
             accounts: BTreeMap::new(),
             by: None,
+            keeper: false,
         }
     }
 }

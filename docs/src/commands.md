@@ -139,6 +139,23 @@ For scripts and agents:
                 copy files like scp: machine:path, or @pane (@3, @api/claude,
                 @server:api/claude) for that pane's directory, @pane::sub/path
                 below it
+  keeper [NAME] [--host H] [--dir DIR]
+                a keeper session (`keeper`, else `keeper-2` …): its agent
+                only steers, starting with the `keeper` skill (from AI
+                Brain) and its folder <state>/keeper/NAME (briefings/,
+                keeper-stand.md); goes there when typed in a terminal.
+                Keepers' sessions are marked ⚑ and listed first everywhere
+  keeper --mark [SESSION] | --unmark [SESSION]
+                mark a session (this one without a name) as a keeper's
+                afterwards, or take the mark off
+  spawn NAME --brief FILE|- [--host H] [--dir REPO] [--worktree] [--task N]
+        [--keeper K] [--json]
+                a bee: session NAME with the default agent (in a new git
+                worktree NAME with --worktree), which gets the briefing as
+                its first message from this pane once it is ready; noted
+                in the keeper's bees.json (this session's, or K's) and
+                shown in Ctrl+B O. Prints its address. An agent that asks
+                something first (trust the folder?) is left asking: exit 1
   fleet NAME [-n N] [--agent A] PROMPT
                 N agents (3, claude) on the same prompt, each in a worktree
                 window NAME-1 …; `fleet NAME --diff` compares what they did

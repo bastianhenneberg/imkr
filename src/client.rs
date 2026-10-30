@@ -499,6 +499,7 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                     .and_then(|p| p["by"].as_str())
                     .unwrap_or_default()
                     .to_owned();
+                info.keeper = panes.first().and_then(|p| p["keeper"].as_bool()) == Some(true);
                 for pane in &panes {
                     let state = pane["state"].as_str();
                     if let Some(state) = state {
@@ -547,6 +548,7 @@ pub fn local_sessions() -> Vec<SessionInfo> {
             dormant: Some(if dormant.closed { "closed" } else { "stopped" }.to_owned()),
             dormant_since: dormant.since,
             by: dormant.layout.by.clone().unwrap_or_default(),
+            keeper: dormant.layout.keeper,
             ..SessionInfo::default()
         });
     }

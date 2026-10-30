@@ -68,6 +68,8 @@ pub struct SessionRow {
     /// How far under its orchestrator it sits: 0 for a session of its
     /// own, 1 and more for one started for another on the same machine.
     pub depth: usize,
+    /// A keeper's session (#9133): ⚑ in front of its name.
+    pub keeper: bool,
 }
 
 pub struct AgentRow {
@@ -101,6 +103,8 @@ pub struct OtherAgentRow {
     pub since: Duration,
     /// What it says it does, as `AgentRow::title`.
     pub title: String,
+    /// Its session is a keeper's (#9133).
+    pub keeper: bool,
 }
 
 pub struct Data {
@@ -117,6 +121,8 @@ pub struct Data {
     pub agents: Vec<AgentRow>,
     pub here: Option<String>,
     pub session: String,
+    /// This session is a keeper's (#9133).
+    pub keeper: bool,
     pub branch: Option<String>,
     /// Changed files in the focused pane's repository, as `git status`
     /// shows them: two status letters and the path from the repository root.
@@ -332,11 +338,24 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             let under = "  ".repeat(session.depth);
             let parts = agent_dots(&session.dots);
             let right: String = parts.iter().map(|(_, part)| part.as_str()).collect();
-            let left = fit(
-                &format!("{indent}{under}{marker}{}", session.name),
-                width.saturating_sub(right.chars().count() + 1),
+            let lead = format!("{indent}{under}{marker}");
+            let mark = if session.keeper {
+                format!("{} ", crate::keeper::MARK)
+            } else {
+                String::new()
+            };
+            let name = fit(
+                &session.name,
+                width.saturating_sub(
+                    right.chars().count() + 1 + lead.chars().count() + mark.chars().count(),
+                ),
             );
-            let pad = width.saturating_sub(left.chars().count() + right.chars().count());
+            let pad = width.saturating_sub(
+                lead.chars().count()
+                    + mark.chars().count()
+                    + name.chars().count()
+                    + right.chars().count(),
+            );
             let style = if session.offline || session.dormant {
                 dim
             } else if session.current {
@@ -344,7 +363,12 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             } else {
                 Style::new()
             };
-            let mut spans = vec![Span::styled(left, style), Span::raw(" ".repeat(pad))];
+            let mut spans = vec![
+                Span::styled(lead, style),
+                Span::styled(mark, style.fg(t.accent)),
+                Span::styled(name, style),
+                Span::raw(" ".repeat(pad)),
+            ];
             for (style, part) in parts {
                 spans.push(Span::styled(part, style));
             }
@@ -445,6 +469,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             machine: Option<&'a str>,
             session: &'a str,
             current: bool,
+            keeper: bool,
             lines: Vec<(Line<'static>, Target)>,
         }
         let mut groups: Vec<Group> = Vec::new();
@@ -453,6 +478,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 machine: data.here.as_deref(),
                 session: &data.session,
                 current: true,
+                keeper: data.keeper,
                 lines: data
                     .agents
                     .iter()
@@ -505,13 +531,19 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                     machine: agent.machine.as_deref(),
                     session: &agent.session,
                     current: false,
+                    keeper: agent.keeper,
                     lines,
                 }),
             }
         }
         let rank = |m: Option<&str>| !(m.is_none() || m.is_some_and(|m| m.starts_with('⌂')));
         groups.sort_by(|a, b| {
-            (rank(a.machine), a.machine, a.session).cmp(&(rank(b.machine), b.machine, b.session))
+            (rank(a.machine), a.machine, !a.keeper, a.session).cmp(&(
+                rank(b.machine),
+                b.machine,
+                !b.keeper,
+                b.session,
+            ))
         });
         let mut machine: Option<Option<&str>> = None;
         for group in groups {
@@ -530,8 +562,21 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             } else {
                 Style::new()
             };
+            let mark = if group.keeper {
+                format!("{} ", crate::keeper::MARK)
+            } else {
+                String::new()
+            };
+            let name = fit(
+                group.session,
+                width.saturating_sub(4 + mark.chars().count()),
+            );
             out.push((
-                Line::styled(fit(&format!("  {marker}{}", group.session), width), style),
+                Line::from(vec![
+                    Span::styled(format!("  {marker}"), style),
+                    Span::styled(mark, style.fg(t.accent)),
+                    Span::styled(name, style),
+                ]),
                 None,
             ));
             for (line, target) in group.lines {
@@ -828,6 +873,7 @@ mod tests {
             other_agents: Vec::new(),
             here: None,
             session: "default".into(),
+            keeper: false,
             workspaces: vec![
                 WorkspaceRow {
                     number: 1,
@@ -991,6 +1037,7 @@ mod tests {
             dormant: false,
             by: None,
             depth: 0,
+            keeper: false,
         };
         let mut data = data();
         data.sessions = vec![
@@ -1054,6 +1101,7 @@ mod tests {
                 dormant: false,
                 by: None,
                 depth: 0,
+                keeper: true,
             },
             SessionRow {
                 host: None,
@@ -1066,6 +1114,7 @@ mod tests {
                 dormant: false,
                 by: None,
                 depth: 1,
+                keeper: false,
             },
             SessionRow {
                 host: None,
@@ -1078,6 +1127,7 @@ mod tests {
                 dormant: false,
                 by: Some("by laptop:imker/0 — gone".into()),
                 depth: 0,
+                keeper: false,
             },
         ];
         let rows: Vec<(String, Option<Target>)> = lines(&data, 32)
@@ -1086,6 +1136,8 @@ mod tests {
             .collect();
         let find = |text: &str| rows.iter().find(|(line, _)| line.contains(text)).cloned();
         assert!(find("↳ worker").is_some(), "{rows:#?}");
+        // A keeper's session carries its mark (#9133).
+        assert!(find("▸ ⚑ imker").is_some(), "{rows:#?}");
         assert_eq!(find("↳ worker").unwrap().1, Some(Target::Session(1)));
         // No arrow for the one whose orchestrator is not above it.
         assert!(find("  lonely").is_some());
@@ -1105,6 +1157,7 @@ mod tests {
             state: AgentState::Idle,
             since: Duration::from_secs(5),
             title: String::new(),
+            keeper: false,
         };
         let mut data = data();
         // On codingmachine, in peppermint-tui, the user sitting at omarchy.
@@ -1124,5 +1177,36 @@ mod tests {
         assert!(at("⌂ omarchy") < at("⇄ codingmachine"));
         assert!(at("  imkr") < at("▸ peppermint-tui"));
         assert!(at("▸ peppermint-tui") < at("peppermint-verwaltung"));
+    }
+
+    /// A keeper's agents come first on their machine, marked (#9133).
+    #[test]
+    fn keepers_agents_lead_their_machine() {
+        let mut data = data();
+        data.here = Some("⇄ codingmachine".into());
+        data.session = "api".into();
+        data.other_agents = ["bee", "zz-keeper"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, session)| OtherAgentRow {
+                machine: Some("⇄ codingmachine".into()),
+                session: session.into(),
+                index,
+                program: "claude".into(),
+                workspace: 1,
+                dir: "d".into(),
+                state: AgentState::Idle,
+                since: Duration::from_secs(5),
+                title: String::new(),
+                keeper: session == "zz-keeper",
+            })
+            .collect();
+        let text: Vec<String> = lines(&data, 30)
+            .into_iter()
+            .map(|(line, _)| line.to_string())
+            .collect();
+        let at = |needle: &str| text.iter().position(|l| l.contains(needle));
+        let keeper = at("⚑ zz-keeper").expect("marked");
+        assert!(keeper < at("  bee").unwrap(), "{text:#?}");
     }
 }

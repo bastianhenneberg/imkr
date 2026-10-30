@@ -331,6 +331,26 @@ const COMMANDS: &[Command] = &[
     ),
     cmd("cp", "copy files, also to and from panes", &[], Files),
     cmd(
+        "keeper",
+        "a session whose agent only steers",
+        &["--host", "--dir", "--mark", "--unmark"],
+        Nothing,
+    ),
+    cmd(
+        "spawn",
+        "a work session with a briefing, for a keeper",
+        &[
+            "--brief",
+            "--host",
+            "--dir",
+            "--worktree",
+            "--task",
+            "--keeper",
+            "--json",
+        ],
+        Nothing,
+    ),
+    cmd(
         "fleet",
         "several agents on one prompt",
         &["-n", "--agent", "--diff"],

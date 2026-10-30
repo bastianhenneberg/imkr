@@ -49,6 +49,7 @@
   .session > .head { display:flex; gap:8px; align-items:baseline; padding:11px 12px; cursor:pointer; }
   .session > .head b { flex:1; }
   .session.dormant { opacity:.55; }
+  .keeper { color:var(--accent); }
   .pane { display:flex; gap:8px; align-items:baseline; padding:10px 12px; border-top:1px solid var(--line); cursor:pointer; }
   .pane span:first-child { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .state { font-size:12px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); white-space:nowrap; }
@@ -235,7 +236,8 @@ function render() {
   for (const m of machines()) {
     for (const s of m.sessions) {
       if (s.dormant) continue;
-      for (const a of s.agent_panes || []) agents.push({ ...a, session: s.name, host: m.host, where: many ? `${m.label} › ${s.name}` : s.name });
+      const name = s.keeper ? `⚑ ${s.name}` : s.name;
+      for (const a of s.agent_panes || []) agents.push({ ...a, session: s.name, host: m.host, where: many ? `${m.label} › ${name}` : name });
     }
   }
   // Inputs being typed into survive the redraw.
@@ -275,13 +277,15 @@ function renderSessions() {
   for (const m of all) {
     if (all.length > 1) html += `<h3 class="machine">${esc(m.label)}</h3>`;
     if (!m.sessions.length) html += '<p class="empty">No sessions.</p>';
-    for (const s of m.sessions) {
+    // Keepers on top (#9133), the order otherwise as it came.
+    const sessions = [...m.sessions].sort((a, b) => (!!b.keeper && !b.dormant) - (!!a.keeper && !a.dormant));
+    for (const s of sessions) {
       const quiet = quietFor(s);
       const counts = Object.entries(s.agents || {}).map(([k, n]) => `<span class="state ${esc(k)}">${n} ${esc(k)}</span>`).join(' ');
       const id = `${m.host}:${s.name}`;
       const isOpen = open.has(id) && !s.dormant;
       html += `<div class="card session ${s.dormant ? 'dormant' : ''}" data-host="${esc(m.host)}" data-session="${esc(s.name)}" data-id="${esc(id)}">
-        <div class="head"><b>${esc(s.name)}</b>${counts}<span class="sub">${s.dormant ? esc(s.dormant) : quiet != null && quiet > 0 ? ago(quiet) : s.windows + ' win'}</span></div>`;
+        <div class="head"><b>${s.keeper ? '<span class="keeper" title="keeper">⚑</span> ' : ''}${esc(s.name)}</b>${counts}<span class="sub">${s.dormant ? esc(s.dormant) : quiet != null && quiet > 0 ? ago(quiet) : s.windows + ' win'}</span></div>`;
       if (isOpen) {
         html += `<div class="pane whole" data-whole><span>▶ Whole session, as in a terminal</span></div>`;
         const panes = (s.all_panes || []).slice().sort((a, b) => a.workspace - b.workspace || a.pane - b.pane);

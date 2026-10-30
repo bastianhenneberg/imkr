@@ -414,6 +414,38 @@ latest messages; Enter goes there. A pane that only got messages shows who it wo
 and <code>imkr msg</code> tells its own session where it sent one. The newest 400 are kept, also across
 <code>imkr update</code>. Sessions started with <code>--by</code> show there as well, under the pane they work for,
 even before a single message has gone out.</p>
+<h3 id="a-keeper-and-its-bees">A keeper and its bees</h3>
+<p>A long session that has been compressed three times works worse than a fresh one with a good
+briefing. So one session only steers — the <strong>keeper</strong> — and every task gets a session of its
+own — a <strong>bee</strong> — that starts with a fresh context and its briefing.</p>
+<pre><code class="language-bash">imkr keeper                      # session `keeper` (`keeper-2` … when taken), goes there
+imkr keeper --host server        # the same on another machine
+</code></pre>
+<p>The keeper's agent (<code>default_agent</code>) starts with the skill <code>keeper</code> and its folder,
+<code>~/.local/state/imkr/keeper/NAME/</code> with <code>briefings/</code> and <code>keeper-stand.md</code> for its notes. What a
+keeper does is the skill's business, not imkr's: it comes from AI Brain
+(<code>ai-brain-harness select --dazu skill/keeper</code>, then <code>ai-brain-harness sync --apply</code>), and
+<code>imkr keeper</code> says so instead of starting a keeper that does not know its job.</p>
+<p>A keeper's session is marked ⚑ (in the theme's accent) wherever sessions and agents are listed —
+the sidebar, <code>Ctrl+B S</code>, <code>Ctrl+B A</code>, <code>imkr ls</code>, <code>imkr agents</code>, the phone page — and comes first on
+its machine; its own bar and terminal title carry the mark too, so you know which window you talk
+to. The mark is kept with the session, through restarts, <code>imkr update</code> and <code>imkr revive</code>.
+<code>imkr keeper --mark [SESSION]</code> marks one afterwards (this one without a name), <code>--unmark</code> takes
+it off. Bees need no mark of their own: they sit under their keeper, as every session started
+for another does.</p>
+<p>From the keeper, one command starts a bee:</p>
+<pre><code class="language-bash">imkr spawn api-fix --brief briefings/api-fix.md --dir ~/src/api --worktree --task 9133
+imkr spawn api-fix --brief briefings/api-fix.md --host server --dir ~/src/api
+</code></pre>
+<p>It starts session <code>api-fix</code> with the default agent (with <code>--worktree</code> in a new git worktree
+<code>api-fix</code> of the repository, as <code>imkr worktree</code> makes them), waits until the agent is ready and
+sends it the briefing as its first message, from the pane it was called in, so answers come
+back with <code>imkr msg</code>. On another machine the briefing travels along on stdin and is kept there,
+readable only by you. It prints the bee's address (<code>--json</code> for scripts) and notes the bee in
+the keeper's <code>bees.json</code>: <code>Ctrl+B O</code> shows each bee's task, and its briefing above its screen.</p>
+<p>An agent that asks something before it starts — Claude Code's "trust this folder?" in a new
+worktree — is left asking: nothing is answered for you. <code>imkr spawn</code> says where it waits and
+what to send once you answered, and ends with an error.</p>
 <h3 id="other-peoples-imkrs">Other people's imkrs</h3>
 <p>Colleagues with their own imkr (their machine, their Claude account) can message your agents,
 and you theirs, without ssh to each other's machines. Pair once, both sides turn on the web view

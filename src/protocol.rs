@@ -143,6 +143,9 @@ pub struct SessionInfo {
     /// the user started, and from versions before.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub by: String,
+    /// A keeper's session (#9133). False from versions before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeper: bool,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -451,6 +454,8 @@ pub enum Request {
         #[serde(default)]
         pane: Option<PaneId>,
     },
+    /// Marks this session as a keeper's, or takes the mark off (#9133).
+    Keeper { mark: bool },
     /// Send the active client to `target` (`host:session`), e.g. once a
     /// session started from a template on another machine runs.
     Go { target: String },
@@ -489,11 +494,17 @@ pub enum Request {
     /// panes to session `to`, started if needed.
     MoveWindow { workspace: Option<u8>, to: String },
     /// A new window named `name` in git worktree `name` of the repository
-    /// `cwd` is in, running `command` (the shell if empty).
+    /// `cwd` is in, running `command` (the shell if empty). `fresh`: the
+    /// session was started for it, it takes the empty first shell's place.
     Worktree {
         name: String,
         command: Vec<String>,
         cwd: Option<PathBuf>,
+        #[serde(default)]
+        fresh: bool,
+        /// Who asked for the session, as for `New` (#9087).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
     },
     /// Gives the active window the layout `name` (a preset or a saved
     /// one), or saves its layout as `name` with `save`.

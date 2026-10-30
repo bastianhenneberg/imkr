@@ -897,6 +897,9 @@ pub struct App {
     /// opens a session per worker; the mark puts them under it in every
     /// list and survives a restart through `Saved::by`.
     by: Option<String>,
+    /// A keeper's session (`imkr keeper`, #9133): marked ⚑ in every list
+    /// and first among its machine's sessions; kept through `Saved::keeper`.
+    keeper: bool,
     /// The panes marked for Alt+1 … Alt+9, in that order.
     marks: Vec<Mark>,
     /// The other sessions, here and elsewhere, kept up to date by a thread.
@@ -1093,6 +1096,7 @@ impl App {
             screen_ask: None,
             screen_use: crate::screen::Grant::default(),
             by: None,
+            keeper: false,
             watched_hosts: Arc::default(),
             first_shell: None,
             agents: HashMap::new(),
@@ -1241,6 +1245,7 @@ impl App {
         self.carry_idle(&saved);
         self.accounts = saved.accounts.clone();
         self.by = saved.by.clone();
+        self.keeper = saved.keeper;
 
         let template = saved.template.clone();
         let resume_commands = self.config.resume_commands();
@@ -1398,6 +1403,7 @@ impl App {
         self.carry_idle(&saved);
         self.accounts = saved.accounts.clone();
         self.by = saved.by.clone();
+        self.keeper = saved.keeper;
         let mut handed = handover.panes;
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
@@ -1567,6 +1573,7 @@ impl App {
         let mut saved = Saved::new(self.workspace, workspaces, panes);
         saved.accounts = self.accounts.clone();
         saved.by = self.by.clone();
+        saved.keeper = self.keeper;
         saved
     }
 
@@ -2500,6 +2507,10 @@ impl App {
                 self.load_plugins();
                 Ok(serde_json::json!({ "plugins": self.own_plugins.len() }))
             }
+            Request::Keeper { mark } => {
+                self.keeper = mark;
+                Ok(serde_json::json!({ "keeper": mark }))
+            }
             Request::Go { target } => {
                 self.switch_session(target);
                 Ok(serde_json::json!({}))
@@ -2549,12 +2560,19 @@ impl App {
             } => {
                 // Who asked for the session, not for the pane: given, it
                 // marks this session from now on (#9087).
-                if let Some(by) = by.map(|by| by.trim().to_owned()) {
-                    self.by = Some(by).filter(|by| !by.is_empty());
-                }
+                self.take_by(by);
                 self.new_pane(&command, float, workspace, cwd, fresh)
             }
-            Request::Worktree { name, command, cwd } => self.worktree_window(&name, &command, cwd),
+            Request::Worktree {
+                name,
+                command,
+                cwd,
+                fresh,
+                by,
+            } => {
+                self.take_by(by);
+                self.worktree_window(&name, &command, cwd, fresh)
+            }
             Request::Layout { name, save } => self
                 .layout(&name, save)
                 .map(|()| serde_json::json!({ "layout": name, "window": self.workspace })),
@@ -2621,6 +2639,7 @@ impl App {
                     // name: the reply is a list of panes, and this is how
                     // `client::local_sessions` reads session-wide things.
                     "by": self.by,
+                    "keeper": self.keeper,
                     "meta": pane.meta().map(agent::Meta::label),
                     "title": Some(pane.title()).filter(|t| !t.is_empty()),
                     "account": pane.account(),
@@ -3458,7 +3477,13 @@ impl App {
     /// Opens window `name` in git worktree `name` of the repository `cwd`
     /// (else the focused pane's directory) is in, running `command`, and
     /// shows it.
-    fn worktree_window(&mut self, name: &str, command: &[String], cwd: Option<PathBuf>) -> Reply {
+    fn worktree_window(
+        &mut self,
+        name: &str,
+        command: &[String],
+        cwd: Option<PathBuf>,
+        started_for: bool,
+    ) -> Reply {
         let from = cwd
             .or_else(|| self.focused_cwd())
             .ok_or("no directory to start from")?;
@@ -3486,11 +3511,19 @@ impl App {
                 command = wrapped;
             }
         }
-        let reply = self.new_pane(&command, false, Some(n), Some(dir.clone()), false)?;
-        if let Some(ws) = self.hidden.get_mut(&n) {
-            ws.name = Some(name.to_owned());
-        }
+        // A session started for it (`imkr spawn --worktree`): in place of
+        // its empty first shell, not in a window beside it.
+        let target = if started_for { 0 } else { n };
+        let reply = self.new_pane(
+            &command,
+            false,
+            Some(target),
+            Some(dir.clone()),
+            started_for,
+        )?;
+        let n = reply["workspace"].as_u64().map_or(n, |w| w as u8);
         self.switch_workspace(n);
+        self.ws.name = Some(name.to_owned());
         Ok(serde_json::json!({ "window": n, "dir": dir, "pane": reply["pane"] }))
     }
 
@@ -3516,6 +3549,13 @@ impl App {
         ];
         argv.extend(command[1..].iter().cloned());
         argv
+    }
+
+    /// Marks this session as started for `by` (#9087), when given.
+    fn take_by(&mut self, by: Option<String>) {
+        if let Some(by) = by.map(|by| by.trim().to_owned()) {
+            self.by = Some(by).filter(|by| !by.is_empty());
+        }
     }
 
     fn new_pane(
@@ -4210,6 +4250,7 @@ impl App {
             .iter()
             .map(|seen| (seen.device.clone(), seen.viewing.clone()))
             .collect();
+        let keepers = self.keeper_places(&self.places.lock().unwrap().clone());
         sidebar::Data {
             phones,
             workspaces,
@@ -4220,6 +4261,7 @@ impl App {
                 .enumerate()
                 .filter_map(|(index, (place, agent))| {
                     Some(sidebar::OtherAgentRow {
+                        keeper: keepers.contains(&place),
                         machine: self.machine_label(place.host.as_deref()),
                         session: place.name,
                         index,
@@ -4234,6 +4276,7 @@ impl App {
                 .collect(),
             here: self.machine_label(None),
             session: protocol::session_name(),
+            keeper: self.keeper,
             popups: self.popup_rows(),
             agents,
             branch,
@@ -4260,14 +4303,21 @@ impl App {
             .collect();
         let mut own = protocol::SessionInfo {
             name: current.clone(),
+            keeper: self.keeper,
             ..Default::default()
         };
         for state in states {
             *own.agents.entry(state.name().to_owned()).or_default() += 1;
         }
         here.push(own);
-        // What runs first, then what can come back.
-        here.sort_by(|a, b| (a.dormant.is_some(), &a.name).cmp(&(b.dormant.is_some(), &b.name)));
+        // What runs first, keepers on top (#9133), then what can come back.
+        here.sort_by(|a, b| {
+            (a.dormant.is_some(), !a.keeper, &a.name).cmp(&(
+                b.dormant.is_some(),
+                !b.keeper,
+                &b.name,
+            ))
+        });
         let row = |host: Option<String>, info: &protocol::SessionInfo| sidebar::SessionRow {
             current: host.is_none() && info.name == current,
             machine: self.machine_label(host.as_deref()),
@@ -4285,10 +4335,13 @@ impl App {
             problem: None,
             offline: false,
             dormant: info.dormant.is_some(),
+            keeper: info.keeper,
         };
         let mut rows: Vec<sidebar::SessionRow> = here.iter().map(|info| row(None, info)).collect();
         if let Some(origin) = self.origin.clone() {
-            for info in origin_infos(&origin) {
+            let mut infos = origin_infos(&origin);
+            infos.sort_by_key(|info| !info.keeper);
+            for info in infos {
                 rows.push(row(Some(origin.host.clone()), &info));
             }
         }
@@ -4307,10 +4360,17 @@ impl App {
                         dormant: false,
                         by: None,
                         depth: 0,
+                        keeper: false,
                     });
                 }
                 Ok(sessions) => {
-                    rows.extend(sessions.iter().map(|info| row(Some(host.clone()), info)));
+                    let mut sessions: Vec<&protocol::SessionInfo> = sessions.iter().collect();
+                    sessions.sort_by_key(|info| !info.keeper);
+                    rows.extend(
+                        sessions
+                            .into_iter()
+                            .map(|info| row(Some(host.clone()), info)),
+                    );
                 }
                 Err(e) => {
                     rows.push(sidebar::SessionRow {
@@ -4324,6 +4384,7 @@ impl App {
                         dormant: false,
                         by: None,
                         depth: 0,
+                        keeper: false,
                     });
                     // What ran there when it last answered, greyed out.
                     let seen = places.last_seen.get(host).cloned().unwrap_or_default();
@@ -4339,6 +4400,7 @@ impl App {
                             dormant: false,
                             by: None,
                             depth: 0,
+                            keeper: false,
                         });
                     }
                 }
@@ -6311,7 +6373,7 @@ impl App {
             return None;
         }
         let mut x = if bars.control() == side {
-            badge_text().chars().count() as u16 + 1
+            badge_text(self.keeper).chars().count() as u16 + 1
         } else {
             0
         };
@@ -6390,6 +6452,43 @@ impl App {
                     })
             })
             .collect()
+    }
+
+    /// The keepers' sessions (#9133), here and on every machine known.
+    fn keeper_places(&self, places: &Places) -> Vec<Place> {
+        let mut found = Vec::new();
+        if self.keeper {
+            found.push(Place {
+                host: None,
+                name: protocol::session_name(),
+            });
+        }
+        let infos =
+            places
+                .local
+                .iter()
+                .map(|info| (None, info))
+                .chain(places.hosts.iter().flat_map(|(host, sessions)| {
+                    sessions
+                        .iter()
+                        .flatten()
+                        .map(move |info| (Some(host.clone()), info))
+                }));
+        let origin = self.origin.iter().flat_map(|origin| {
+            origin
+                .infos
+                .iter()
+                .map(move |info| (Some(origin.host.clone()), info))
+        });
+        for (host, info) in infos.chain(origin) {
+            if info.keeper {
+                found.push(Place {
+                    host,
+                    name: info.name.clone(),
+                });
+            }
+        }
+        found
     }
 
     /// The switcher's entries: every running session, then a new one.
@@ -6604,6 +6703,22 @@ impl App {
         // What does not run orchestrates nobody and sits under nobody: the
         // marker in the key makes a dormant session unmatchable, and the
         // sort below moves it into the group of its own either way.
+        // Keepers first on their machine (#9133); the machines keep their
+        // order, so each group stays in one piece.
+        let keepers = self.keeper_places(&places);
+        let mut machines: Vec<Option<String>> = Vec::new();
+        for (place, ..) in &entries {
+            if !machines.contains(&place.host) {
+                machines.push(place.host.clone());
+            }
+        }
+        entries.sort_by_key(|(place, _, _, dormant, ..)| {
+            (
+                machines.iter().position(|m| *m == place.host),
+                dormant.is_some(),
+                !keepers.contains(place),
+            )
+        });
         let bosses = self.boss_map(entries.iter().filter_map(|(.., by)| by.as_deref()));
         let entries: Vec<(SessionEntry, usize)> = tree_order(
             entries,
@@ -6688,6 +6803,12 @@ impl App {
                 };
                 let under = "  ".repeat(depth);
                 let arrow = if depth > 0 { "↳ " } else { "" };
+                let keeper = keepers.contains(&place);
+                let arrow = if keeper {
+                    format!("{arrow}{} ", crate::keeper::MARK)
+                } else {
+                    arrow.to_owned()
+                };
                 let item = menu::MenuItem {
                     key: if i < 9 {
                         char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
@@ -6703,7 +6824,9 @@ impl App {
                     hint,
                     danger: false,
                     apart: false,
-                    color: urgent.and_then(|state| sidebar::state_style(state).fg),
+                    color: urgent
+                        .and_then(|state| sidebar::state_style(state).fg)
+                        .or_else(|| keeper.then(|| theme::current().accent)),
                     group: None,
                     marks,
                 };
@@ -7550,10 +7673,13 @@ impl App {
                     .unwrap_or_default()
             });
             let program = with_title(format!("{n} {dir} › {program}"), &pane.title());
-            let place = match pane.meta() {
+            let mut place = match pane.meta() {
                 Some(meta) => format!("this session · {}", meta.label()),
                 None => "this session".into(),
             };
+            if self.keeper {
+                place = format!("{} {place}", crate::keeper::MARK);
+            }
             all.push((
                 state,
                 now - since,
@@ -7563,21 +7689,26 @@ impl App {
                 here.clone(),
             ));
         }
+        let keepers = self.keeper_places(&self.places.lock().unwrap().clone());
         for (i, (place, agent)) in self.other_agents().into_iter().enumerate() {
             let Some(state) = AgentState::from_name(&agent.state) else {
                 continue;
             };
+            let keeper = keepers.contains(&place);
             let group = self.machine_label(place.host.as_deref());
             let program = with_title(
                 format!("{} {} › {}", agent.workspace, agent.dir, agent.program),
                 &agent.title,
             );
             let since = Duration::from_secs(agent.since);
-            let place = if agent.meta.is_empty() {
+            let mut place = if agent.meta.is_empty() {
                 place.name
             } else {
                 format!("{} · {}", place.name, agent.meta)
             };
+            if keeper {
+                place = format!("{} {place}", crate::keeper::MARK);
+            }
             all.push((state, since, AgentAt::Other(i), program, place, group));
         }
         // By machine, this one first, and within each those waiting first.
@@ -7811,6 +7942,10 @@ impl App {
                 None => elsewhere.push(i),
             }
         }
+        // The bees this session keeps (`imkr spawn`): their task and briefing.
+        let bees = crate::keeper::dir(&protocol::session_name())
+            .map(|dir| crate::keeper::bees(&dir))
+            .unwrap_or_default();
         let mut panes: Vec<(bool, u64, PaneId)> = Vec::new();
         for note in self.mail_log.iter().rev() {
             if !self.panes.contains_key(&note.pane) {
@@ -7888,11 +8023,21 @@ impl App {
                     let arrow = if note.sent { "↑ sent" } else { "↓ got" };
                     talk.push(format!("{arrow} {}: {}", ago(note.at), note.text));
                 }
-                let preview = if tail.is_empty() {
+                let mut preview = if tail.is_empty() {
                     talk.join("\n")
                 } else {
                     format!("{tail}\n\n{}", talk.join("\n"))
                 };
+                if let Some(bee) = crate::keeper::bee_at(&bees, peer) {
+                    let task = bee
+                        .task
+                        .map(|t| format!("task #{t} · "))
+                        .unwrap_or_default();
+                    preview = format!("{task}briefing {}\n\n{preview}", bee.brief);
+                    if let Some(t) = bee.task {
+                        hint.insert(0, format!("#{t}"));
+                    }
+                }
                 rows.push(CrewRow {
                     at,
                     preview,
@@ -9834,7 +9979,7 @@ impl App {
                         }
                     }
                     PromptFor::Worktree => {
-                        if let Err(e) = self.worktree_window(text.trim(), &[], None) {
+                        if let Err(e) = self.worktree_window(text.trim(), &[], None, false) {
                             self.flash = Some(e);
                         }
                     }
@@ -10054,6 +10199,14 @@ impl App {
             .get(&self.ws.focus)
             .and_then(|p| p.name.clone().or_else(|| p.program()))
             .unwrap_or_default();
+        if self.keeper {
+            // Which terminal window is the one to talk to (#9133).
+            return format!(
+                "imkr {} {} · {ws} · {pane}",
+                crate::keeper::MARK,
+                protocol::session_name()
+            );
+        }
         format!("imkr · {ws} · {pane}")
     }
 
@@ -12823,7 +12976,7 @@ impl App {
 
         let mut spans = Vec::new();
         if control {
-            spans.push(Span::styled(badge_text(), badge_style()));
+            spans.push(Span::styled(badge_text(self.keeper), badge_style()));
             spans.push(Span::raw(" "));
         }
         if bars.tabs == side {
@@ -13599,12 +13752,14 @@ fn placements(out: &mut Vec<u8>, shown: &Placements, wanted: &Placements) {
     }
 }
 
-fn badge_text() -> String {
+/// The bar's badge: the session's name, a keeper's with its mark (#9133).
+fn badge_text(keeper: bool) -> String {
     let name = protocol::session_name();
+    let symbol = if keeper { crate::keeper::MARK } else { "⬢" };
     if name == protocol::DEFAULT_SESSION {
-        " ⬢ imkr ".to_owned()
+        format!(" {symbol} imkr ")
     } else {
-        format!(" ⬢ {name} ")
+        format!(" {symbol} {name} ")
     }
 }
 

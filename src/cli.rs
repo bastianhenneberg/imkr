@@ -112,7 +112,15 @@ pub fn ls(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let current = protocol::session_name();
+    let mut sessions = sessions;
+    // Keepers on top of what runs (#9133).
+    sessions.sort_by_key(|info| (info.dormant.is_some(), !info.keeper));
     for info in sessions {
+        let name = if info.keeper {
+            format!("{} {}", crate::keeper::MARK, info.name)
+        } else {
+            info.name.clone()
+        };
         if let Some(label) = info.dormant_label() {
             let by = if info.by.is_empty() {
                 String::new()
@@ -120,8 +128,8 @@ pub fn ls(args: &[String]) -> Result<()> {
                 format!(" · by {}", info.by)
             };
             println!(
-                "◌ {:<16} {label}, {} panes in {} windows{by} · `imkr revive {}` brings it back",
-                info.name, info.panes, info.windows, info.name
+                "◌ {name:<16} {label}, {} panes in {} windows{by} · `imkr revive {}` brings it back",
+                info.panes, info.windows, info.name
             );
             continue;
         }
@@ -147,8 +155,8 @@ pub fn ls(args: &[String]) -> Result<()> {
             agents.push_str(&format!(" · by {}", info.by));
         }
         println!(
-            "{marker} {:<16} {} panes in {} windows{agents}",
-            info.name, info.panes, info.windows
+            "{marker} {name:<16} {} panes in {} windows{agents}",
+            info.panes, info.windows
         );
     }
     Ok(())
@@ -212,7 +220,7 @@ pub fn send(args: &[String]) -> Result<()> {
 
 /// This pane's address for answers: `machine:session/pane`, with the
 /// program in front when it is known (`claude@laptop:imkr/3`).
-fn own_address() -> String {
+pub(crate) fn own_address() -> String {
     let machine = protocol::machine_name();
     let Some(pane) = std::env::var("IMKR_PANE").ok() else {
         return format!("the user at {machine}");
@@ -585,7 +593,7 @@ pub fn msg(args: &[String]) -> Result<()> {
 /// Tells the session of the pane this runs in that its agent sent `to` a
 /// message, for the orchestration view. Older servers do not know the
 /// request, and outside imkr there is no pane: never an error.
-fn note_sent(to: &str, text: &str) {
+pub(crate) fn note_sent(to: &str, text: &str) {
     let Some(pane) = std::env::var("IMKR_PANE")
         .ok()
         .and_then(|p| p.parse::<PaneId>().ok())
@@ -703,6 +711,7 @@ pub fn agents(args: &[String]) -> Result<()> {
                         "meta": agent.meta,
                         "title": agent.title,
                         "by": session.by,
+                        "keeper": session.keeper,
                     }));
                 } else {
                     let at = format!("{} {} › {}", agent.workspace, agent.dir, agent.program);
@@ -721,7 +730,16 @@ pub fn agents(args: &[String]) -> Result<()> {
                     } else {
                         format!("  · by {}", session.by)
                     };
-                    println!("{address:<24} {:<8} {at}{meta}{title}{by}", agent.state);
+                    // At the end: the address stays the first word to copy.
+                    let keeper = if session.keeper {
+                        format!("  · {} keeper", crate::keeper::MARK)
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "{address:<24} {:<8} {at}{meta}{title}{by}{keeper}",
+                        agent.state
+                    );
                 }
             }
         }
@@ -1446,6 +1464,8 @@ pub fn fleet(args: &[String]) -> Result<()> {
                 prompt.clone(),
             ],
             cwd: Some(here.clone()),
+            fresh: false,
+            by: None,
         })?;
         println!(
             "{member}: window {} in {}",
@@ -1525,6 +1545,8 @@ pub fn worktree(args: &[String]) -> Result<()> {
         name: name.clone(),
         command,
         cwd: std::env::current_dir().ok(),
+        fresh: false,
+        by: None,
     })?;
     println!(
         "window {} in {}",
@@ -2397,7 +2419,7 @@ fn take_pane(args: &mut Vec<String>) -> Result<Option<PaneId>> {
         .transpose()
 }
 
-fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
+pub(crate) fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
     let before = args.len();
     args.retain(|a| a != flag);
     args.len() != before
@@ -2417,7 +2439,7 @@ fn take_window(args: &mut Vec<String>) -> Result<Option<u8>> {
     Ok(window)
 }
 
-fn take_value(args: &mut Vec<String>, option: &str) -> Result<Option<String>> {
+pub(crate) fn take_value(args: &mut Vec<String>, option: &str) -> Result<Option<String>> {
     let Some(i) = args.iter().position(|a| a == option) else {
         return Ok(None);
     };

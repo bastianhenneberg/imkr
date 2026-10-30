@@ -215,6 +215,28 @@ Projekt-Slug: `imkr`
   `crew_rows` (Panes hier mit Notizen, Absender zuerst; Ziele per `cli::parse_address` →
   `crew_peer`: Pane hier oder `other_agents`), `crew_key`, `draw_crew`; im Handover `mail_log`
   (und seit #8774 `mailbox`).
+- Keeper und Bienen (#9133): `src/keeper.rs`. `imkr keeper [NAME]` (`free_name` → `keeper`,
+  `keeper-2`; `session_taken` = laufend oder gestoppt, closed gibt den Namen frei), Ordner
+  `<state>/keeper/NAME/` (`briefings/`, `keeper-stand.md`), `start` = `start_server` + `New`
+  bzw. `Worktree { fresh }` mit `<agent>` statt der leeren Shell, `wait_ready` (zweimal
+  idle/done; blocked → `Ready::Asking`: nichts bestätigen, Meldung mit Adresse und Befehl,
+  Exit 1), dann `first_input` (`/keeper`, Codex `$keeper`). Skill liefert imkr NICHT
+  (kommt aus AI Brain), `check_skill` sucht `~/.claude/skills`, `CLAUDE_CONFIG_DIR`, Konten
+  (`skill_dirs`), sonst `missing_skill` mit harness-Befehl. `imkr spawn NAME --brief F|-`:
+  Briefing als `Request::Message` (Absender `own_address`), `bees.json` (flock) nur auf der
+  Keeper-Seite (`--keeper`, sonst Session-Name). `--host` liest main global → ein ssh-Aufruf
+  `spawn … --brief - --from ADR --json` (drüben `<state>/bees/NAME.md`, 0600; ohne `--from`
+  zeichnet nicht auf). `crew_rows` hängt per `bee_at` (Session-Name) Task an Hinweis und
+  Briefing an die Vorschau.
+  `spawn` setzt `by` (= `protocol::caller()`, remote per `--by`) auch über `Request::Worktree`
+  (`App::take_by`), so stehen Bienen unter ihrem Keeper. Keeper-Marke: `App::keeper` ↔
+  `Saved::keeper` (Neustart, revive, Handover), `list` trägt `"keeper"` je Pane →
+  `SessionInfo::keeper` (`ls --json`, remote, Web). `Request::Keeper { mark }`, CLI
+  `keeper --mark|--unmark [SESSION]`. Anzeige `keeper::MARK` (⚑, accent): Sidebar
+  (`SessionRow`/`OtherAgentRow::keeper`, `Data::keeper`), `Ctrl+B S`/`Ctrl+B A` über
+  `App::keeper_places`, `badge_text(keeper)`, `window_title_text`, `imkr ls`/`agents` (Marke am
+  Zeilenende, die Adresse bleibt erstes Wort), `web/index.html`. Keeper zuerst je Rechner
+  (Sortierung nur innerhalb einer Rechner-Gruppe).
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
   `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet

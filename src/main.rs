@@ -13,6 +13,7 @@ mod contacts;
 mod fdpass;
 mod filetree;
 mod graphics;
+mod keeper;
 mod keys;
 mod layout;
 mod links;
@@ -183,6 +184,23 @@ For scripts and agents:
                 copy files like scp: machine:path, or @pane (@3, @api/claude,
                 @server:api/claude) for that pane's directory, @pane::sub/path
                 below it
+  keeper [NAME] [--host H] [--dir DIR]
+                a keeper session (`keeper`, else `keeper-2` …): its agent
+                only steers, starting with the `keeper` skill (from AI
+                Brain) and its folder <state>/keeper/NAME (briefings/,
+                keeper-stand.md); goes there when typed in a terminal.
+                Keepers' sessions are marked ⚑ and listed first everywhere
+  keeper --mark [SESSION] | --unmark [SESSION]
+                mark a session (this one without a name) as a keeper's
+                afterwards, or take the mark off
+  spawn NAME --brief FILE|- [--host H] [--dir REPO] [--worktree] [--task N]
+        [--keeper K] [--json]
+                a bee: session NAME with the default agent (in a new git
+                worktree NAME with --worktree), which gets the briefing as
+                its first message from this pane once it is ready; noted
+                in the keeper's bees.json (this session's, or K's) and
+                shown in Ctrl+B O. Prints its address. An agent that asks
+                something first (trust the folder?) is left asking: exit 1
   fleet NAME [-n N] [--agent A] PROMPT
                 N agents (3, claude) on the same prompt, each in a worktree
                 window NAME-1 …; `fleet NAME --diff` compares what they did
@@ -349,6 +367,9 @@ fn main() -> Result<()> {
         ["attach" | "a", "-d"] => client::run(false, true, remote, false),
         ["proxy"] => client::proxy(false),
         ["proxy", "--start"] => client::proxy(true),
+        // A keeper or a bee on another machine: started there through ssh.
+        ["keeper", ..] => keeper::keeper(&args[1..], remote.map(|r| r.host)),
+        ["spawn", ..] => keeper::spawn(&args[1..], remote.map(|r| r.host)),
         ["new", ..] if remote.is_some() => match (&here, &remote) {
             (Some(here), Some(remote)) => cli::new_hosted(here, remote, &args[1..]),
             _ => bail!("no session here to show the window in"),
@@ -359,7 +380,9 @@ fn main() -> Result<()> {
             cli::screen(&args[1..], remote.as_ref().map(|r| r.host.as_str()))
         }
         _ if remote.is_some() => {
-            bail!("--host works with attach and screen only, run other commands there")
+            bail!(
+                "--host works with attach, new, screen, keeper and spawn only, run other commands there"
+            )
         }
         ["kill-server"] => client::kill_server(),
         ["ls", ..] => cli::ls(&args[1..]),
