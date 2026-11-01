@@ -115,6 +115,12 @@ pub fn has_skill(dirs: &[PathBuf], name: &str) -> bool {
     dirs.iter().any(|d| d.join(name).join("SKILL.md").is_file())
 }
 
+/// Whether `tool` can be a keeper on this machine: it has the skill, or
+/// imkr does not know where its skills are.
+pub fn has_skill_here(tool: &str) -> bool {
+    check_skill(tool).is_ok()
+}
+
 /// Says how to get the keeper skill when `tool` has none here, or nothing
 /// when it has (or its skills are unknown to imkr).
 fn check_skill(tool: &str) -> Result<()> {
@@ -239,21 +245,61 @@ enum Ready {
     Asking,
 }
 
-/// Starts session `name` here with the default agent in `dir`, in a new
-/// git worktree `name` of the repository there with `worktree`, and waits
-/// until the agent is ready. Returns its pane.
+/// The agent a keeper or bee starts and the placeholder that starts it
+/// (`Config::expand_agents`): the default agent, or with `account`
+/// (`NAME` or `TOOL:NAME`) that account's agent in it, which must be
+/// logged in (#9291).
+pub fn agent_for(account: Option<&str>, default: &str) -> Result<(String, String)> {
+    let Some(given) = account else {
+        return Ok((default.to_owned(), "<agent>".to_owned()));
+    };
+    let store = crate::account::Store::here()?;
+    let (tool, name) = match given.split_once(':') {
+        Some((tool, name)) => (Some(tool), name),
+        None => (None, given),
+    };
+    let found = match tool {
+        Some(tool) => store.named(tool, name),
+        // The default agent's first, as it would start without one.
+        None => store.named(default, name).or_else(|| {
+            let all: Vec<_> = crate::account::TOOLS
+                .iter()
+                .filter_map(|t| store.named(t, name))
+                .collect();
+            (all.len() == 1).then(|| all[0].clone())
+        }),
+    };
+    let account = found.with_context(|| format!("no account {given}, see `imkr account`"))?;
+    if !store.logged_in(&account) {
+        bail!(
+            "account {given} is not logged in: `imkr account login {}:{}`",
+            account.tool,
+            account.name
+        );
+    }
+    Ok((
+        account.tool.clone(),
+        format!("<{}@{}>", account.tool, account.name),
+    ))
+}
+
+/// Starts session `name` here with `agent` (a placeholder, see
+/// `agent_for`) in `dir`, in a new git worktree `name` of the repository
+/// there with `worktree`, and waits until the agent is ready. Returns its
+/// pane.
 fn start(
     name: &str,
     dir: &Path,
     worktree: bool,
     by: Option<String>,
+    agent: &str,
 ) -> Result<(PathBuf, PaneId, PathBuf, Ready)> {
     let socket = protocol::session_socket(name)?;
     if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
         bail!("session {name} runs already");
     }
-    client::start_server(&socket, Some(name))?;
-    let agent = vec!["<agent>".to_owned()];
+    client::start_server_in(&socket, Some(name), Some(dir))?;
+    let agent = vec![agent.to_owned()];
     let reply = if worktree {
         client::request_at(
             &socket,
@@ -346,8 +392,8 @@ fn waits_for_answer(address: &str, then: &str) -> anyhow::Error {
 /// starts with the keeper skill and its folder.
 pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
     use crate::cli::{take_flag, take_value};
-    const USAGE: &str =
-        "usage: imkr keeper [NAME] [--host H] [--dir DIR] | --mark [SESSION] | --unmark [SESSION]";
+    const USAGE: &str = "usage: imkr keeper [NAME] [--host H] [--dir DIR] [--account A] \
+                         | --mark [SESSION] | --unmark [SESSION]";
     let mut rest = args.to_vec();
     let mark = take_flag(&mut rest, "--mark");
     let unmark = take_flag(&mut rest, "--unmark");
@@ -363,6 +409,7 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
         return set_mark(session, mark, host.as_deref());
     }
     let dir = take_value(&mut rest, "--dir")?;
+    let account = take_value(&mut rest, "--account")?;
     // Passed on from another machine: answer in JSON, attach to nothing.
     let json = take_flag(&mut rest, "--json");
     let given = match rest.as_slice() {
@@ -381,6 +428,9 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
         if let Some(dir) = dir {
             there.extend(["--dir".to_owned(), dir]);
         }
+        if let Some(account) = account {
+            there.extend(["--account".to_owned(), account]);
+        }
         let words: Vec<&str> = there.iter().map(String::as_str).collect();
         let out = client::remote_output(&host, &words, "")?;
         let value: serde_json::Value = serde_json::from_str(out.trim())
@@ -395,7 +445,7 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
         return show(Some(&host), &name);
     }
     let (config, _) = crate::config::Config::load();
-    let tool = config.default_agent.clone();
+    let (tool, agent) = agent_for(account.as_deref(), &config.default_agent)?;
     check_skill(&tool)?;
     let name = match given {
         Some(name) if session_taken(&name) => bail!("there is a session {name} already"),
@@ -405,10 +455,10 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
     let folder = self::dir(&name)?;
     prepare(&folder)?;
     let cwd = match dir {
-        Some(dir) => PathBuf::from(dir),
+        Some(dir) => crate::template::home_dir(std::path::Path::new(&dir)),
         None => std::env::current_dir()?,
     };
-    let (socket, pane, _, ready) = start(&name, &cwd, false, None)?;
+    let (socket, pane, _, ready) = start(&name, &cwd, false, None, &agent)?;
     client::request_at(&socket, Request::Keeper { mark: true })?;
     let at = address(&name, pane);
     if ready == Ready::Asking {
@@ -495,7 +545,7 @@ fn show(host: Option<&str>, name: &str) -> Result<()> {
 pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
     use crate::cli::{take_flag, take_value};
     const USAGE: &str = "usage: imkr spawn NAME --brief FILE|- [--host H] [--dir REPO] \
-                         [--worktree] [--task N] [--keeper K] [--json]";
+                         [--worktree] [--task N] [--keeper K] [--account A] [--json]";
     let mut rest = args.to_vec();
     let brief = take_value(&mut rest, "--brief")?.context(USAGE)?;
     let dir = take_value(&mut rest, "--dir")?;
@@ -505,6 +555,7 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
         .transpose()
         .context("--task wants a number")?;
     let keeper = take_value(&mut rest, "--keeper")?;
+    let account = take_value(&mut rest, "--account")?;
     let json = take_flag(&mut rest, "--json");
     // Passed on from the keeper's machine: it keeps the record.
     let given = take_value(&mut rest, "--from")?;
@@ -553,6 +604,9 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
             if let Some(task) = &task_text {
                 there.extend(["--task", task]);
             }
+            if let Some(account) = &account {
+                there.extend(["--account", account]);
+            }
             let out = client::remote_output(host, &there, &text)?;
             let value: serde_json::Value = serde_json::from_str(out.trim())
                 .with_context(|| format!("{host} answered {:?}", out.trim()))?;
@@ -575,16 +629,18 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
             if session_taken(name) {
                 bail!("there is a session {name} already");
             }
+            let (config, _) = crate::config::Config::load();
+            let (_, agent) = agent_for(account.as_deref(), &config.default_agent)?;
             let brief = if brief == "-" {
                 keep_brief(&crate::persist::state_dir()?, name, &text)?
             } else {
                 std::fs::canonicalize(&brief)?
             };
             let cwd = match &dir {
-                Some(dir) => PathBuf::from(dir),
+                Some(dir) => crate::template::home_dir(std::path::Path::new(dir)),
                 None => std::env::current_dir()?,
             };
-            let (socket, pane, dir, ready) = start(name, &cwd, worktree, by.clone())?;
+            let (socket, pane, dir, ready) = start(name, &cwd, worktree, by.clone(), &agent)?;
             let brief = brief.display().to_string();
             let asking = ready == Ready::Asking;
             if !asking {

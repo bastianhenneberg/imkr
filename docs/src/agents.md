@@ -284,7 +284,15 @@ own — a **bee** — that starts with a fresh context and its briefing.
 ```bash
 imkr keeper                      # session `keeper` (`keeper-2` … when taken), goes there
 imkr keeper --host server        # the same on another machine
+imkr keeper --account work       # its agent in account `work` (or claude:work)
 ```
+
+Without a terminal at hand: start a new session (`n` in `Ctrl+B S`), and after its name the list
+of what it starts with offers **⚑ keeper** below `empty` and your templates. Then comes the
+directory, as for every new session, and — on this machine, with more than one account logged
+in — the account, as for `Ctrl+B k`. imkr waits in the background until the agent is ready and
+then takes you there. The entry is there where the `keeper` skill is; without it and without
+templates, a new session still asks for its directory right away.
 
 The keeper's agent (`default_agent`) starts with the skill `keeper` and its folder,
 `~/.local/state/imkr/keeper/NAME/` with `briefings/` and `keeper-stand.md` for its notes. What a
@@ -297,7 +305,7 @@ the sidebar, `Ctrl+B S`, `Ctrl+B A`, `imkr ls`, `imkr agents`, the phone page �
 its machine; its own bar and terminal title carry the mark too, so you know which window you talk
 to. The mark is kept with the session, through restarts, `imkr update` and `imkr revive`.
 `imkr keeper --mark [SESSION]` marks one afterwards (this one without a name), `--unmark` takes
-it off. Bees need no mark of their own: they sit under their keeper, as every session started
+it off; in `Ctrl+B S`, `f` does both for the selected session, on other machines too. Bees need no mark of their own: they sit under their keeper, as every session started
 for another does.
 
 From the keeper, one command starts a bee:
@@ -310,7 +318,15 @@ imkr spawn api-fix --brief briefings/api-fix.md --host server --dir ~/src/api
 It starts session `api-fix` with the default agent (with `--worktree` in a new git worktree
 `api-fix` of the repository, as `imkr worktree` makes them), waits until the agent is ready and
 sends it the briefing as its first message, from the pane it was called in, so answers come
-back with `imkr msg`. On another machine the briefing travels along on stdin and is kept there,
+back with `imkr msg`. `--account NAME` starts the bee in that account — a used-up default
+account does not stop the keeper from starting the next bee.
+
+Keeper and bee are pane 0 of window 1: the agent is typed into the session's first shell, which
+waits under it. So its address is `machine:NAME/0`, and it can move to another account like any
+agent started by hand (`Ctrl+B s c`, or when its account is used up). The same holds for
+`imkr new --start --window 0 -- PROGRAM`. A session of that name that was stopped (crash,
+reboot) comes back with its windows instead; `imkr new` says so — `imkr forget NAME` first if
+it should start empty. On another machine the briefing travels along on stdin and is kept there,
 readable only by you. It prints the bee's address (`--json` for scripts) and notes the bee in
 the keeper's `bees.json`: `Ctrl+B O` shows each bee's task, and its briefing above its screen.
 

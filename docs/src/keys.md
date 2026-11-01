@@ -128,6 +128,7 @@ Session list (Ctrl+B, S), in the list
   Enter          or key switch
   x              end
   r              rename
+  f              keeper ⚑ on/off
   s              save all as hive
   h              hives
   o              hide/show old

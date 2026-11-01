@@ -1052,6 +1052,7 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
     ("Enter", "or key switch"),
     ("x", "end"),
     ("r", "rename"),
+    ("f", "keeper ⚑ on/off"),
     ("s", "save all as hive"),
     ("h", "hives"),
     ("o", "hide/show old"),

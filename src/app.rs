@@ -302,6 +302,16 @@ struct PickerEntry {
     dir: String,
 }
 
+/// What a new session starts with, chosen after its name.
+#[derive(Clone, PartialEq, Eq)]
+enum NewStart {
+    /// One shell.
+    Shell,
+    Template(crate::template::Template),
+    /// An agent with the keeper skill, as `imkr keeper` starts it (#9291).
+    Keeper,
+}
+
 /// A line of text being typed.
 struct Prompt {
     purpose: PromptFor,
@@ -320,9 +330,8 @@ enum PromptFor {
     /// The name of a session to start and switch to, on that machine
     /// (`None`: this one).
     NewSession(Option<String>),
-    /// The directory session `Place` starts in, from the template (one
-    /// shell without).
-    SessionDir(Place, Option<crate::template::Template>),
+    /// The directory session `Place` starts in, with what it starts with.
+    SessionDir(Place, NewStart),
     /// The name to save the running sessions as a hive under.
     SaveHive,
     /// A new name for the hive called this.
@@ -977,6 +986,8 @@ pub struct App {
     confirm_list: Vec<String>,
     /// The session named last, while its template is chosen.
     new_session: Option<Place>,
+    /// Whether the new session's list offers a keeper, see `choose_template`.
+    offer_keeper: bool,
     /// Messages for agents that are busy or asking something: pane and
     /// text, typed in once the agent is idle.
     mailbox: Vec<(PaneId, String)>,
@@ -1133,6 +1144,7 @@ impl App {
             confirm_target: None,
             confirm_list: Vec::new(),
             new_session: None,
+            offer_keeper: false,
             mailbox: Vec::new(),
             mail_sent: HashMap::new(),
             mail_log: Vec::new(),
@@ -1335,6 +1347,7 @@ impl App {
         let mut asking = asking.into_iter().map(|(tool, panes)| AgentStart {
             tools: vec![tool],
             panes,
+            keeper: None,
         });
         if let Some(first) = asking.next() {
             self.waiting_agents = asking.next();
@@ -3493,7 +3506,9 @@ impl App {
             .map_err(|e| format!("{e:#}"))?;
         let fresh = crate::worktree::dir_for(&main, name).is_some_and(|d| !d.join(".git").exists());
         let dir = crate::worktree::create(&from, name).map_err(|e| format!("{e:#}"))?;
-        let mut command = self.agent_argv(command);
+        // A placeholder is filled in by `new_pane`, unless it is wrapped.
+        let account = placeholder_account(command, &self.config.default_agent);
+        let mut command = command.to_vec();
         if fresh {
             crate::worktree::prepare(&main, &dir, &setup).map_err(|e| format!("{e:#}"))?;
             if !setup.post_create.is_empty() {
@@ -3507,7 +3522,7 @@ impl App {
                 let script =
                     format!("( {steps} ) || printf '\\nimkr: post_create failed\\n\\n'; {then}");
                 let mut wrapped = vec!["sh".to_owned(), "-c".to_owned(), script, "sh".to_owned()];
-                wrapped.append(&mut command);
+                wrapped.append(&mut self.agent_argv(&command));
                 command = wrapped;
             }
         }
@@ -3522,6 +3537,11 @@ impl App {
             started_for,
         )?;
         let n = reply["workspace"].as_u64().map_or(n, |w| w as u8);
+        if let (Some((tool, name)), Some(pane)) = (account, reply["pane"].as_u64())
+            && let Some(pane) = self.panes.get_mut(&(pane as PaneId))
+        {
+            set_account(&mut pane.accounts, &tool, &name);
+        }
         self.switch_workspace(n);
         self.ws.name = Some(name.to_owned());
         Ok(serde_json::json!({ "window": n, "dir": dir, "pane": reply["pane"] }))
@@ -3551,6 +3571,40 @@ impl App {
         argv
     }
 
+    /// Types `command` into `shell`, the first shell of a session started
+    /// for it, in `cwd` (`new_pane`).
+    fn type_first(&mut self, shell: PaneId, command: &[String], cwd: Option<PathBuf>) -> Reply {
+        let first = &command[0];
+        let filled = self.config.expand_agents(first, &imkr_path());
+        // A placeholder is shell already; anything else is one word.
+        let program = if first.starts_with('<') && first.ends_with('>') && filled != *first {
+            filled
+        } else {
+            crate::client::sh_quote(first)
+        };
+        let mut line = program;
+        for arg in &command[1..] {
+            line.push(' ');
+            line.push_str(&crate::client::sh_quote(arg));
+        }
+        let pane = self
+            .panes
+            .get_mut(&shell)
+            .ok_or("the first shell is gone")?;
+        if let Some((tool, name)) = placeholder_account(command, &self.config.default_agent) {
+            set_account(&mut pane.accounts, &tool, &name);
+        }
+        // The server usually starts where it was asked to, see
+        // `client::start_server`.
+        if let Some(cwd) = cwd.filter(|cwd| pane.cwd().as_ref() != Some(cwd)) {
+            let dir = crate::client::sh_quote(&cwd.to_string_lossy());
+            line = format!("cd -- {dir} && {line}");
+        }
+        self.type_into(shell, &line, true)?;
+        self.first_shell = None;
+        Ok(serde_json::json!({ "pane": shell, "workspace": self.workspace }))
+    }
+
     /// Marks this session as started for `by` (#9087), when given.
     fn take_by(&mut self, by: Option<String>) {
         if let Some(by) = by.map(|by| by.trim().to_owned()) {
@@ -3566,18 +3620,23 @@ impl App {
         cwd: Option<PathBuf>,
         fresh: bool,
     ) -> Reply {
-        let command = &self.agent_argv(command);
         // `imkr new --start --window 0` started this server for this very
-        // program: it belongs in the first window, in place of the empty
-        // shell that comes with a new session, not in a second window
-        // beside it (#9068). As when a window moves into a session
-        // started for it (`move_in`).
-        let replacing = self
+        // program: it belongs in the first window, not in a second one
+        // beside the empty shell a new session comes with (#9068). It is
+        // typed into that shell, so it is pane 0 and a shell waits under
+        // it: an agent there can be ended and started again in another
+        // account (`switch_account`, #9291).
+        if let Some(shell) = self
             .first_shell
-            .filter(|_| fresh && !float && workspace == Some(0) && self.panes.len() == 1);
+            .filter(|_| fresh && !float && workspace == Some(0) && self.panes.len() == 1)
+            && !command.is_empty()
+        {
+            return self.type_first(shell, command, cwd);
+        }
+        let account = placeholder_account(command, &self.config.default_agent);
+        let command = &self.agent_argv(command);
         // 0: a window of its own, the first free number.
         let n = match workspace {
-            Some(0) if replacing.is_some() => self.workspace,
             Some(0) => self.free_workspace().ok_or("all 9 windows are in use")?,
             n => n.unwrap_or(self.workspace),
         };
@@ -3594,11 +3653,7 @@ impl App {
         } else {
             self.hidden.entry(n).or_insert_with(Workspace::empty)
         };
-        if replacing.is_some() {
-            // It gets the window the first shell had, at its full size:
-            // the shell itself runs on until the program is up.
-            *ws = Workspace::new(id);
-        } else if float {
+        if float {
             ws.add_float(id, body);
         } else if ws.is_empty() {
             *ws = Workspace::new(id);
@@ -3625,14 +3680,11 @@ impl App {
             self.events.clone(),
         );
         match spawned {
-            Ok(pane) => {
-                self.panes.insert(id, pane);
-                // Only now that the program is up: a session with a shell
-                // in it is better than one with nothing.
-                if let Some(shell) = replacing {
-                    self.close(shell);
-                    self.first_shell = None;
+            Ok(mut pane) => {
+                if let Some((tool, name)) = &account {
+                    set_account(&mut pane.accounts, tool, name);
                 }
+                self.panes.insert(id, pane);
                 Ok(serde_json::json!({ "pane": id, "workspace": n }))
             }
             Err(e) => {
@@ -3642,10 +3694,7 @@ impl App {
                     self.hidden.get_mut(&n).expect("inserted above")
                 };
                 ws.remove(id);
-                // The first shell keeps the window it was to make way for.
-                if let Some(shell) = replacing {
-                    *ws = Workspace::new(shell);
-                } else if n != self.workspace && ws.is_empty() {
+                if n != self.workspace && ws.is_empty() {
                     self.hidden.remove(&n);
                 }
                 Err(format!("{e:#}"))
@@ -7091,20 +7140,28 @@ impl App {
         all
     }
 
-    fn template_choices(&self) -> (Vec<Option<crate::template::Template>>, Vec<menu::MenuItem>) {
-        let mut templates: Vec<Option<crate::template::Template>> = vec![None];
-        templates.extend(self.templates().into_iter().map(Some));
+    fn template_choices(&self) -> (Vec<NewStart>, Vec<menu::MenuItem>) {
+        let mut templates = vec![NewStart::Shell];
+        templates.extend(self.templates().into_iter().map(NewStart::Template));
+        // Last: Enter on "empty" stays what starts without a choice.
+        if self.offer_keeper {
+            templates.push(NewStart::Keeper);
+        }
         let items = templates
             .iter()
             .enumerate()
-            .map(|(i, template)| menu::MenuItem {
+            .map(|(i, start)| menu::MenuItem {
                 key: char::from_digit((i as u32 + 1) % 10, 10).unwrap_or(' '),
-                title: template
-                    .as_ref()
-                    .map_or("empty".into(), |t| t.title().to_owned()),
-                hint: template
-                    .as_ref()
-                    .map_or("one shell".into(), |t| t.summary()),
+                title: match start {
+                    NewStart::Shell => "empty".into(),
+                    NewStart::Template(t) => t.title().to_owned(),
+                    NewStart::Keeper => format!("{} keeper", crate::keeper::MARK),
+                },
+                hint: match start {
+                    NewStart::Shell => "one shell".into(),
+                    NewStart::Template(t) => t.summary(),
+                    NewStart::Keeper => "an agent that steers bees, with the keeper skill".into(),
+                },
                 danger: false,
                 apart: false,
                 color: None,
@@ -7124,8 +7181,11 @@ impl App {
             self.go_to(&place);
             return;
         }
-        if self.templates().is_empty() {
-            self.ask_session_dir(place, None);
+        // Offered where its skill is, that is where someone uses keepers;
+        // looked up once here, the list is drawn every frame.
+        self.offer_keeper = crate::keeper::has_skill_here(&self.config.default_agent);
+        if self.templates().is_empty() && !self.offer_keeper {
+            self.ask_session_dir(place, NewStart::Shell);
             return;
         }
         self.new_session = Some(place);
@@ -7174,15 +7234,18 @@ impl App {
         let Some(place) = self.new_session.take() else {
             return;
         };
-        if let Some(template) = templates.get(pick).cloned() {
-            self.ask_session_dir(place, template);
+        if let Some(start) = templates.get(pick).cloned() {
+            self.ask_session_dir(place, start);
         }
     }
 
     /// Asks where session `place` starts, suggesting the template's root,
     /// else where the user is here, else the home directory there.
-    fn ask_session_dir(&mut self, place: Place, template: Option<crate::template::Template>) {
-        let root = template.as_ref().and_then(|t| t.root.as_ref());
+    fn ask_session_dir(&mut self, place: Place, start: NewStart) {
+        let root = match &start {
+            NewStart::Template(t) => t.root.as_ref(),
+            _ => None,
+        };
         let suggested = match (root, &place.host) {
             (Some(root), _) => root.replace("{session}", &place.name),
             (None, None) => self
@@ -7193,7 +7256,7 @@ impl App {
             (None, Some(_)) => "~".into(),
         };
         self.prompt = Some(Prompt {
-            purpose: PromptFor::SessionDir(place, template),
+            purpose: PromptFor::SessionDir(place, start),
             text: suggested,
         });
         self.dir_pick = None;
@@ -8886,6 +8949,17 @@ impl App {
                 self.mode = Mode::Hives(0);
                 return;
             }
+            // The flag ⚑ on or off, the list stays open (#9291).
+            KeyCode::Char('f') if !self.show_archive => {
+                if let Some(place) = places.get(selected).cloned() {
+                    self.toggle_keeper(&place);
+                    // Keepers come first: the selection goes along.
+                    if let Some(i) = self.session_items().0.iter().position(|p| *p == place) {
+                        self.mode = Mode::Sessions(i);
+                    }
+                }
+                return;
+            }
             KeyCode::Char('r') => {
                 if let Some(name) = names.get(selected).filter(|n| !n.is_empty()) {
                     self.prompt = Some(Prompt {
@@ -9304,6 +9378,62 @@ impl App {
                     format!("{name} forgotten on {host}")
                 }
                 Err(e) => format!("{name} stays: {host} does not answer ({e:#})"),
+            };
+            let _ = crate::client::request_at(&socket, Request::Flash { text });
+        });
+    }
+
+    /// `f` in the session list: marks session `place` as a keeper's, or
+    /// takes the mark off (`imkr keeper --mark|--unmark`); on another
+    /// machine through ssh, in the background.
+    fn toggle_keeper(&mut self, place: &Place) {
+        let places = self.places.lock().unwrap().clone();
+        let mark = !self.keeper_places(&places).contains(place);
+        let said = move |name: &str| match mark {
+            true => format!("{} {name} is marked as a keeper", crate::keeper::MARK),
+            false => format!("{name} is no keeper any more"),
+        };
+        if self.dormant_of(place).is_some() {
+            self.flash = Some(format!("{} does not run", place.name));
+            return;
+        }
+        let Some(host) = place.host.clone() else {
+            if place.name == protocol::session_name() {
+                self.keeper = mark;
+            } else {
+                let sent = protocol::session_socket(&place.name)
+                    .map_err(|e| format!("{e:#}"))
+                    .and_then(|socket| {
+                        crate::client::request_at(&socket, Request::Keeper { mark })
+                            .map_err(|e| format!("{e:#}"))
+                    });
+                if let Err(e) = sent {
+                    self.flash = Some(format!("{}: {e}", place.name));
+                    return;
+                }
+                // Shown at once, not after the next look around.
+                if let Some(info) = self
+                    .places
+                    .lock()
+                    .unwrap()
+                    .local
+                    .iter_mut()
+                    .find(|s| s.name == place.name)
+                {
+                    info.keeper = mark;
+                }
+            }
+            self.flash = Some(said(&place.name));
+            return;
+        };
+        let socket = self.socket.clone();
+        let name = place.name.clone();
+        let flag = if mark { "--mark" } else { "--unmark" };
+        self.flash = Some(format!("{flag} {name} on {host} …"));
+        thread::spawn(move || {
+            let text = match crate::client::remote_output(&host, &["keeper", flag, &name], "") {
+                Ok(_) => format!("{} on {host}", said(&name)),
+                Err(e) => format!("{name} on {host}: {e:#}"),
             };
             let _ = crate::client::request_at(&socket, Request::Flash { text });
         });
@@ -10000,15 +10130,24 @@ impl App {
                             }
                         }
                     }
-                    PromptFor::SessionDir(place, template) => {
-                        // Without a template: one shell, in that directory.
-                        let mut template = template.unwrap_or_else(|| crate::template::Template {
-                            windows: vec![crate::template::Window::default()],
-                            ..Default::default()
-                        });
+                    PromptFor::SessionDir(place, start) => {
                         let dir = text.trim().trim_end_matches('/');
-                        template.root = Some(if dir.is_empty() { "~" } else { dir }.to_owned());
-                        self.start_from_template(place, &template);
+                        let dir = if dir.is_empty() { "~" } else { dir };
+                        let start_keeper = start == NewStart::Keeper;
+                        let mut template = match start {
+                            NewStart::Template(template) => template,
+                            // One shell, in that directory.
+                            _ => crate::template::Template {
+                                windows: vec![crate::template::Window::default()],
+                                ..Default::default()
+                            },
+                        };
+                        template.root = Some(dir.to_owned());
+                        if start_keeper {
+                            self.start_keeper(place, dir);
+                        } else {
+                            self.start_from_template(place, &template);
+                        }
                     }
                     PromptFor::NewSession(host) => {
                         let name = text.trim().to_owned();
@@ -11821,6 +11960,14 @@ impl App {
             }
             Mode::AgentAccount(selected) => {
                 let title = match &self.agent_start {
+                    Some(AgentStart {
+                        keeper: Some((place, _)),
+                        ..
+                    }) => format!(
+                        " {} Keeper {}: which account? ",
+                        crate::keeper::MARK,
+                        place.name
+                    ),
                     Some(start) if !start.panes.is_empty() => {
                         format!(" ⬢ {} of the template: which account? ", start.tools[0])
                     }
@@ -12056,6 +12203,7 @@ impl App {
         self.ask_agent_account(AgentStart {
             tools,
             panes: Vec::new(),
+            keeper: None,
         });
     }
 
@@ -12172,7 +12320,7 @@ impl App {
                 if self
                     .agent_start
                     .as_ref()
-                    .is_some_and(|s| s.panes.is_empty())
+                    .is_some_and(|s| s.panes.is_empty() && s.keeper.is_none())
                 {
                     let other = if self.agent_in_pane() {
                         "window"
@@ -12202,6 +12350,10 @@ impl App {
         let Some(start) = self.agent_start.take() else {
             return;
         };
+        if let Some((place, dir)) = start.keeper {
+            self.launch_keeper(place, dir, Some(account));
+            return;
+        }
         let tool = account.tool.clone();
         let mut panes = start.panes;
         if panes.is_empty()
@@ -12243,6 +12395,78 @@ impl App {
         if let Some(rest) = self.waiting_agents.take() {
             self.ask_agent_account(rest);
         }
+    }
+
+    /// Starts keeper session `place` in `dir` (#9291): on this machine in
+    /// the account chosen like for `Ctrl+B k` when more than one is logged
+    /// in, elsewhere in the default one there.
+    fn start_keeper(&mut self, place: Place, dir: &str) {
+        let tool = self.config.default_agent.clone();
+        if place.host.is_some() || !crate::account::TOOLS.contains(&tool.as_str()) {
+            self.launch_keeper(place, dir.to_owned(), None);
+            return;
+        }
+        self.ask_agent_account(AgentStart {
+            tools: vec![tool],
+            panes: Vec::new(),
+            keeper: Some((place, dir.to_owned())),
+        });
+    }
+
+    /// Runs `imkr keeper` for `place` in the background, which starts the
+    /// agent, waits until it is ready and gives it the skill; then goes
+    /// there. An agent that asks something first is the user's to answer:
+    /// it goes there, too.
+    fn launch_keeper(
+        &mut self,
+        place: Place,
+        dir: String,
+        account: Option<&crate::account::Account>,
+    ) {
+        let mut args: Vec<String> = Vec::new();
+        if let Some(host) = &place.host {
+            args.extend(["--host".into(), host.clone()]);
+        }
+        args.extend(["keeper".into(), place.name.clone(), "--dir".into(), dir]);
+        if let Some(account) = account {
+            args.extend([
+                "--account".into(),
+                format!("{}:{}", account.tool, account.name),
+            ]);
+        }
+        let target = match &place.host {
+            Some(host) => format!("{host}:{}", place.name),
+            None => place.name.clone(),
+        };
+        self.flash = Some(format!(
+            "{} keeper {target} starts, its agent getting ready …",
+            crate::keeper::MARK
+        ));
+        let socket = self.socket.clone();
+        thread::spawn(move || {
+            let out = std::process::Command::new(imkr_path())
+                .args(&args)
+                .env_remove("IMKR_PANE")
+                .stdin(std::process::Stdio::null())
+                .output();
+            let (go, text) = match out {
+                Ok(out) if out.status.success() => (true, None),
+                Ok(out) => {
+                    let error = String::from_utf8_lossy(&out.stderr)
+                        .trim()
+                        .trim_start_matches("Error: ")
+                        .replace('\n', " · ");
+                    (error.contains("waiting for an answer"), Some(error))
+                }
+                Err(e) => (false, Some(format!("imkr keeper did not run: {e}"))),
+            };
+            if go {
+                let _ = crate::client::request_at(&socket, Request::Go { target });
+            }
+            if let Some(text) = text {
+                let _ = crate::client::request_at(&socket, Request::Flash { text });
+            }
+        });
     }
 
     /// Whether `Ctrl+B k` starts in the focused pane, see
@@ -12631,10 +12855,16 @@ impl App {
             PromptFor::NewWindow { window, .. } => format!(" Name new window {window} "),
             PromptFor::Search { forward: true } => " Search down ".to_owned(),
             PromptFor::Search { forward: false } => " Search up ".to_owned(),
-            PromptFor::SessionDir(place, _) => match &place.host {
-                Some(host) => format!(" Directory of {} on {host} ", place.name),
-                None => format!(" Directory of {} ", place.name),
-            },
+            PromptFor::SessionDir(place, start) => {
+                let what = match start {
+                    NewStart::Keeper => "keeper ",
+                    _ => "",
+                };
+                match &place.host {
+                    Some(host) => format!(" Directory of {what}{} on {host} ", place.name),
+                    None => format!(" Directory of {what}{} ", place.name),
+                }
+            }
             PromptFor::NewSession(None) => " New session ".to_owned(),
             PromptFor::NewSession(Some(host)) => format!(" New session on {host} "),
             PromptFor::MoveWindow(n) => format!(" Move window {n} to session "),
@@ -13277,7 +13507,7 @@ impl App {
             Mode::Sessions(_) => (
                 "SESSIONS",
                 t.magenta,
-                "↑↓ choose · Enter switch · n new · x end · r rename · o old · s save as hive · h hives · Esc",
+                "↑↓ choose · Enter switch · n new · x end · r rename · f keeper · o old · s save as hive · h hives · Esc",
             ),
             Mode::Hives(_) => (
                 "HIVES",
@@ -13304,6 +13534,18 @@ impl App {
                 t.accent,
                 "↑↓ choose · Enter focused agent goes on in it · u new shells here · Esc cancel",
             ),
+            Mode::AgentAccount(_)
+                if self
+                    .agent_start
+                    .as_ref()
+                    .is_some_and(|s| s.keeper.is_some()) =>
+            {
+                (
+                    "NEW KEEPER",
+                    t.accent,
+                    "↑↓ choose · Enter or 1-9 start it in that account · Esc cancel",
+                )
+            }
             Mode::AgentAccount(_) => (
                 "NEW AGENT",
                 t.accent,
@@ -13989,6 +14231,9 @@ struct AccountChoice {
 struct AgentStart {
     tools: Vec<String>,
     panes: Vec<(PaneId, String)>,
+    /// A keeper's session and directory to start it in (#9291), instead
+    /// of panes.
+    keeper: Option<(Place, String)>,
 }
 
 /// Whether `program` is on the PATH.
@@ -14025,6 +14270,15 @@ fn on_path(program: &str) -> bool {
 }
 
 /// Notes account `name` of `tool` in `accounts`: `standard` is no entry.
+/// The agent and account of a command `<tool@account> …`, see
+/// `Config::expand_agents`.
+fn placeholder_account(command: &[String], default_agent: &str) -> Option<(String, String)> {
+    let inner = command.first()?.strip_prefix('<')?.strip_suffix('>')?;
+    let (tool, name) = inner.split_once('@')?;
+    let tool = if tool == "agent" { default_agent } else { tool };
+    Some((tool.to_owned(), name.to_owned()))
+}
+
 fn set_account(accounts: &mut BTreeMap<String, String>, tool: &str, name: &str) {
     if name == crate::account::STANDARD {
         accounts.remove(tool);
@@ -14312,6 +14566,22 @@ fn with_title(label: String, title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A keeper or bee started in an account notes it on its pane (#9291).
+    #[test]
+    fn a_placeholder_names_its_account() {
+        let words = |w: &[&str]| w.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let of = |w: &[&str]| super::placeholder_account(&words(w), "codex");
+        assert_eq!(
+            of(&["<claude@work>"]),
+            Some(("claude".into(), "work".into()))
+        );
+        // `<agent>` is the default agent.
+        assert_eq!(of(&["<agent@b>", "x"]), Some(("codex".into(), "b".into())));
+        assert_eq!(of(&["<claude>"]), None);
+        assert_eq!(of(&["claude@work"]), None);
+        assert_eq!(of(&[]), None);
+    }
 
     /// Sessions started for another sit under it, in the order they came,
     /// and only within the same machine (#9087).

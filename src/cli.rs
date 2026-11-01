@@ -1584,7 +1584,20 @@ pub fn new(args: &[String]) -> Result<()> {
         let path = protocol::socket_path()?;
         if std::os::unix::net::UnixStream::connect(&path).is_err() {
             let session = std::env::var("IMKR_SESSION").ok();
-            client::start_server(&path, session.as_deref())?;
+            // A session stopped by a crash or reboot comes back with its
+            // windows and agents: the program then runs beside them, and
+            // an agent there twice (#9291).
+            let name = protocol::session_name();
+            let back = crate::persist::dormant_sessions(&[])
+                .into_iter()
+                .any(|d| d.name == name && !d.closed);
+            client::start_server_in(&path, session.as_deref(), dir.as_deref())?;
+            if back {
+                eprintln!(
+                    "{name} was stopped and came back with its windows; this runs beside them \
+                     (`imkr forget {name}` first starts it empty)"
+                );
+            }
             // Started for this command: it goes where the empty first
             // shell is instead of into a window beside it (#9068).
             fresh = true;

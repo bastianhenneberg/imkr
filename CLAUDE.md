@@ -237,6 +237,20 @@ Projekt-Slug: `imkr`
   `App::keeper_places`, `badge_text(keeper)`, `window_title_text`, `imkr ls`/`agents` (Marke am
   Zeilenende, die Adresse bleibt erstes Wort), `web/index.html`. Keeper zuerst je Rechner
   (Sortierung nur innerhalb einer Rechner-Gruppe).
+  UI (#9291): `NewStart` (Shell/Template/Keeper) in `template_choices`, ⚑ keeper zuletzt und nur
+  bei `offer_keeper` (`keeper::has_skill_here`, einmal in `choose_template`), sonst ohne Vorlagen
+  kein Zwischenschritt. `PromptFor::SessionDir(place, NewStart)` → `start_keeper` → Kontowahl über
+  `AgentStart::keeper` (nur lokal) → `launch_keeper` ruft `imkr [--host H] keeper NAME --dir D
+  [--account T:N]` im Thread, danach `Request::Go` an den eigenen Socket (auch bei „waiting for an
+  answer“). `Ctrl+B S` `f` = `toggle_keeper` (lokal `Request::Keeper`, fremd per ssh), Auswahl
+  folgt dem Eintrag. `--account` (`keeper::agent_for`: NAME oder TOOL:NAME, muss eingeloggt sein)
+  → Platzhalter `<tool@name>`; `placeholder_account` trägt das Konto ins Pane.
+  Erste Shell (#9291): `new --start --window 0` (fresh) **tippt** das Programm in Shell 0
+  (`App::type_first`, `cd` nur wenn der Ordner abweicht; `client::start_server_in` startet den
+  Server gleich dort) statt sie zu ersetzen → Agent auf Pane 0 mit Shell darunter, `switch_account`
+  geht. Gemessen mit echter zshrc: Typeahead vor dem Prompt kommt an. Falle: gab es die Session
+  als gestoppte (State-Datei), stellt `--start` sie wieder her und das Programm landet daneben
+  (doppelter Agent) — `cli::new` sagt das auf stderr, keeper/spawn lehnen per `session_taken` ab.
 - Agent-Liste `Ctrl+B A` (`agent_choices`, `AgentAt`) und Marken wie Harpoon (`Mark`, `marks.json`
   neben `saves/` je Rechner, `Ctrl+B m`/`M`, `m` in der Agent-Liste markiert auch Remote-Agents,
   `Alt+1-9` in `handle_key` vor der Pane-Weitergabe, abschaltbar `marks_on_alt`). Marke findet
@@ -376,7 +390,7 @@ Projekt-Slug: `imkr`
   je Auftraggeber, auch wenn er keine Nachricht geschickt hat). Verwaist = nur Marke, nie Ende.
   `imkr agents --by ADRESSE` (`cli::same_address`). Test: zwei Welten mit Fake-ssh; Falle:
   `new --start --window 0` legt das Programm auf Pane **1**, `--by host:session/0` zeigt dort
-  ins Leere (und wird korrekt „gone“).
+  ins Leere (und wird korrekt „gone“). Seit #9291 Pane **0** (siehe Keeper).
 - Hotkeys Computer-Use (#9095): `Ctrl+B s e` = `Command::ComputerUse` → `App::step_computer_use`
   (`screen::ComputerUse::ALL` + `config::step_in`, dieselbe Reihenfolge wie das Menü, speichert
   sofort), `Ctrl+B s E` = `Command::AllowScreenNow` → `App::allow_screen_now` (`screen::allow`/
@@ -547,8 +561,11 @@ Projekt-Slug: `imkr`
   sterben; daher schreibt `Pane` über ein `dup` des Masters. Test: zwei Sessions mit eigenem
   `XDG_RUNTIME_DIR`/`XDG_STATE_HOME` (sonst echte Zustände!), Tick-Skript auf Lücken prüfen.
 - Agent-Tests ohne echten Agent: Skript namens `claude` im Scratchpad, das arbeitet und dann eine
-  Frage stellt, per `imkr new --window 2 -- <skript>` starten. **Nicht für den Kontowechsel:**
-  `new -- <cmd>` legt das Pane ohne Shell an, `stop_foreground` gibt dann false (Vordergrund ==
+  Frage stellt, per `imkr new --window 2 -- <skript>` starten. Testwelt erbt sonst
+  `CLAUDE_CONFIG_DIR` des echten Kontos (Skills!) → unsetzen; die zshrc stellt `~/.local/bin`
+  vorn → im Schein-HOME dort die Attrappe ablegen, sonst startet das echte Claude Code.
+  **Nicht für den Kontowechsel:** `new -- <cmd>` (außer in eine frisch gestartete Session, s.
+  Keeper) legt das Pane ohne Shell an, `stop_foreground` gibt dann false (Vordergrund ==
   Pane-Prozess) und `switch_account` kann nicht wechseln. Dafür den Fake-Agenten mit vollem Pfad
   aus der Shell des Panes starten (`tmux send-keys`).
 - Live-Update: `imkr update` (`src/upgrade.rs`): Server execs das neue Binary im selben Prozess,

@@ -1701,6 +1701,16 @@ fn is_agent_session_var(name: &str) -> bool {
 /// Starts a server in the background and connects to it. With `session`,
 /// the server is that named session, whatever this process was started for.
 pub fn start_server(path: &Path, session: Option<&str>) -> Result<UnixStream> {
+    start_server_in(path, session, None)
+}
+
+/// `start_server`, with the first shell in `dir` when given: a program
+/// typed into it for `imkr new --start` starts there without a `cd`.
+pub fn start_server_in(
+    path: &Path,
+    session: Option<&str>,
+    dir: Option<&Path>,
+) -> Result<UnixStream> {
     // A socket file without a server behind it is left over from a crash.
     let _ = std::fs::remove_file(path);
 
@@ -1720,6 +1730,9 @@ pub fn start_server(path: &Path, session: Option<&str>) -> Result<UnixStream> {
         if is_agent_session_var(&name.to_string_lossy()) {
             cmd.env_remove(&name);
         }
+    }
+    if let Some(dir) = dir.filter(|dir| dir.is_dir()) {
+        cmd.current_dir(dir);
     }
     cmd.arg("server")
         .stdin(Stdio::null())

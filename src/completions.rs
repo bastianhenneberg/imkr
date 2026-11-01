@@ -333,7 +333,7 @@ const COMMANDS: &[Command] = &[
     cmd(
         "keeper",
         "a session whose agent only steers",
-        &["--host", "--dir", "--mark", "--unmark"],
+        &["--host", "--dir", "--account", "--mark", "--unmark"],
         Nothing,
     ),
     cmd(
@@ -346,6 +346,7 @@ const COMMANDS: &[Command] = &[
             "--worktree",
             "--task",
             "--keeper",
+            "--account",
             "--json",
         ],
         Nothing,
