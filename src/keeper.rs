@@ -321,6 +321,7 @@ fn start(
                 cwd: Some(dir.to_owned()),
                 fresh: true,
                 by: by.clone(),
+                ratio: None,
             },
         )
     }
@@ -460,6 +461,7 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
     };
     let (socket, pane, _, ready) = start(&name, &cwd, false, None, &agent)?;
     client::request_at(&socket, Request::Keeper { mark: true })?;
+    mail_pane(&socket, pane);
     let at = address(&name, pane);
     if ready == Ready::Asking {
         let then = format!(
@@ -485,6 +487,55 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
     }
     println!("keeper {at} in {}", folder.display());
     show(None, &name)
+}
+
+/// How much of the window the keeper's agent keeps when the message pane
+/// is split off it: the messages only have to be readable.
+const MAIL_SHARE: f32 = 0.74;
+
+/// Puts a narrow message pane beside the keeper's agent (#9379): what
+/// comes in for it, what waits and what reached it, live. The keeper
+/// writes in its agent undisturbed and reads the mail here. Only said
+/// when it fails: a keeper without it still works.
+fn mail_pane(socket: &Path, agent: PaneId) {
+    let imkr = std::env::current_exe()
+        .map(|exe| exe.display().to_string())
+        .unwrap_or_else(|_| "imkr".to_owned());
+    let reply = client::request_at(
+        socket,
+        Request::New {
+            command: vec![
+                imkr,
+                "mail".to_owned(),
+                "--follow".to_owned(),
+                agent.to_string(),
+            ],
+            float: false,
+            workspace: None,
+            cwd: None,
+            fresh: false,
+            by: None,
+            ratio: Some(MAIL_SHARE),
+        },
+    );
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(e) => {
+            eprintln!("no message pane: {e:#}");
+            return;
+        }
+    };
+    if let Some(pane) = reply["pane"].as_u64() {
+        let _ = client::request_at(
+            socket,
+            Request::Rename {
+                target: protocol::RenameTarget::Pane(pane as PaneId),
+                name: Some("mail".to_owned()),
+            },
+        );
+    }
+    // Back to the agent: the keeper types there, not in the message pane.
+    let _ = client::request_at(socket, Request::Reveal { pane: agent });
 }
 
 /// `imkr keeper --mark|--unmark [SESSION]`: marks a session as a keeper's

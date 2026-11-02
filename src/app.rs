@@ -708,6 +708,100 @@ fn restored_history(text: &str) -> Vec<u8> {
 /// How many messages the orchestration view remembers.
 const MAIL_LOG: usize = 400;
 
+/// A pane Enter was typed into, until the program has taken it (#9379).
+struct Entered {
+    pane: PaneId,
+    /// When Enter last went in.
+    at: Instant,
+    /// What was typed before it, to find again on the screen.
+    text: String,
+    /// How often Enter went again.
+    tries: u8,
+    /// Whether the agent has said since that it began a turn: that is the
+    /// proof the Enter arrived, see `enter_again`.
+    began: bool,
+}
+
+/// Whether Enter has to go into a pane again, `ENTER_AGAIN` after it was
+/// typed there (#9379).
+///
+/// `began`: the agent itself said it started a turn (its `UserPromptSubmit`
+/// hook, `imkr status working`). That is the only proof that the Enter
+/// arrived. What is on the screen is none: an agent redraws its input line
+/// whether it took the Enter or not, and once it has taken it the text
+/// stands in its transcript, which from outside looks the same. An agent
+/// that reports nothing at all (no hooks) can therefore cost one empty
+/// Enter — the price of reaching one that really is stuck.
+///
+/// `typed_since`: the user has touched this pane since. Then never — an
+/// Enter would send whatever they are writing, the very mistake this is
+/// here to stop. Their own Enter is theirs to press.
+///
+/// `shown`: the end of what was typed is still on the screen at all. Gone
+/// from there, nothing can be stuck in an input line.
+fn enter_again(began: bool, typed_since: bool, shown: bool) -> bool {
+    !began && !typed_since && shown
+}
+
+/// Why a message cannot be typed into a pane right now, if it cannot.
+///
+/// `drafting`: the user began a line there and has not sent it (#9379).
+/// Typing a message into it would land in the middle of what they write,
+/// and the Enter after the message would send the lot — the whole reason
+/// this exists. It beats every agent state: an idle agent is exactly the
+/// one whose input line somebody is using.
+///
+/// Then the agent: never into a question, which is the user's to answer,
+/// and into work only for agents that queue what is typed meanwhile, so a
+/// long task does not hold a message back (#8800).
+fn mail_hold(drafting: bool, state: Option<AgentState>, queues: bool) -> Option<&'static str> {
+    if drafting {
+        return Some("you are typing");
+    }
+    match state {
+        None | Some(AgentState::Idle | AgentState::Done | AgentState::Failed) => None,
+        Some(AgentState::Working) if queues => None,
+        Some(AgentState::Working) => Some("working"),
+        Some(AgentState::Blocked) => Some("asking something"),
+    }
+}
+
+/// Whether a note is a message between two addresses, which is what the
+/// orchestration view is about: not what became of one (#9379), and not one
+/// a person sent from a plain terminal, which cannot be answered.
+fn exchanged(note: &protocol::MailNote) -> bool {
+    note.what == protocol::MailWhat::Message && note.peer.contains(':')
+}
+
+/// How long a message for an agent that fetches its own mail waits before
+/// it is typed in after all, in seconds (#9379).
+///
+/// The hooks come at the end of every turn (`Stop`) and with every prompt
+/// the user sends (`UserPromptSubmit`). While the agent works, the end of
+/// its turn is bound to come, so the message waits however long that takes
+/// and is never typed. Only an agent sitting idle with nobody talking to
+/// it fires no hook at all, and that one has to be typed to or it would
+/// never hear of the message: this is the grace it gets, long enough for
+/// the `Stop` of a turn that has just ended to come through.
+const HOOK_WITHIN: u64 = 10;
+
+/// How long after Enter was typed into an agent it has to have started
+/// working, before Enter goes again (#9379): a program that was still
+/// starting swallows it after a paste, and then the text stands in its
+/// input line while the agent sits idle with work it never began.
+const ENTER_AGAIN: Duration = Duration::from_secs(2);
+
+/// How often Enter is sent again before giving up and saying so. Once:
+/// after a successful one an agent may well still show what was typed (in
+/// its transcript now, not its input line), and telling those two apart
+/// from outside is guesswork. One Enter fixes what is stuck; more would
+/// only be empty lines nobody asked for.
+const ENTER_TRIES: u8 = 1;
+
+/// How many lines at the bottom of the screen count as the input line when
+/// looking for what was typed in (`Pane::shows_tail`).
+const ENTER_LINES: usize = 8;
+
 /// How many lines of a waiting agent's screen the inbox shows.
 const INBOX_LINES: usize = 12;
 
@@ -988,13 +1082,23 @@ pub struct App {
     new_session: Option<Place>,
     /// Whether the new session's list offers a keeper, see `choose_template`.
     offer_keeper: bool,
-    /// Messages for agents that are busy or asking something: pane and
-    /// text, typed in once the agent is idle.
-    mailbox: Vec<(PaneId, String)>,
+    /// Messages for agents that are busy, asking something or being
+    /// written to, handed over once the agent can take them.
+    mailbox: Vec<protocol::Mail>,
     /// When each pane last got a message, so the next one waits a little.
     mail_sent: HashMap<PaneId, Instant>,
+    /// Panes Enter was typed into and the program has yet to take it:
+    /// pane, when, the text that went in and how often Enter went again
+    /// (`check_entered`, #9379).
+    entered: Vec<Entered>,
     /// Who messaged whom, newest last, for the orchestration view.
     mail_log: Vec<protocol::MailNote>,
+    /// Counts the notes in `mail_log` up, so that `imkr mail --follow`
+    /// knows what it has shown (#9379).
+    mail_seq: u64,
+    /// Which messages the log already says wait, by their note, so that
+    /// each one is said once and not with every tick.
+    mail_held: HashSet<u64>,
     prompt: Option<Prompt>,
     /// The accounts new shells start with, by agent, see `account`.
     accounts: BTreeMap<String, String>,
@@ -1147,6 +1251,9 @@ impl App {
             offer_keeper: false,
             mailbox: Vec::new(),
             mail_sent: HashMap::new(),
+            entered: Vec::new(),
+            mail_seq: 0,
+            mail_held: HashSet::new(),
             mail_log: Vec::new(),
             prompt: None,
             dir_lists: Arc::default(),
@@ -1410,8 +1517,23 @@ impl App {
         self.screen = Rect::new(0, 0, handover.screen.0, handover.screen.1);
         self.focus_mode = handover.focus_mode;
         self.unseen.extend(handover.unseen.iter().copied());
-        self.mailbox.extend(handover.mailbox.iter().cloned());
         self.mail_log.extend(handover.mail_log.iter().cloned());
+        self.mailbox.extend(handover.mail.iter().cloned());
+        self.mail_seq = self
+            .mail_log
+            .iter()
+            .map(|n| n.seq)
+            .chain(self.mailbox.iter().map(|m| m.seq))
+            .max()
+            .unwrap_or(0)
+            .max(self.mail_seq);
+        // A server from before knew only pane and text; those get a note
+        // and a number here, so the message pane can follow them (#9379).
+        if handover.mail.is_empty() {
+            for (pane, text) in &handover.mailbox {
+                self.post_mail(*pane, "", text, text.clone());
+            }
+        }
         let saved = handover.saved;
         self.carry_idle(&saved);
         self.accounts = saved.accounts.clone();
@@ -1545,7 +1667,12 @@ impl App {
             popup_full: self.popup_full,
             focus_mode: self.focus_mode,
             unseen: self.unseen.iter().copied().collect(),
-            mailbox: self.mailbox.clone(),
+            mailbox: self
+                .mailbox
+                .iter()
+                .map(|m| (m.pane, m.text.clone()))
+                .collect(),
+            mail: self.mailbox.clone(),
             mail_log: self.mail_log.clone(),
             saved: self.saved(),
             panes,
@@ -1852,6 +1979,7 @@ impl App {
             AppEvent::ClientMsg(id, ClientMsg::Input(bytes)) => {
                 if let Some(pane) = self.taps.get(&id).and_then(|p| self.panes.get_mut(p)) {
                     pane.note_input();
+                    pane.note_typed(&bytes);
                     pane.write(&bytes)
                 } else {
                     Ok(())
@@ -2399,6 +2527,10 @@ impl App {
                 if state.is_none() {
                     p.transcript = None;
                     p.meta = None;
+                    // Its session ended (`SessionEnd`): whatever starts here
+                    // next has to prove its own hook again, else messages
+                    // would wait for a hook that never comes (#9379).
+                    p.takes_mail = false;
                 }
                 Ok(serde_json::json!({ "pane": pane }))
             }
@@ -2540,13 +2672,11 @@ impl App {
                 } else {
                     format!("[imkr message from {from}]")
                 };
-                if from.contains(':') {
-                    self.note_mail(pane, &from, false, &text);
-                }
-                self.mailbox.push((pane, format!("{header} {text}")));
+                self.post_mail(pane, &from, &text, format!("{header} {text}"));
                 self.deliver_mail();
-                let queued = self.mailbox.iter().any(|(p, _)| *p == pane);
-                Ok(serde_json::json!({ "pane": pane, "queued": queued }))
+                let queued = self.mailbox.iter().any(|m| m.pane == pane);
+                let why = queued.then(|| self.mail_why(pane)).flatten();
+                Ok(serde_json::json!({ "pane": pane, "queued": queued, "why": why }))
             }
             Request::Sent { pane, to, text } => {
                 if !self.panes.contains_key(&pane) {
@@ -2554,6 +2684,11 @@ impl App {
                 }
                 self.note_mail(pane, &to, true, &text);
                 Ok(serde_json::json!({}))
+            }
+            Request::TakeMail { pane } => self.take_mail(pane),
+            Request::Mail { who } => {
+                let pane = who.as_deref().map(|who| self.addressee(who)).transpose()?;
+                self.mail_state(pane)
             }
             Request::Read { pane, lines } => {
                 let p = self.panes.get(&pane).ok_or(format!("no pane {pane}"))?;
@@ -2570,11 +2705,12 @@ impl App {
                 cwd,
                 fresh,
                 by,
+                ratio,
             } => {
                 // Who asked for the session, not for the pane: given, it
                 // marks this session from now on (#9087).
                 self.take_by(by);
-                self.new_pane(&command, float, workspace, cwd, fresh)
+                self.new_pane(&command, float, workspace, cwd, fresh, ratio)
             }
             Request::Worktree {
                 name,
@@ -2687,8 +2823,90 @@ impl App {
             // not as part of a paste.
             thread::sleep(Duration::from_millis(20));
             p.write(b"\r").map_err(|e| e.to_string())?;
+            self.watch_enter(pane, text);
         }
         Ok(())
+    }
+
+    /// Watches whether the Enter just typed into `pane` was taken: a
+    /// program that is still starting swallows the Enter after a paste, and
+    /// then the text stands in its input line while the agent sits idle
+    /// with work it never began (seen with `imkr spawn`, #9379).
+    fn watch_enter(&mut self, pane: PaneId, text: &str) {
+        // Only agents: a shell always takes its Enter, and for it an
+        // "it is not working" would mean nothing.
+        if self.agent_now(pane).is_none() {
+            return;
+        }
+        self.entered.retain(|e| e.pane != pane);
+        self.entered.push(Entered {
+            pane,
+            at: Instant::now(),
+            text: text.to_owned(),
+            tries: 0,
+            began: false,
+        });
+    }
+
+    /// Sends Enter again where the program did not take it (`watch_enter`,
+    /// `enter_again`). Never into a pane the user has touched since: there
+    /// an Enter would send what they are writing, which is the very thing
+    /// this change is about.
+    fn check_entered(&mut self) {
+        // What is true of each pane first: the closure below cannot ask
+        // while it holds `entered`. Panes that are gone are left out.
+        let now: Vec<(PaneId, bool, bool, bool)> = self
+            .entered
+            .iter()
+            .filter_map(|e| {
+                let pane = self.panes.get(&e.pane)?;
+                Some((
+                    e.pane,
+                    matches!(
+                        pane.reported,
+                        Some(AgentState::Working | AgentState::Blocked)
+                    ),
+                    pane.last_typed().is_some_and(|typed| typed > e.at),
+                    pane.shows_tail(&e.text, ENTER_LINES),
+                ))
+            })
+            .collect();
+        let mut again = Vec::new();
+        self.entered.retain_mut(|e| {
+            let Some(&(_, working, typed_since, shown)) =
+                now.iter().find(|(pane, ..)| *pane == e.pane)
+            else {
+                return false;
+            };
+            // Looked at every tick, not only after the wait: a turn can be
+            // over again before anybody looks.
+            e.began |= working;
+            if e.at.elapsed() < ENTER_AGAIN {
+                return true;
+            }
+            if !enter_again(e.began, typed_since, shown) {
+                return false;
+            }
+            if e.tries >= ENTER_TRIES {
+                return false;
+            }
+            e.tries += 1;
+            e.at = Instant::now();
+            again.push(e.pane);
+            true
+        });
+        for pane in again {
+            if let Some(p) = self.panes.get_mut(&pane) {
+                let _ = p.write(b"\r");
+            }
+            // Said as exactly what is known: the agent reported no turn.
+            // Whether it took the Enter after all is not something imkr can
+            // read off a screen, and an agent without hooks reports nothing
+            // either way.
+            self.flash = Some(format!(
+                "⏎ pane {pane} reported no turn after what was typed in: Enter sent again"
+            ));
+        }
     }
 
     /// The pane a message `to` means: its number, or the one pane with that
@@ -2728,12 +2946,47 @@ impl App {
         }
     }
 
-    /// Types waiting messages into their panes: right away into a pane
-    /// without an agent, into an agent once it is idle or done. Never while
-    /// it works, and never into a question, which is the user's to answer.
+    /// Puts a message for pane `pane` into the mailbox and notes it:
+    /// `from` is the sender's address (or what put it there, `review`,
+    /// `notes`), `log` what the log shows, `text` what the agent gets.
+    fn post_mail(&mut self, pane: PaneId, from: &str, log: &str, text: String) {
+        let seq = self.note_mail(pane, from, false, log);
+        self.mailbox.push(protocol::Mail {
+            seq,
+            pane,
+            from: from.to_owned(),
+            text,
+            at: crate::persist::now(),
+        });
+    }
+
     /// Notes a message pane `pane` sent to or got from `peer`, for the
-    /// orchestration view; the newest `MAIL_LOG` stay.
-    fn note_mail(&mut self, pane: PaneId, peer: &str, sent: bool, text: &str) {
+    /// orchestration view and the message pane; the newest `MAIL_LOG` stay.
+    /// Returns its number, which says what became of it later.
+    fn note_mail(&mut self, pane: PaneId, peer: &str, sent: bool, text: &str) -> u64 {
+        self.note_what(pane, peer, sent, text, protocol::MailWhat::Message, None)
+    }
+
+    /// Notes what became of a message for pane `pane` (held, typed in,
+    /// fetched by its hook), for the message pane (`imkr mail`, #9379).
+    fn note_became(&mut self, pane: PaneId, what: protocol::MailWhat, why: Option<&str>, seq: u64) {
+        self.note_what(pane, "", false, "", what, why);
+        // Its own number counts on, so `imkr mail --follow` shows it; the
+        // message it is about is named beside it.
+        if let Some(note) = self.mail_log.last_mut() {
+            note.about = Some(seq);
+        }
+    }
+
+    fn note_what(
+        &mut self,
+        pane: PaneId,
+        peer: &str,
+        sent: bool,
+        text: &str,
+        what: protocol::MailWhat,
+        why: Option<&str>,
+    ) -> u64 {
         let text: String = text
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -2741,48 +2994,167 @@ impl App {
             .chars()
             .take(200)
             .collect();
+        self.mail_seq += 1;
         self.mail_log.push(protocol::MailNote {
             at: crate::persist::now(),
+            seq: self.mail_seq,
             pane,
             peer: peer.to_owned(),
             sent,
             text,
+            what,
+            about: None,
+            why: why.map(str::to_owned),
         });
         let over = self.mail_log.len().saturating_sub(MAIL_LOG);
         self.mail_log.drain(..over);
+        self.mail_seq
     }
 
+    /// Why a message for pane `id` waits: it cannot be typed in
+    /// (`mail_hold`), or its agent's own hook comes for it (#9379).
+    fn mail_why(&self, id: PaneId) -> Option<&'static str> {
+        self.mail_waits_for(id).or_else(|| {
+            self.panes
+                .get(&id)
+                .is_some_and(|p| p.takes_mail)
+                .then_some("its own hook fetches it")
+        })
+    }
+
+    /// Whether pane `id` holds its messages for its own hook (`take_mail`).
+    fn fetches_mail(&self, id: PaneId) -> bool {
+        self.panes.get(&id).is_some_and(|p| p.takes_mail)
+    }
+
+    /// Why a message for pane `id` cannot be typed in right now, if it
+    /// cannot, see `mail_hold`.
+    fn mail_waits_for(&self, id: PaneId) -> Option<&'static str> {
+        let pane = self.panes.get(&id)?;
+        let queues = pane
+            .program()
+            .is_some_and(|program| agent::queues_input(&program));
+        mail_hold(pane.drafting(), self.agent_now(id), queues)
+    }
+
+    /// The agent state to go by when handing messages over. Right after a
+    /// restart or update no tick has looked at the agents yet: ask the pane
+    /// rather than take "not looked at" for "no agent", which typed into a
+    /// question waiting there.
+    fn agent_now(&self, id: PaneId) -> Option<AgentState> {
+        self.shown_state(id)
+            .or_else(|| self.panes.get(&id).and_then(|pane| pane.agent_state()))
+    }
+
+    /// Hands the messages waiting for pane `pane` to its agent's own hook
+    /// (`Request::TakeMail`, #9379): it puts them in front of the agent
+    /// itself, so nothing is typed into its input line. They are gone from
+    /// the mailbox after, which is what makes it exactly once, and the pane
+    /// counts as one that fetches its mail from now on.
+    fn take_mail(&mut self, pane: PaneId) -> Reply {
+        if !self.panes.contains_key(&pane) {
+            return Err(format!("no pane {pane}"));
+        }
+        let mut taken = Vec::new();
+        let mut rest = Vec::new();
+        for mail in std::mem::take(&mut self.mailbox) {
+            if mail.pane == pane {
+                taken.push(mail);
+            } else {
+                rest.push(mail);
+            }
+        }
+        self.mailbox = rest;
+        if let Some(p) = self.panes.get_mut(&pane) {
+            p.takes_mail = true;
+        }
+        for mail in &taken {
+            self.mail_held.remove(&mail.seq);
+            self.note_became(pane, protocol::MailWhat::Taken, None, mail.seq);
+        }
+        if !taken.is_empty() {
+            self.flash = Some(format!(
+                "✉ {} message(s) for pane {pane} went to its agent, nothing typed",
+                taken.len()
+            ));
+        }
+        Ok(serde_json::json!({
+            "pane": pane,
+            "messages": taken.iter().map(|m| m.text.clone()).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// The message log, for `Ctrl+B O` and `imkr mail`: the notes, and what
+    /// still waits with the reason it does.
+    fn mail_state(&self, only: Option<PaneId>) -> Reply {
+        if let Some(pane) = only
+            && !self.panes.contains_key(&pane)
+        {
+            return Err(format!("no pane {pane}"));
+        }
+        let notes: Vec<&protocol::MailNote> = self
+            .mail_log
+            .iter()
+            .filter(|n| only.is_none_or(|p| n.pane == p))
+            .collect();
+        let waiting: Vec<serde_json::Value> = self
+            .mailbox
+            .iter()
+            .filter(|m| only.is_none_or(|p| m.pane == p))
+            .map(|m| {
+                serde_json::json!({
+                    "seq": m.seq,
+                    "pane": m.pane,
+                    "from": m.from,
+                    "text": m.text,
+                    "at": m.at,
+                    "why": self.mail_why(m.pane),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "session": protocol::session_name(),
+            "machine": protocol::machine_name(),
+            "notes": notes,
+            "waiting": waiting,
+        }))
+    }
+
+    /// Types waiting messages into their panes: right away into a pane
+    /// without an agent, into an agent once it is idle or done. Never while
+    /// it works, never into a question, which is the user's to answer, and
+    /// never into a line the user began and has not sent yet (#9379).
     fn deliver_mail(&mut self) {
         let mail = std::mem::take(&mut self.mailbox);
-        for (id, text) in mail {
+        let now = crate::persist::now();
+        for mail in mail {
+            let id = mail.pane;
             if !self.panes.contains_key(&id) {
                 continue;
             }
-            // Right after a restart or update no tick has looked at the
-            // agents yet: ask the pane rather than take "not looked at" for
-            // "no agent", which typed into a question waiting there.
-            let state = self
-                .shown_state(id)
-                .or_else(|| self.panes.get(&id).and_then(|pane| pane.agent_state()));
-            // Never into a question; into work only for agents that queue
-            // what is typed meanwhile, or a long task waits it out (#8800).
-            let ready = match state {
-                None | Some(AgentState::Idle | AgentState::Done | AgentState::Failed) => true,
-                Some(AgentState::Working) => self
-                    .panes
-                    .get(&id)
-                    .and_then(|pane| pane.program())
-                    .is_some_and(|program| agent::queues_input(&program)),
-                _ => false,
-            };
+            let waits = self.mail_waits_for(id);
             // One at a time: after a message the agent gets a few seconds to
             // start on it, and older messages for it go first.
             let settling = self
                 .mail_sent
                 .get(&id)
                 .is_some_and(|at| at.elapsed() < Duration::from_secs(3));
-            if !ready || settling || self.mailbox.iter().any(|(p, _)| *p == id) {
-                self.mailbox.push((id, text));
+            // An agent whose hook fetches its mail gets it that way, not
+            // typed: its input line stays the user's. While it works, the
+            // `Stop` at the end of its turn is bound to come, however long
+            // that takes. Idle it fires nothing, so after `HOOK_WITHIN`
+            // typing takes over — else nobody would ever reach it.
+            let hooked = self.fetches_mail(id)
+                && (self.agent_now(id) == Some(AgentState::Working)
+                    || now.saturating_sub(mail.at) < HOOK_WITHIN);
+            if waits.is_some() || settling || hooked || self.mailbox.iter().any(|m| m.pane == id) {
+                if let Some(why) = waits
+                    && self.mail_held.insert(mail.seq)
+                {
+                    self.note_became(id, protocol::MailWhat::Held, Some(why), mail.seq);
+                    self.flash = Some(format!("✉ message for pane {id} waits: {why}"));
+                }
+                self.mailbox.push(mail);
                 continue;
             }
             let Some(pane) = self.panes.get_mut(&id) else {
@@ -2791,21 +3163,26 @@ impl App {
             let mut bytes = Vec::new();
             if pane.screen().screen().bracketed_paste() {
                 bytes.extend_from_slice(b"\x1b[200~");
-                bytes.extend_from_slice(text.as_bytes());
+                bytes.extend_from_slice(mail.text.as_bytes());
                 bytes.extend_from_slice(b"\x1b[201~");
             } else {
-                bytes.extend_from_slice(text.as_bytes());
+                bytes.extend_from_slice(mail.text.as_bytes());
             }
             if pane.write(&bytes).is_err() {
                 continue;
             }
             thread::sleep(Duration::from_millis(20));
             let _ = pane.write(b"\r");
+            self.watch_enter(id, &mail.text);
             self.mail_sent.insert(id, Instant::now());
+            self.mail_held.remove(&mail.seq);
+            self.note_became(id, protocol::MailWhat::Typed, None, mail.seq);
             self.flash = Some(format!("✉ message for pane {id} delivered"));
         }
         self.mail_sent
             .retain(|_, at| at.elapsed() < Duration::from_secs(3));
+        let waiting: HashSet<u64> = self.mailbox.iter().map(|m| m.seq).collect();
+        self.mail_held.retain(|seq| waiting.contains(seq));
     }
 
     /// Starts `command` in a new pane: floating or split off the focused one,
@@ -3077,7 +3454,7 @@ impl App {
         let (shape, even) = crate::shapes::named(name, n).ok_or(format!("no layout {name}"))?;
         let focus = self.ws.focus;
         for _ in n..shape.panes() {
-            self.new_pane(&[], false, Some(self.workspace), None, false)?;
+            self.new_pane(&[], false, Some(self.workspace), None, false, None)?;
         }
         let panes = self.ws.layout.panes();
         let layout = shape.build(&panes, even).ok_or("no panes to lay out")?;
@@ -3205,7 +3582,7 @@ impl App {
                     self.flash = Some(format!("pane {target} is gone, the notes stay"));
                     return;
                 }
-                self.mailbox.push((target, text));
+                self.post_mail(target, "review", &text.clone(), text);
                 self.review = None;
                 self.mode = Mode::Normal;
                 let notes = if count == 1 { "note" } else { "notes" };
@@ -3285,7 +3662,7 @@ impl App {
             (Some(i), KeyCode::Enter) => {
                 let (id, text) = (pad.pane, pane.notes[i].text.clone());
                 pane.notes[i].sent = true;
-                self.mailbox.push((id, text));
+                self.post_mail(id, "notes", &text.clone(), text);
                 self.flash = Some(format!(
                     "note for pane {id}, typed in once its agent is idle"
                 ));
@@ -3535,6 +3912,7 @@ impl App {
             Some(target),
             Some(dir.clone()),
             started_for,
+            None,
         )?;
         let n = reply["workspace"].as_u64().map_or(n, |w| w as u8);
         if let (Some((tool, name)), Some(pane)) = (account, reply["pane"].as_u64())
@@ -3619,6 +3997,7 @@ impl App {
         workspace: Option<u8>,
         cwd: Option<PathBuf>,
         fresh: bool,
+        ratio: Option<f32>,
     ) -> Reply {
         // `imkr new --start --window 0` started this server for this very
         // program: it belongs in the first window, not in a second one
@@ -3657,7 +4036,7 @@ impl App {
             ws.add_float(id, body);
         } else if ws.is_empty() {
             *ws = Workspace::new(id);
-        } else if ws.is_floating(ws.focus) || !ws.split(Axis::Row, id) {
+        } else if ws.is_floating(ws.focus) || !ws.split_at(Axis::Row, id, ratio.unwrap_or(0.5)) {
             ws.add_float(id, body);
         }
         let rect = ws
@@ -3884,6 +4263,7 @@ impl App {
         self.decide_accounts();
         self.unseen.retain(|id| seen.contains_key(id));
         self.tell_taps(&seen);
+        self.check_entered();
         self.deliver_mail();
         if !self.clients.is_empty() {
             self.unseen.remove(&self.ws.focus);
@@ -4934,6 +5314,7 @@ impl App {
                 let app_cursor = pane.screen().screen().application_cursor();
                 if let Some(bytes) = keys::encode(key, app_cursor) {
                     pane.note_input();
+                    pane.note_typed(&bytes);
                     pane.write(&bytes)?;
                 }
                 Ok(())
@@ -8010,7 +8391,7 @@ impl App {
             .map(|dir| crate::keeper::bees(&dir))
             .unwrap_or_default();
         let mut panes: Vec<(bool, u64, PaneId)> = Vec::new();
-        for note in self.mail_log.iter().rev() {
+        for note in self.mail_log.iter().rev().filter(|n| exchanged(n)) {
             if !self.panes.contains_key(&note.pane) {
                 continue;
             }
@@ -8033,8 +8414,11 @@ impl App {
         let mut rows = Vec::new();
         for (sent, _, id) in panes {
             let (state, label, tail) = self.crew_here(id);
-            let notes: Vec<&protocol::MailNote> =
-                self.mail_log.iter().filter(|n| n.pane == id).collect();
+            let notes: Vec<&protocol::MailNote> = self
+                .mail_log
+                .iter()
+                .filter(|n| n.pane == id && exchanged(n))
+                .collect();
             let mut peers: Vec<&str> = Vec::new();
             for note in notes.iter().rev() {
                 if !peers.contains(&note.peer.as_str()) {
@@ -11515,6 +11899,13 @@ impl App {
         };
         pane.note_input();
         let bracketed = pane.screen().screen().bracketed_paste();
+        // A bracketed paste lands in the input line and is not sent,
+        // however many lines it has; without it the newlines send it.
+        pane.note_typed(if bracketed {
+            b"pasted"
+        } else {
+            text.as_bytes()
+        });
         if bracketed {
             pane.write(b"\x1b[200~")?;
             pane.write(text.as_bytes())?;
@@ -14566,6 +14957,90 @@ fn with_title(label: String, title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::agent::AgentState;
+
+    /// Enter goes again only where something is really stuck — never into a
+    /// pane somebody has touched since, where it would send what they are
+    /// writing (the keeper's warning, #9379).
+    #[test]
+    fn enter_goes_again_only_where_something_is_stuck() {
+        // (began a turn, the user typed since, the text is still shown)
+        let again = super::enter_again;
+        // What `imkr spawn` ran into: the briefing stands in the input
+        // line, the agent never said it began anything.
+        assert!(again(false, false, true));
+        // It said it began a turn: the Enter arrived. Even an agent that
+        // was done again two seconds later said so in between.
+        assert!(!again(true, false, true));
+        assert!(!again(true, false, false));
+        // Nothing of it on the screen any more: nothing can be stuck.
+        assert!(!again(false, false, false));
+        // Somebody has typed there since: never, whatever else is true.
+        // An Enter would send what they are writing — the whole point.
+        for began in [false, true] {
+            for shown in [false, true] {
+                assert!(!again(began, true, shown));
+            }
+        }
+    }
+
+    /// The user writing in a pane holds a message back, whatever its agent
+    /// does — an idle agent is exactly the one whose input line somebody
+    /// is using (#9379).
+    #[test]
+    fn mail_waits_while_the_user_writes() {
+        let hold = super::mail_hold;
+        // Nobody writing: as before (#8800).
+        assert_eq!(hold(false, None, false), None);
+        assert_eq!(hold(false, Some(AgentState::Idle), false), None);
+        assert_eq!(hold(false, Some(AgentState::Done), false), None);
+        assert_eq!(hold(false, Some(AgentState::Failed), false), None);
+        assert_eq!(
+            hold(false, Some(AgentState::Blocked), false),
+            Some("asking something")
+        );
+        assert_eq!(
+            hold(false, Some(AgentState::Working), false),
+            Some("working")
+        );
+        // Claude Code queues what is typed while it works.
+        assert_eq!(hold(false, Some(AgentState::Working), true), None);
+        // Somebody writing there: nothing goes in, whatever the state.
+        for state in [
+            None,
+            Some(AgentState::Idle),
+            Some(AgentState::Done),
+            Some(AgentState::Working),
+            Some(AgentState::Blocked),
+        ] {
+            assert_eq!(hold(true, state, true), Some("you are typing"));
+        }
+    }
+
+    /// The orchestration view is about messages between addresses: not
+    /// about what became of one, and not about what a person sent from a
+    /// plain terminal, which cannot be answered (#9379).
+    #[test]
+    fn the_orchestration_view_only_counts_exchanges() {
+        use crate::protocol::{MailNote, MailWhat};
+        let note = |peer: &str, what: MailWhat| MailNote {
+            at: 1,
+            seq: 1,
+            pane: 0,
+            peer: peer.to_owned(),
+            sent: false,
+            text: "hi".into(),
+            what,
+            about: None,
+            why: None,
+        };
+        assert!(super::exchanged(&note("laptop:imker/0", MailWhat::Message)));
+        assert!(!super::exchanged(&note("bastian", MailWhat::Message)));
+        assert!(!super::exchanged(&note("", MailWhat::Message)));
+        assert!(!super::exchanged(&note("laptop:imker/0", MailWhat::Held)));
+        assert!(!super::exchanged(&note("laptop:imker/0", MailWhat::Typed)));
+        assert!(!super::exchanged(&note("laptop:imker/0", MailWhat::Taken)));
+    }
 
     /// A keeper or bee started in an account notes it on its pane (#9291).
     #[test]

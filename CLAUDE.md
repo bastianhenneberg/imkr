@@ -602,9 +602,41 @@ Projekt-Slug: `imkr`
   Hinweis, Ziel `Go`) aus Panes, Windows, `session_items`, `agent_choices`, Plugins, Marken, Hives
   (beim Öffnen gelesen, nicht je Frame) und `BINDINGS` (nur Befehle mit genau einer Taste).
 - Agents untereinander: `imkr msg` (`cli::msg`, Adresse `machine:session/pane`, `parse_address`,
-  fremde Rechner per `client::remote_output` mit Text auf stdin) → `Request::Message` → `App::mailbox`,
-  `deliver_mail` (je Tick) tippt bei idle/done/ohne Agent, bei working nur in Agents aus
-  `agent::QUEUES_INPUT` (claude reiht ein, #8800), nie bei blocked, 3 s Abstand je Pane.
+  fremde Rechner per `client::remote_output` mit Text auf stdin) → `Request::Message` →
+  `App::post_mail` (`protocol::Mail` mit `seq`/`from`/`at` in `App::mailbox`, Notiz im
+  `mail_log`), `deliver_mail` (je Tick) tippt bei idle/done/ohne Agent, bei working nur in
+  Agents aus `agent::QUEUES_INPUT` (claude reiht ein, #8800), nie bei blocked, 3 s Abstand je Pane.
+- Nichts in eine angefangene Zeile tippen (#9379): `Pane::note_typed` (aus `handle_key`, Paste
+  und Tap-Eingabe) merkt per `pane::draft_after` eine begonnene, nicht abgeschickte Zeile
+  (Enter/Esc/Ctrl+C/Ctrl+U beenden sie, `DRAFT_HOLDS` 30 min kappt eine liegengebliebene);
+  `Pane::drafting` → freie Funktion `app::mail_hold` (Riegel vor jedem Agent-Zustand) →
+  `mail_waits_for`/`mail_why`. Gehaltene Post bleibt im `mailbox` und steht als
+  `MailWhat::Held` im Log.
+- Zustellung ohne Tippen für Claude Code (#9379): die schon vorhandenen Hooks `Stop` und
+  `UserPromptSubmit` (`cli::MAIL_EVENTS`) holen in `cli::status` die Post per
+  `Request::TakeMail` ab und drucken `cli::hook_mail_json` — `Stop` als
+  `{"decision":"block","reason":…}` (gemessen an Claude Code 2.1.238: der Agent geht damit im
+  selben Lauf zurück in die Schleife und arbeitet sie ab), `UserPromptSubmit` als
+  `hookSpecificOutput.additionalContext` neben dem Prompt. **Kein neuer Hook-Eintrag nötig**,
+  alte Installationen können es nach `imkr update` sofort. `take_mail` setzt `Pane::takes_mail`
+  (im Handover, gelöscht bei `Status { state: None }` = SessionEnd); `deliver_mail` tippt dann
+  nicht mehr, solange der Agent `Working` ist (das `Stop` kommt sicher) — nur ein *idle* Agent
+  feuert keinen Hook, der bekommt es nach `HOOK_WITHIN` (10 s) getippt. Exakt einmal, weil der
+  `mailbox` die einzige Quelle ist. Andere Agents (codex, pi) schicken kein `hook_event_name`
+  und bleiben beim getippten Weg.
+- Enter-Kontrolle (#9379): `App::watch_enter` (aus `type_into` UND `deliver_mail`) merkt das
+  Pane; `check_entered` (je Tick) schickt Enter **einmal** nach, wenn der Agent seit dem Enter
+  keinen Zug gemeldet hat (`Pane::reported` Working/Blocked ist der einzige Beweis — der
+  Bildschirm beweist nichts, nach dem Absenden steht der Text im Transkript), der Mensch das
+  Pane nicht angefasst hat (`Pane::last_typed`) und das Textende noch auf dem Schirm steht
+  (`pane::shows_text`, ohne Leerraum und Rahmenzeichen, weil die Eingabebox umbricht).
+  Entscheidung als freie Funktion `app::enter_again`. Ursache war `imkr spawn`: das Briefing
+  stand in der Eingabe, der Agent blieb done.
+- Nachrichten-Pane (#9379): `imkr mail [--follow] [--json] [ADRESSE]` (`cli::mail`,
+  `mail_asker` lokal per `Request::Mail` oder per ssh mit 3 s Takt, `mail_lines` zeigt neue
+  Notizen über `seq` und die Warteliste nur bei Änderung). `imkr keeper` legt es per
+  `keeper::mail_pane` schmal rechts neben den Agenten (`Request::New.ratio` →
+  `Workspace::split_at`), Pane heißt `mail`, Fokus geht zurück zum Agenten.
   `imkr agents [--all]`, Skill-Text in `skills/imkr/SKILL.md` (`imkr skill [--install]`).
   Test-Falle: `imkr status` liest stdin (Hook-JSON) – in Heredoc-Tests `</dev/null` anhängen.
   Ausgang: scheitert `msg` per ssh an einem Rechner, `client::queue_outbox` (`<state>/outbox`,

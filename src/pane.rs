@@ -21,6 +21,59 @@ use crate::layout::PaneId;
 
 const SCROLLBACK_LINES: usize = 10_000;
 
+/// What bytes the user typed mean for the line they are writing (#9379):
+/// `Some(true)` begins or carries one on, `Some(false)` ends it, `None`
+/// leaves it as it was.
+///
+/// Enter sends the line. Esc, Ctrl+C and Ctrl+U throw it away in every
+/// shell and agent we know of, so they end it too. Everything else is
+/// taken for writing — we cannot see the program's input line, so erring
+/// towards "a line is going" is the safe side: it only ever delays a
+/// message, while the other way round garbles what somebody wrote.
+pub fn draft_after(bytes: &[u8]) -> Option<bool> {
+    if bytes.is_empty() {
+        return None;
+    }
+    if bytes.iter().any(|b| matches!(b, b'\r' | b'\n')) {
+        return Some(false);
+    }
+    match bytes {
+        b"\x1b" | b"\x03" | b"\x15" => Some(false),
+        _ => Some(true),
+    }
+}
+
+/// How long a line the user began but never sent holds messages back
+/// (#9379). Half an hour is far longer than anybody writes a sentence, and
+/// short enough that a stray key does not cut a pane off from its mail for
+/// the rest of the day.
+const DRAFT_HOLDS: Duration = Duration::from_secs(30 * 60);
+
+/// How many characters of what was typed in have to be on the screen for
+/// it to count as still standing in the input line (`shows_text`).
+const SHOWN_TAIL: usize = 40;
+
+/// Whether the end of `typed` still stands in `screen`, a piece of the
+/// screen: that is what an Enter the program swallowed looks like (#9379).
+///
+/// Compared with neither whitespace nor box drawing, because the input
+/// line of an agent is a framed box that wraps long text: the end of a
+/// path can come out as `keeper-post.m│` and `│d` on the next line.
+/// Anything less forgiving finds nothing, and then a stuck message stays
+/// stuck. The other way round costs nothing: a wrong match only sends one
+/// more Enter into an agent whose input line nobody has touched.
+pub fn shows_text(screen: &str, typed: &str) -> bool {
+    let bare = |s: &str| -> String {
+        s.chars()
+            .filter(|c| !c.is_whitespace() && !matches!(c, '\u{2500}'..='\u{257f}' | '>'))
+            .collect()
+    };
+    let all = bare(typed);
+    let from = all.chars().count().saturating_sub(SHOWN_TAIL);
+    let tail: String = all.chars().skip(from).collect();
+    !tail.is_empty() && bare(screen).contains(&tail)
+}
+
 pub struct Pane {
     id: PaneId,
     parser: Arc<Mutex<crate::term::Parser>>,
@@ -50,6 +103,19 @@ pub struct Pane {
     /// Whether the question on the screen was answered: input came while it
     /// was shown. Cleared once no question is shown anymore.
     answered: Cell<bool>,
+    /// When the user last typed here without having sent the line yet
+    /// (`note_typed`): while a line is begun, a message typed in would end
+    /// up in the middle of it and the Enter after it would send the lot
+    /// (#9379).
+    draft: Cell<Option<Instant>>,
+    /// When the user last typed anything here at all, Enter included: a
+    /// second Enter must never go into a pane somebody has touched since
+    /// (#9379).
+    typed: Cell<Option<Instant>>,
+    /// Whether this pane's agent fetches its messages itself through its
+    /// own hook (`Request::TakeMail`): then nothing is ever typed in. Set
+    /// by the first hook call that asked, cleared when its session ends.
+    pub takes_mail: bool,
     events: Sender<AppEvent>,
     /// The thread reading the pty, while it runs.
     reader: Option<Reader>,
@@ -322,6 +388,7 @@ impl Pane {
             transcript: self.transcript.clone(),
             title: parser.screen().title(),
             remote: self.remote_agent(),
+            takes_mail: self.takes_mail,
         })
     }
 
@@ -365,6 +432,9 @@ impl Pane {
             meta: None,
             name: None,
             answered: Cell::new(false),
+            draft: Cell::new(None),
+            typed: Cell::new(None),
+            takes_mail: false,
             events,
             reader: None,
             released: false,
@@ -761,6 +831,40 @@ impl Pane {
         }
     }
 
+    /// Notes what the user typed here, to hold messages back while a line
+    /// is begun and not sent (`draft_after`, #9379).
+    pub fn note_typed(&self, bytes: &[u8]) {
+        match draft_after(bytes) {
+            Some(true) => self.draft.set(Some(Instant::now())),
+            Some(false) => self.draft.set(None),
+            None => return,
+        }
+        self.typed.set(Some(Instant::now()));
+    }
+
+    /// When the user last typed anything here, Enter included.
+    pub fn last_typed(&self) -> Option<Instant> {
+        self.typed.get()
+    }
+
+    /// Whether the end of `text` still stands at the bottom of the screen,
+    /// in the program's input line: that is what an Enter the program
+    /// swallowed looks like (#9379). Compared without any whitespace, so a
+    /// line the program wrapped still matches.
+    pub fn shows_tail(&self, text: &str, lines: usize) -> bool {
+        shows_text(&agent::tail(self.screen().screen(), lines), text)
+    }
+
+    /// Whether the user began a line here and has not sent it yet, so that
+    /// a message must wait. A line nobody has touched for `DRAFT_HOLDS`
+    /// does not hold anything back any more: a single stray key must not
+    /// stop an agent from ever being reached again.
+    pub fn drafting(&self) -> bool {
+        self.draft
+            .get()
+            .is_some_and(|at| at.elapsed() < DRAFT_HOLDS)
+    }
+
     /// The name to show for this pane: the agent, else the foreground program.
     /// The agent running on another machine that this pane shows, see
     /// The account its agent runs in, when not `standard`.
@@ -1092,6 +1196,52 @@ fn wait_readable(pty: RawFd, wake: RawFd) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Text still standing in the input line is found again even where the
+    /// program wrapped it over several lines (#9379).
+    #[test]
+    fn text_still_in_the_input_line_is_found() {
+        let message = "Read your briefing and work through it: \
+                       /home/x/.local/state/imkr/bees/keeper-post.md";
+        // As an agent's input box shows it: framed, and wrapped mid-word.
+        let waiting = "╭─────────────────────────────────────────────╮\n\
+                       │ > Read your briefing and work through it:   │\n\
+                       │ /home/x/.local/state/imkr/bees/keeper-post.m│\n\
+                       │ d                                           │\n\
+                       ╰─────────────────────────────────────────────╯";
+        assert!(shows_text(waiting, message));
+        // Sent off: the input box is empty again.
+        let empty = "╭─────────────────────────────────────────────╮\n\
+                     │ >                                           │\n\
+                     ╰─────────────────────────────────────────────╯";
+        assert!(!shows_text(empty, message));
+        // Only the start of it is left on the screen, not the end.
+        assert!(!shows_text("│ > Read your briefing and work   │", message));
+        // Nothing was typed: nothing to find.
+        assert!(!shows_text(waiting, ""));
+    }
+
+    /// While the user writes a line, a message must not be typed in: the
+    /// Enter after it would send their half-finished text along (#9379).
+    #[test]
+    fn a_line_being_written_holds_mail_back() {
+        // Writing begins and carries on.
+        assert_eq!(draft_after(b"h"), Some(true));
+        assert_eq!(draft_after(b"\x7f"), Some(true));
+        assert_eq!(draft_after(b"a long pasted text"), Some(true));
+        // Enter sends it, however it arrives.
+        assert_eq!(draft_after(b"\r"), Some(false));
+        assert_eq!(draft_after(b"\n"), Some(false));
+        assert_eq!(draft_after(b"two lines\nat once"), Some(false));
+        // Esc, Ctrl+C and Ctrl+U throw the line away.
+        assert_eq!(draft_after(b"\x1b"), Some(false));
+        assert_eq!(draft_after(b"\x03"), Some(false));
+        assert_eq!(draft_after(b"\x15"), Some(false));
+        // An arrow key (Esc with more) is still writing, not throwing away.
+        assert_eq!(draft_after(b"\x1b[D"), Some(true));
+        // Nothing typed changes nothing.
+        assert_eq!(draft_after(b""), None);
+    }
 
     /// 3 rows of screen, lines "line 0" .. "line 9" written, so 7 lines
     /// went into the history.

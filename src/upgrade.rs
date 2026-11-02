@@ -53,9 +53,15 @@ pub struct Handover {
     #[serde(default)]
     pub unseen: Vec<PaneId>,
     /// Messages for agents not delivered yet (`imkr msg`): an update while
-    /// one waits for its agent must not drop it.
+    /// one waits for its agent must not drop it. Written for servers from
+    /// before, which know only pane and text; `mail` is what is read.
     #[serde(default)]
     pub mailbox: Vec<(PaneId, String)>,
+    /// The same messages with their sender, number and time (#9379). Empty
+    /// in a handover from a server that did not know them: `mailbox` is
+    /// taken then.
+    #[serde(default)]
+    pub mail: Vec<crate::protocol::Mail>,
     /// Who messaged whom, for the orchestration view.
     #[serde(default)]
     pub mail_log: Vec<crate::protocol::MailNote>,
@@ -121,6 +127,10 @@ pub struct HandoverPane {
     /// The agent on another machine the pane shows, see `Pane::remote`.
     #[serde(default)]
     pub remote: Option<(String, AgentState)>,
+    /// Whether its agent fetches its messages itself, see
+    /// `Pane::takes_mail`.
+    #[serde(default)]
+    pub takes_mail: bool,
 }
 
 /// The handover left by the server this process was before, if any. The

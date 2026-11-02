@@ -54,7 +54,71 @@ pub fn status(args: &[String]) -> Result<()> {
         reason: (state == Some(AgentState::Failed))
             .then(|| crate::agent::failure_reason(&field("error").unwrap_or_default()).to_owned()),
     });
+    // The same call fetches the messages waiting for this pane and puts
+    // them in front of the agent itself, so nothing is typed into the line
+    // the user writes in (#9379).
+    if let Some(hook) = &hook
+        && let Some(json) = mail_for_hook(hook, pane)
+    {
+        println!("{json}");
+    }
     Ok(())
+}
+
+/// The hook events that fetch waiting messages, and so hand them to the
+/// agent without typing (#9379). `Stop` blocks the end of the turn, which
+/// sends the agent straight back into its loop with the messages as the
+/// reason; `UserPromptSubmit` puts them beside what the user just sent.
+/// Both measured against Claude Code 2.1.238. Other agents (pi, codex) do
+/// not send `hook_event_name` and keep the typed delivery.
+const MAIL_EVENTS: &[&str] = &["Stop", "UserPromptSubmit"];
+
+/// What a hook has to print so its agent sees the messages waiting for
+/// `pane`, or `None` for an event that does not carry them or no mail.
+fn mail_for_hook(hook: &serde_json::Value, pane: PaneId) -> Option<String> {
+    let event = hook["hook_event_name"].as_str()?;
+    if !MAIL_EVENTS.contains(&event) {
+        return None;
+    }
+    // A hook must never break the agent: no server, no mail, no output.
+    let reply = client::request(Request::TakeMail { pane }).ok()?;
+    let messages: Vec<String> = reply["messages"]
+        .as_array()?
+        .iter()
+        .filter_map(|m| m.as_str().map(str::to_owned))
+        .collect();
+    hook_mail_json(event, &messages)
+}
+
+/// What a hook prints so its agent sees `messages`, by event.
+///
+/// Measured against Claude Code 2.1.238: `Stop` with `decision: block`
+/// sends the agent straight back into its loop with `reason` as context,
+/// in the same run — it answered the message instead of its own last
+/// word. `UserPromptSubmit` puts `additionalContext` beside the prompt as
+/// a system reminder, which the agent reads with it.
+fn hook_mail_json(event: &str, messages: &[String]) -> Option<String> {
+    if messages.is_empty() || !MAIL_EVENTS.contains(&event) {
+        return None;
+    }
+    let text = messages.join("\n\n");
+    let json = if event == "Stop" {
+        serde_json::json!({
+            "decision": "block",
+            "reason": format!(
+                "Messages came in for you through imkr while you worked. Work on them now \
+                 and answer as each one says:\n\n{text}"
+            ),
+        })
+    } else {
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "additionalContext": format!("Messages came in for you through imkr:\n\n{text}"),
+            }
+        })
+    };
+    Some(json.to_string())
 }
 
 /// The JSON a hook got on stdin, `None` when stdin is a terminal or holds
@@ -580,7 +644,10 @@ pub fn msg(args: &[String]) -> Result<()> {
     )?;
     let pane = reply["pane"].as_u64().unwrap_or_default() as PaneId;
     if reply["queued"].as_bool() == Some(true) {
-        println!("queued for pane {pane}: it is busy or asking something, it gets it when idle");
+        let why = reply["why"]
+            .as_str()
+            .unwrap_or("it is busy or asking something");
+        println!("queued for pane {pane}: {why}, it gets it as soon as it can take it");
     } else {
         println!("delivered to pane {pane}");
     }
@@ -868,6 +935,181 @@ pub fn subscribe(args: &[String], only: Option<String>) -> Result<()> {
         last = now;
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
+}
+
+/// `imkr mail [--follow] [--json] [ADDRESS]`
+///
+/// The message pane (#9379): what came in for the panes of a session, what
+/// still waits and why, and what reached its agent — typed into it, or
+/// fetched by its own hook. Without an address every pane of the session,
+/// with one only that pane, on another machine too.
+pub fn mail(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr mail [--follow] [--json] [ADDRESS]";
+    let mut rest = args.to_vec();
+    let follow = take_flag(&mut rest, "--follow") || take_flag(&mut rest, "-f");
+    let json = take_flag(&mut rest, "--json");
+    let address = match rest.as_slice() {
+        [] => None,
+        [one] if !one.starts_with('-') => Some(one.clone()),
+        _ => bail!(USAGE),
+    };
+    let ask = mail_asker(address.as_deref())?;
+    let mut out = std::io::stdout().lock();
+    let mut seen = 0u64;
+    let mut waiting: Vec<u64> = Vec::new();
+    let mut first = true;
+    loop {
+        let state = ask()?;
+        if json {
+            writeln!(out, "{state}")?;
+        } else {
+            for line in mail_lines(&state, &mut seen, &mut waiting, first) {
+                writeln!(out, "{line}")?;
+            }
+        }
+        if out.flush().is_err() || !follow {
+            return Ok(());
+        }
+        first = false;
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+/// How to ask for the message log of `address`: over the socket here, or
+/// through ssh for another machine. Asking twice a second over ssh would
+/// be a connection a second, so there it is every three.
+fn mail_asker(address: Option<&str>) -> Result<impl Fn() -> Result<serde_json::Value>> {
+    let (machine, session, who) = match address {
+        Some(address) => {
+            let (machine, session, who) = parse_address(address)?;
+            (machine, session, Some(who))
+        }
+        None => (None, None, None),
+    };
+    let socket = match (&machine, &session) {
+        (None, Some(session)) => Some(protocol::session_socket(session)?),
+        (None, None) => Some(protocol::socket_path()?),
+        _ => None,
+    };
+    Ok(move || match (&machine, &socket) {
+        (Some(machine), _) => {
+            let session = session
+                .clone()
+                .unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned());
+            let mut words = vec!["-s", &session, "mail", "--json"];
+            if let Some(who) = &who {
+                words.push(who);
+            }
+            let out = client::remote_output(machine, &words, "")?;
+            // Three seconds between the ssh calls, not half a one.
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            serde_json::from_str(out.trim())
+                .with_context(|| format!("{machine} answered {:?}", out.trim()))
+        }
+        (None, Some(socket)) => client::request_at(socket, Request::Mail { who: who.clone() }),
+        (None, None) => bail!("no session to ask"),
+    })
+}
+
+/// The lines to print for `state`, a `Request::Mail` reply: the notes
+/// after `seen`, and what waits whenever that changed.
+fn mail_lines(
+    state: &serde_json::Value,
+    seen: &mut u64,
+    waiting: &mut Vec<u64>,
+    first: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if first {
+        lines.push(format!(
+            "messages of {}:{}",
+            state["machine"].as_str().unwrap_or("?"),
+            state["session"].as_str().unwrap_or("?")
+        ));
+    }
+    let empty = Vec::new();
+    let notes = state["notes"].as_array().unwrap_or(&empty);
+    // A server that restarted counts from 1 again: show it all once more
+    // rather than nothing ever again.
+    if notes.last().and_then(|n| n["seq"].as_u64()).unwrap_or(0) < *seen {
+        *seen = 0;
+    }
+    for note in notes {
+        let seq = note["seq"].as_u64().unwrap_or(0);
+        if seq <= *seen && !(first && seq == 0) {
+            continue;
+        }
+        *seen = (*seen).max(seq);
+        lines.push(mail_line(note));
+    }
+    let now: Vec<u64> = state["waiting"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .map(|m| m["seq"].as_u64().unwrap_or(0))
+        .collect();
+    if now != *waiting || first {
+        *waiting = now;
+        let items = state["waiting"].as_array().unwrap_or(&empty);
+        if items.is_empty() {
+            lines.push("          nothing waiting".to_owned());
+        }
+        for item in items {
+            lines.push(format!(
+                "          ⏳ pane {} waits{}: {}",
+                item["pane"].as_u64().unwrap_or(0),
+                item["why"]
+                    .as_str()
+                    .map(|why| format!(" ({why})"))
+                    .unwrap_or_default(),
+                short(without_header(item["text"].as_str().unwrap_or("")), 55),
+            ));
+        }
+    }
+    lines
+}
+
+/// One line for a note of the message log.
+fn mail_line(note: &serde_json::Value) -> String {
+    let at = note["at"]
+        .as_u64()
+        .and_then(protocol::chrono_like)
+        .unwrap_or_else(|| "     ".to_owned());
+    let pane = note["pane"].as_u64().unwrap_or(0);
+    let peer = note["peer"].as_str().unwrap_or("");
+    let text = short(note["text"].as_str().unwrap_or(""), 70);
+    match note["what"].as_str().unwrap_or("message") {
+        "held" => format!(
+            "{at}  ⏳ pane {pane} waits: {}",
+            note["why"].as_str().unwrap_or("busy")
+        ),
+        "typed" => format!("{at}  ✓ pane {pane} got it, typed into it"),
+        "taken" => format!("{at}  ✓ pane {pane} got it through its own hook"),
+        _ if note["sent"].as_bool() == Some(true) => {
+            format!("{at}  → {peer} (from pane {pane})  {text}")
+        }
+        _ => format!("{at}  ← {peer} (for pane {pane})  {text}"),
+    }
+}
+
+/// The message without the header imkr puts in front of it: who sent it
+/// stands in the line already.
+fn without_header(text: &str) -> &str {
+    text.strip_prefix('[')
+        .and_then(|rest| rest.split_once("] "))
+        .map_or(text, |(_, rest)| rest)
+}
+
+/// `text` on one line, at most `width` characters.
+fn short(text: &str, width: usize) -> String {
+    let one = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() <= width {
+        return one;
+    }
+    one.chars()
+        .take(width.saturating_sub(1))
+        .collect::<String>()
+        + "…"
 }
 
 /// The guide for an agent in an imkr pane, as `imkr skill` prints it and
@@ -1623,6 +1865,7 @@ pub fn new(args: &[String]) -> Result<()> {
         cwd: dir.or_else(|| std::env::current_dir().ok()),
         fresh,
         by,
+        ratio: None,
     })?;
     if let (Some(name), Some(window)) = (name, value["workspace"].as_u64()) {
         client::request(Request::Rename {
@@ -1699,6 +1942,7 @@ pub fn new_hosted(here: &std::path::Path, remote: &client::Remote, args: &[Strin
             cwd: None,
             fresh: false,
             by: None,
+            ratio: None,
         },
     )?;
     let window = value["workspace"].as_u64().unwrap_or_default() as u8;
@@ -4648,6 +4892,103 @@ fn screen_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the hooks print so an agent gets its messages without anything
+    /// being typed into its input line (#9379). Measured against Claude
+    /// Code 2.1.238, see `hook_mail_json`.
+    #[test]
+    fn the_hooks_hand_messages_over_without_typing() {
+        let one = vec!["[imkr message from laptop:imker/0] look at the login bug".to_owned()];
+        // Stop: block the end of the turn, the messages as the reason.
+        let stop: serde_json::Value =
+            serde_json::from_str(&hook_mail_json("Stop", &one).unwrap()).unwrap();
+        assert_eq!(stop["decision"], "block");
+        assert!(
+            stop["reason"]
+                .as_str()
+                .unwrap()
+                .contains("look at the login bug")
+        );
+        // A prompt of the user's: beside it, as context.
+        let ups: serde_json::Value =
+            serde_json::from_str(&hook_mail_json("UserPromptSubmit", &one).unwrap()).unwrap();
+        let out = &ups["hookSpecificOutput"];
+        assert_eq!(out["hookEventName"], "UserPromptSubmit");
+        assert!(
+            out["additionalContext"]
+                .as_str()
+                .unwrap()
+                .contains("look at the login bug")
+        );
+        assert!(ups["decision"].is_null());
+        // Several messages go in one go, nothing is left behind.
+        let two = vec!["first".to_owned(), "second".to_owned()];
+        let both: serde_json::Value =
+            serde_json::from_str(&hook_mail_json("Stop", &two).unwrap()).unwrap();
+        let reason = both["reason"].as_str().unwrap();
+        assert!(reason.contains("first") && reason.contains("second"));
+        // No mail, nothing printed: a hook must never speak up for nothing.
+        assert_eq!(hook_mail_json("Stop", &[]), None);
+        // Events that carry no mail, and the ones other agents send.
+        assert_eq!(hook_mail_json("PreToolUse", &one), None);
+        assert_eq!(hook_mail_json("SessionStart", &one), None);
+        assert_eq!(hook_mail_json("", &one), None);
+    }
+
+    /// The message pane shows every note once, and says anew what waits
+    /// whenever that changed (#9379).
+    #[test]
+    fn the_message_pane_shows_each_note_once() {
+        let state = |notes: serde_json::Value, waiting: serde_json::Value| {
+            serde_json::json!({ "machine": "box", "session": "keeper",
+                                "notes": notes, "waiting": waiting })
+        };
+        let note = |seq: u64, what: &str| {
+            serde_json::json!({ "at": 0, "seq": seq, "pane": 0, "peer": "laptop:imker/0",
+                                "sent": false, "text": "look at the login bug", "what": what })
+        };
+        let wait = |seq: u64, why: &str| {
+            serde_json::json!({ "seq": seq, "pane": 0, "from": "laptop:imker/0",
+                                "text": "look at the login bug", "at": 0, "why": why })
+        };
+        let (mut seen, mut waiting) = (0, Vec::new());
+        // First look: the header, the note, and what waits.
+        let lines = mail_lines(
+            &state(
+                serde_json::json!([note(1, "message")]),
+                serde_json::json!([wait(1, "you are typing")]),
+            ),
+            &mut seen,
+            &mut waiting,
+            true,
+        );
+        assert!(lines[0].contains("box:keeper"));
+        assert!(lines[1].contains("← laptop:imker/0") && lines[1].contains("for pane 0"));
+        assert!(lines[2].contains("⏳ pane 0 waits (you are typing)"));
+        assert_eq!(seen, 1);
+        // Nothing new: nothing said again.
+        let same = state(
+            serde_json::json!([note(1, "message")]),
+            serde_json::json!([wait(1, "you are typing")]),
+        );
+        assert!(mail_lines(&same, &mut seen, &mut waiting, false).is_empty());
+        // It was handed over: the new note, and nothing waiting any more.
+        let after = state(
+            serde_json::json!([note(1, "message"), note(2, "taken")]),
+            serde_json::json!([]),
+        );
+        let lines = mail_lines(&after, &mut seen, &mut waiting, false);
+        assert!(lines[0].contains("through its own hook"), "{lines:?}");
+        assert!(lines[1].contains("nothing waiting"));
+        assert_eq!(seen, 2);
+        // The server restarted and counts from 1 again: shown once more,
+        // rather than never again.
+        let restarted = state(
+            serde_json::json!([note(1, "message")]),
+            serde_json::json!([]),
+        );
+        assert!(!mail_lines(&restarted, &mut seen, &mut waiting, false).is_empty());
+    }
 
     #[test]
     fn old_claude_gets_no_stop_failure() {

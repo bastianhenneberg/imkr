@@ -372,12 +372,20 @@ For scripts and agents:
   push test                             send a test push the way [push] in the
                                         config says (ntfy, webhook): agents that
                                         need you, fail or run out reach the phone
+  mail [--follow] [--json] [ADDRESS]    the messages of a session: what came in,
+                                        what still waits and why, and what
+                                        reached its agent (typed in, or fetched
+                                        by its own hook). --follow keeps showing
+                                        it; ADDRESS narrows it to one pane, on
+                                        another machine too
   msg [--wait] &lt;to&gt; &lt;text&gt;              message an agent: &lt;to&gt; is a pane number,
                                         name or program, `session/&lt;to&gt;` or
                                         `machine:session/&lt;to&gt;`. Typed in once it
-                                        is idle, never into a question; --wait
-                                        waits for it to finish and prints its
-                                        screen
+                                        is idle, never into a question and never
+                                        into a line you began; Claude Code with
+                                        imkr's hooks gets it without anything
+                                        being typed at all; --wait waits for it
+                                        to finish and prints its screen
   skill [--install]                     the guide for agents driving imkr, or
                                         install it as a Claude Code skill
   notify [--title T] [--pane N] &lt;text&gt;  show a notification (desktop, terminal or

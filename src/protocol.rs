@@ -411,6 +411,19 @@ pub enum Request {
         to: String,
         text: String,
     },
+    /// Hands the messages waiting for pane `pane` over to its agent's own
+    /// hook, which puts them in front of it without anything being typed
+    /// into its input line (#9379). They are gone from the mailbox after,
+    /// so `deliver_mail` never types them in too, and the pane counts as
+    /// one that fetches its mail itself from now on.
+    TakeMail { pane: PaneId },
+    /// The message log of this session (`Ctrl+B O`, `imkr mail`): what came
+    /// and went, what waits and what reached its agent. Only one pane with
+    /// `who` given, its number, name or program as `Message` takes it.
+    Mail {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        who: Option<String>,
+    },
     /// The text on a pane's screen, or its last `lines` lines including the
     /// history.
     Read { pane: PaneId, lines: Option<usize> },
@@ -535,6 +548,11 @@ pub enum Request {
         /// leaves the session's own mark alone.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         by: Option<String>,
+        /// The share of the space the pane it splits keeps, so the new one
+        /// can be a narrow side pane (`imkr keeper`'s message pane, #9379).
+        /// `None` halves it, as a split does.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ratio: Option<f32>,
     },
     /// Shows pane `pane` on this connection from now on: after the reply,
     /// its history and screen and then its output come as
@@ -830,20 +848,72 @@ pub fn sessions() -> Vec<String> {
     names
 }
 
+/// A message waiting for a pane (`imkr msg`): `App::deliver_mail` types it
+/// in, or the agent's own hook fetches it (`Request::TakeMail`, #9379).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Mail {
+    /// The `MailNote` it arrived as, so that holding it back and handing it
+    /// over can be told about this very message.
+    #[serde(default)]
+    pub seq: u64,
+    /// The pane it is for.
+    pub pane: PaneId,
+    /// The sender's address, as `imkr msg` takes it.
+    #[serde(default)]
+    pub from: String,
+    /// The message with its header, as the agent gets it.
+    pub text: String,
+    /// When it arrived, seconds since 1970.
+    #[serde(default)]
+    pub at: u64,
+}
+
+/// What a `MailNote` tells about a message.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MailWhat {
+    /// It came or went (`sent` says which): what the orchestration view
+    /// shows, and all an older imkr ever wrote.
+    #[default]
+    Message,
+    /// It waits, nothing was typed in: the user is writing in that pane, or
+    /// its agent is busy (#9379).
+    Held,
+    /// It was typed into the pane.
+    Typed,
+    /// The agent's own hook fetched it, so nothing was typed (#9379).
+    Taken,
+}
+
 /// A message an agent here sent or got (`imkr msg`), kept for the
-/// orchestration view (`Ctrl+B O`).
+/// orchestration view (`Ctrl+B O`) and the message pane (`imkr mail`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MailNote {
     /// Seconds since 1970.
     pub at: u64,
+    /// Counts up per session, so that `imkr mail --follow` can tell what it
+    /// has not shown yet. 0 in notes an older imkr wrote.
+    #[serde(default)]
+    pub seq: u64,
     /// The pane here that sent or got it.
     pub pane: PaneId,
-    /// The other side's address, as `imkr msg` takes it.
+    /// The other side's address, as `imkr msg` takes it; empty for what
+    /// became of a message (held, typed, taken).
     pub peer: String,
     /// Sent by the pane here, else got.
     pub sent: bool,
     /// Its start, on one line.
     pub text: String,
+    /// What this note tells: a message, or what became of it (#9379).
+    #[serde(default)]
+    pub what: MailWhat,
+    /// The note of the message this one is about, with `what` not a
+    /// message: held, typed in, taken by its hook.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<u64>,
+    /// Why it waits, with `what` held: `you are typing`, `working`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 #[cfg(test)]
@@ -939,6 +1009,7 @@ mod tests {
                 cwd: None,
                 fresh: false,
                 by: Some("laptop:imker/0".into()),
+                ratio: None,
             }),
             ClientMsg::Request(Request::Tap {
                 pane: 4,

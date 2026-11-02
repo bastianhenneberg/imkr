@@ -260,8 +260,13 @@ impl Workspace {
     }
 
     pub fn split(&mut self, axis: Axis, new: PaneId) -> bool {
+        self.split_at(axis, new, 0.5)
+    }
+
+    /// Like `split`, with `ratio` the share the focused pane keeps.
+    pub fn split_at(&mut self, axis: Axis, new: PaneId, ratio: f32) -> bool {
         self.zoomed = None;
-        if !self.layout.split(self.focus, axis, new) {
+        if !self.layout.split_at(self.focus, axis, new, ratio) {
             return false;
         }
         self.focus(new);

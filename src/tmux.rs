@@ -286,6 +286,7 @@ fn run_one(command: &[String]) -> Result<()> {
                     .or(Some(at.cwd.clone().into())),
                 fresh: false,
                 by: None,
+                ratio: None,
             })?;
             print_new(&o, reply, at.window)
         }
@@ -302,6 +303,7 @@ fn run_one(command: &[String]) -> Result<()> {
                 cwd: o.value('c').map(PathBuf::from),
                 fresh: false,
                 by: None,
+                ratio: None,
             })?;
             if let Some(name) = o.value('n') {
                 client::request(Request::Rename {

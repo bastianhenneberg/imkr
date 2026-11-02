@@ -376,6 +376,12 @@ const COMMANDS: &[Command] = &[
         Nothing,
     ),
     cmd("msg", "message an agent", &["--wait", "--from"], Addresses),
+    cmd(
+        "mail",
+        "the messages of a session, live",
+        &["--follow", "--json"],
+        Addresses,
+    ),
     cmd("push", "send a test push to the phone", &["test"], Nothing),
     cmd(
         "skill",

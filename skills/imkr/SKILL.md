@@ -40,9 +40,15 @@ imkr msg --wait api/claude "Which port does the dev server use?"   # waits, prin
 imkr msg server:api/3 < handover.md          # a long text: on stdin, no quoting needed
 ```
 
-imkr types the message into the other agent once it is idle, never into a question it is
-asking. Claude Code also gets it while it works: it queues the message for its next step. Every message starts with
+Claude Code with imkr's hooks gets the message without anything being typed: its own hook
+hands it over at the end of a turn or with the user's next prompt. Every other agent gets it
+typed in once it is idle, never into a question it is asking and never into a line the user
+has begun and not sent. Every message starts with
 `[imkr message from <address>, answer with: imkr msg <address> <text>]`.
+
+`imkr mail` shows what a session's messages did — what came in, what waits and why, and what
+reached its agent; `imkr mail --follow` keeps showing it, which is what a keeper's second pane
+runs.
 
 If the other machine cannot be reached from yours (a server answering a laptop), `imkr msg`
 answers `queued for …`: that is a success, even with an ssh error in brackets. It is delivered

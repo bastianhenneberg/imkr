@@ -251,12 +251,57 @@ imkr msg server:api/claude < handover.md                       # a long text fro
 ```
 
 An address is `machine:session/pane`; in the own session a pane number, name or program is
-enough. imkr types the message in once the agent is idle, one at a time, and never into a
-question it asks, which stays yours. Claude Code gets it while it works too: it shows it as a
-queued message and reads it at its next step, so a long task does not hold it back. Each message says who sent it and how to
-answer. `imkr skill` prints the guide for agents, `imkr skill --install` puts it into Claude
-Code's skills, so the agents use it on their own. `imkr read server:api/3` shows another
-agent's screen, on any machine.
+enough. Each message says who sent it and how to answer. `imkr skill` prints the guide for
+agents, `imkr skill --install` puts it into Claude Code's skills, so the agents use it on their
+own. `imkr read server:api/3` shows another agent's screen, on any machine.
+
+### How a message reaches an agent
+
+**Claude Code with imkr's hooks gets it without anything being typed.** The hooks `imkr hooks
+--install` puts in fetch the waiting messages: at the end of a turn (`Stop`) they go to the
+agent as the reason not to stop yet, so it works on them straight away, and with every prompt
+you send (`UserPromptSubmit`) they ride along beside it. Its input line stays yours — you can
+write there in peace while messages come in. Nothing is typed twice: what a hook has fetched is
+out of the mailbox.
+
+**Every other agent gets it typed in**, once it is idle, one at a time, and never into a
+question it asks, which stays yours. Claude Code without the hooks gets it while it works too:
+it shows it as a queued message and reads it at its next step, so a long task does not hold it
+back.
+
+**Either way, nothing is typed into a line you began.** While a line stands unsent in a pane,
+every message for it waits: typing one in would land in the middle of what you write, and the
+Enter after it would send the lot. Your Enter, Esc or Ctrl+C releases them.
+
+**And imkr makes sure the Enter arrived.** A program that is still starting up can swallow the
+Enter after a paste; the text then stands in its input line and the agent sits idle with work it
+never began. If the agent reports no turn within two seconds and what was typed is still on the
+screen, Enter goes once more. Never into a pane you have touched since — there it would send
+what you are writing.
+
+### The message pane
+
+`imkr mail` shows what a session's messages did: what came in and went out, what still waits and
+why, and what reached its agent — typed into it, or fetched by its own hook.
+
+```bash
+imkr mail                        # the messages of this session
+imkr mail --follow               # and keep showing them, live
+imkr mail --follow 0             # only pane 0
+imkr mail --json server:api/3    # for programs, on any machine
+```
+
+```
+messages of laptop:keeper
+17:55  ← laptop:imker/0 (for pane 0)  look at the login bug please
+17:55  ⏳ pane 0 waits: you are typing
+          ⏳ pane 0 waits (you are typing): look at the login bug please
+17:56  ✓ pane 0 got it through its own hook
+          nothing waiting
+```
+
+A keeper starts one beside its agent (`imkr keeper`), so the agent's input line is yours alone
+and the messages have a place of their own.
 
 Answers find their way back without every machine reaching every other: a server needs no ssh
 to your laptop. A message for a machine out of reach waits in the sender's outbox (`imkr
@@ -272,7 +317,7 @@ latest messages; Enter goes there. A pane that only got messages shows who it wo
 
 imkr learns this from the messages themselves: the session that delivers one notes the sender,
 and `imkr msg` tells its own session where it sent one. The newest 400 are kept, also across
-`imkr update`. Sessions started with `--by` show there as well, under the pane they work for,
+`imkr update`; `imkr mail` shows the same log as lines. Sessions started with `--by` show there as well, under the pane they work for,
 even before a single message has gone out.
 
 ### A keeper and its bees
@@ -293,6 +338,10 @@ directory, as for every new session, and — on this machine, with more than one
 in — the account, as for `Ctrl+B k`. imkr waits in the background until the agent is ready and
 then takes you there. The entry is there where the `keeper` skill is; without it and without
 templates, a new session still asks for its directory right away.
+
+Beside the agent, `imkr keeper` opens a narrow second pane with `imkr mail --follow`: what comes
+in for the agent, what waits and what reached it. That way the agent's input line belongs to you
+alone — you write there, and read the mail next to it.
 
 The keeper's agent (`default_agent`) starts with the skill `keeper` and its folder,
 `~/.local/state/imkr/keeper/NAME/` with `briefings/` and `keeper-stand.md` for its notes. What a
