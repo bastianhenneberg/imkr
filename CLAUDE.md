@@ -625,13 +625,30 @@ Projekt-Slug: `imkr`
   `mailbox` die einzige Quelle ist. Andere Agents (codex, pi) schicken kein `hook_event_name`
   und bleiben beim getippten Weg.
 - Enter-Kontrolle (#9379): `App::watch_enter` (aus `type_into` UND `deliver_mail`) merkt das
-  Pane; `check_entered` (je Tick) schickt Enter **einmal** nach, wenn der Agent seit dem Enter
-  keinen Zug gemeldet hat (`Pane::reported` Working/Blocked ist der einzige Beweis — der
-  Bildschirm beweist nichts, nach dem Absenden steht der Text im Transkript), der Mensch das
-  Pane nicht angefasst hat (`Pane::last_typed`) und das Textende noch auf dem Schirm steht
+  Pane in `App::entered`; `check_entered` (je Tick) schickt Enter **einmal** nach, wenn der
+  Agent die Eingabezeile nicht genommen hat (`App::took_input`), der Mensch das Pane nicht
+  angefasst hat (`Pane::last_typed`) und das Textende noch auf dem Schirm steht
   (`pane::shows_text`, ohne Leerraum und Rahmenzeichen, weil die Eingabebox umbricht).
   Entscheidung als freie Funktion `app::enter_again`. Ursache war `imkr spawn`: das Briefing
   stand in der Eingabe, der Agent blieb done.
+- **Beweis, dass eine getippte Zeile abgeschickt wurde** (#9379, v0.21.93): `Request::Status`
+  trägt `event` (das `hook_event_name`), `UserPromptSubmit` zählt `Pane::prompts` hoch —
+  das ist das einzige harte Signal. Der Bildschirm taugt nicht: ein Agent zeichnet seine
+  Eingabebox so oder so neu, und nach dem Absenden steht der Text im Transkript und sieht von
+  außen gleich aus. `took_input` nimmt für Panes mit Hook den Zähler, für die anderen
+  `Entered::began` (gemeldetes Working/Blocked).
+- **Nie auf einen unabgeschickten Text tippen** (#9379, v0.21.93, Fund der Biene event-gmbh):
+  `App::unsent_typed` (Eintrag in `entered`, vom Agenten nicht genommen, Textende noch sichtbar)
+  → zweites Argument von `mail_hold` → Nachricht wartet mit Grund. Vorher hängte `deliver_mail`
+  die nächste Nachricht an die stehengebliebene an; das Enter schickte beide als EINEN Prompt
+  mit dem Kopf der ALTEN Nachricht vorn — der Agent las dieselbe Nachricht erneut, die neue war
+  begraben (gemessen: 2193 → 3574 → 4374 Zeichen in einem Prompt). Der Eintrag in `entered`
+  bleibt deshalb liegen, auch wenn die Nachschick-Versuche verbraucht sind, bis der Agent sie
+  nimmt oder der Text vom Schirm ist.
+- Getippter Rückfall erst bei echter Ruhe (#9379, v0.21.93): `QUIET_BEFORE_TYPING` (5 s ohne
+  Ausgabe) zusätzlich zu `HOOK_WITHIN`. Gemeldetes idle allein genügt nicht — zwischen zwei
+  Zügen meldet ein Agent kurz idle, während er mitten in der Arbeit ist, und genau dann traf
+  der Rückfall die noch nicht geleerte Eingabezeile.
 - Nachrichten-Pane (#9379): `imkr mail [--follow] [--json] [ADRESSE]` (`cli::mail`,
   `mail_asker` lokal per `Request::Mail` oder per ssh mit 3 s Takt, `mail_lines` zeigt neue
   Notizen über `seq` und die Warteliste nur bei Änderung). `imkr keeper` legt es per

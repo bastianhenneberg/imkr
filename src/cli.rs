@@ -53,6 +53,7 @@ pub fn status(args: &[String]) -> Result<()> {
         // `StopFailure` names the error, e.g. `rate_limit`.
         reason: (state == Some(AgentState::Failed))
             .then(|| crate::agent::failure_reason(&field("error").unwrap_or_default()).to_owned()),
+        event: field("hook_event_name"),
     });
     // The same call fetches the messages waiting for this pane and puts
     // them in front of the agent itself, so nothing is typed into the line

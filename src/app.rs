@@ -717,21 +717,23 @@ struct Entered {
     text: String,
     /// How often Enter went again.
     tries: u8,
-    /// Whether the agent has said since that it began a turn: that is the
-    /// proof the Enter arrived, see `enter_again`.
+    /// The pane's `prompts` when Enter went in: the agent has taken the
+    /// input line once its own count is higher (#9379).
+    prompts: u64,
+    /// Whether the agent has said since that it began a turn. Only for
+    /// agents that do not count prompts (no hooks), see `enter_again`.
     began: bool,
 }
 
 /// Whether Enter has to go into a pane again, `ENTER_AGAIN` after it was
 /// typed there (#9379).
 ///
-/// `began`: the agent itself said it started a turn (its `UserPromptSubmit`
-/// hook, `imkr status working`). That is the only proof that the Enter
-/// arrived. What is on the screen is none: an agent redraws its input line
-/// whether it took the Enter or not, and once it has taken it the text
-/// stands in its transcript, which from outside looks the same. An agent
-/// that reports nothing at all (no hooks) can therefore cost one empty
-/// Enter — the price of reaching one that really is stuck.
+/// `took`: the agent itself said it took the input line (`took_input`:
+/// its `UserPromptSubmit` count went up, or, without hooks, it reported a
+/// turn). That is the only proof that the Enter arrived. What is on the
+/// screen is none: an agent redraws its input line whether it took the
+/// Enter or not, and once it has taken it the text stands in its
+/// transcript, which from outside looks the same.
 ///
 /// `typed_since`: the user has touched this pane since. Then never — an
 /// Enter would send whatever they are writing, the very mistake this is
@@ -739,8 +741,8 @@ struct Entered {
 ///
 /// `shown`: the end of what was typed is still on the screen at all. Gone
 /// from there, nothing can be stuck in an input line.
-fn enter_again(began: bool, typed_since: bool, shown: bool) -> bool {
-    !began && !typed_since && shown
+fn enter_again(took: bool, typed_since: bool, shown: bool) -> bool {
+    !took && !typed_since && shown
 }
 
 /// Why a message cannot be typed into a pane right now, if it cannot.
@@ -751,12 +753,27 @@ fn enter_again(began: bool, typed_since: bool, shown: bool) -> bool {
 /// this exists. It beats every agent state: an idle agent is exactly the
 /// one whose input line somebody is using.
 ///
+/// `unsent`: imkr typed a message into this pane and the agent has not
+/// taken it yet (`unsent_typed`). Typing the next one in would append it to
+/// the first, and the Enter would send both as one prompt with the older
+/// message's header in front — the receiving agent then reads the same
+/// message again and the new one is buried (#9379, found by the bee
+/// event-gmbh). Waiting is always the better half of that trade.
+///
 /// Then the agent: never into a question, which is the user's to answer,
 /// and into work only for agents that queue what is typed meanwhile, so a
 /// long task does not hold a message back (#8800).
-fn mail_hold(drafting: bool, state: Option<AgentState>, queues: bool) -> Option<&'static str> {
+fn mail_hold(
+    drafting: bool,
+    unsent: bool,
+    state: Option<AgentState>,
+    queues: bool,
+) -> Option<&'static str> {
     if drafting {
         return Some("you are typing");
+    }
+    if unsent {
+        return Some("what was typed in before is still in its input line");
     }
     match state {
         None | Some(AgentState::Idle | AgentState::Done | AgentState::Failed) => None,
@@ -801,6 +818,17 @@ const ENTER_TRIES: u8 = 1;
 /// How many lines at the bottom of the screen count as the input line when
 /// looking for what was typed in (`Pane::shows_tail`).
 const ENTER_LINES: usize = 8;
+
+/// The hook event with which an agent says it took an input line, and so
+/// that what was typed there went off (`Pane::prompts`, #9379).
+const PROMPT_EVENT: &str = "UserPromptSubmit";
+
+/// How long a pane has to have been quiet before a message is typed into an
+/// agent that fetches its own mail (#9379). Reported idle is not enough: an
+/// agent between two turns reports idle for a moment while it is in the
+/// middle of its work, and typing into it then lands in an input line it
+/// has not emptied yet. A parked agent is quiet, a working one never is.
+const QUIET_BEFORE_TYPING: Duration = Duration::from_secs(5);
 
 /// How many lines of a waiting agent's screen the inbox shows.
 const INBOX_LINES: usize = 12;
@@ -2502,6 +2530,7 @@ impl App {
                 session,
                 transcript,
                 reason,
+                event,
             } => {
                 // An agent in a pane that moved on still reports here.
                 if let Some((socket, there)) = self.moved.get(&pane).cloned() {
@@ -2511,6 +2540,7 @@ impl App {
                         session,
                         transcript,
                         reason,
+                        event,
                     };
                     thread::spawn(move || crate::client::request_at(&socket, request));
                     return Ok(serde_json::json!({ "pane": pane, "moved": true }));
@@ -2518,6 +2548,11 @@ impl App {
                 let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
                 p.reported = state;
                 p.failure = reason;
+                // The agent took an input line: the only proof that what
+                // was typed there really went off (#9379).
+                if event.as_deref() == Some(PROMPT_EVENT) {
+                    p.prompts += 1;
+                }
                 if session.is_some() {
                     p.session = session;
                 }
@@ -2838,12 +2873,14 @@ impl App {
         if self.agent_now(pane).is_none() {
             return;
         }
+        let prompts = self.panes.get(&pane).map_or(0, |p| p.prompts);
         self.entered.retain(|e| e.pane != pane);
         self.entered.push(Entered {
             pane,
             at: Instant::now(),
             text: text.to_owned(),
             tries: 0,
+            prompts,
             began: false,
         });
     }
@@ -2855,7 +2892,7 @@ impl App {
     fn check_entered(&mut self) {
         // What is true of each pane first: the closure below cannot ask
         // while it holds `entered`. Panes that are gone are left out.
-        let now: Vec<(PaneId, bool, bool, bool)> = self
+        let now: Vec<(PaneId, bool, bool, bool, bool)> = self
             .entered
             .iter()
             .filter_map(|e| {
@@ -2868,12 +2905,13 @@ impl App {
                     ),
                     pane.last_typed().is_some_and(|typed| typed > e.at),
                     pane.shows_tail(&e.text, ENTER_LINES),
+                    self.took_input(pane, e),
                 ))
             })
             .collect();
         let mut again = Vec::new();
         self.entered.retain_mut(|e| {
-            let Some(&(_, working, typed_since, shown)) =
+            let Some(&(_, working, typed_since, shown, took)) =
                 now.iter().find(|(pane, ..)| *pane == e.pane)
             else {
                 return false;
@@ -2881,14 +2919,24 @@ impl App {
             // Looked at every tick, not only after the wait: a turn can be
             // over again before anybody looks.
             e.began |= working;
+            // The agent has it: nothing more to watch here.
+            if took {
+                return false;
+            }
+            // Gone from the screen: nothing is standing in an input line,
+            // so nothing is stuck and nothing is in the way of the next
+            // message either.
+            if !shown {
+                return false;
+            }
             if e.at.elapsed() < ENTER_AGAIN {
                 return true;
             }
-            if !enter_again(e.began, typed_since, shown) {
-                return false;
-            }
-            if e.tries >= ENTER_TRIES {
-                return false;
+            // Kept even once the tries are used up: as long as it stands in
+            // the input line, the next message must not be typed on top of
+            // it (`unsent_typed`).
+            if e.tries >= ENTER_TRIES || !enter_again(took, typed_since, shown) {
+                return true;
             }
             e.tries += 1;
             e.at = Instant::now();
@@ -3027,6 +3075,29 @@ impl App {
         self.panes.get(&id).is_some_and(|p| p.takes_mail)
     }
 
+    /// Whether something imkr typed into pane `id` is still standing in its
+    /// input line, unsent (#9379). Until it is gone, nothing else goes in.
+    fn unsent_typed(&self, id: PaneId) -> bool {
+        let Some(pane) = self.panes.get(&id) else {
+            return false;
+        };
+        self.entered
+            .iter()
+            .filter(|e| e.pane == id)
+            .any(|e| !self.took_input(pane, e) && pane.shows_tail(&e.text, ENTER_LINES))
+    }
+
+    /// Whether the agent in `pane` has taken what was typed in for
+    /// `entered`. Its own `UserPromptSubmit` is the proof, where it sends
+    /// one; an agent without hooks can only be taken at its word that it
+    /// started working.
+    fn took_input(&self, pane: &Pane, entered: &Entered) -> bool {
+        if pane.takes_mail {
+            return pane.prompts > entered.prompts;
+        }
+        entered.began
+    }
+
     /// Why a message for pane `id` cannot be typed in right now, if it
     /// cannot, see `mail_hold`.
     fn mail_waits_for(&self, id: PaneId) -> Option<&'static str> {
@@ -3034,7 +3105,12 @@ impl App {
         let queues = pane
             .program()
             .is_some_and(|program| agent::queues_input(&program));
-        mail_hold(pane.drafting(), self.agent_now(id), queues)
+        mail_hold(
+            pane.drafting(),
+            self.unsent_typed(id),
+            self.agent_now(id),
+            queues,
+        )
     }
 
     /// The agent state to go by when handing messages over. Right after a
@@ -3144,9 +3220,17 @@ impl App {
             // `Stop` at the end of its turn is bound to come, however long
             // that takes. Idle it fires nothing, so after `HOOK_WITHIN`
             // typing takes over — else nobody would ever reach it.
-            let hooked = self.fetches_mail(id)
-                && (self.agent_now(id) == Some(AgentState::Working)
-                    || now.saturating_sub(mail.at) < HOOK_WITHIN);
+            //
+            // Reported idle alone is not enough: between two turns an agent
+            // reports idle for a moment while it is in the middle of its
+            // work. It has to be quiet as well (#9379).
+            let busy = self.agent_now(id) == Some(AgentState::Working)
+                || self
+                    .panes
+                    .get(&id)
+                    .is_some_and(|p| p.last_output().elapsed() < QUIET_BEFORE_TYPING);
+            let hooked =
+                self.fetches_mail(id) && (busy || now.saturating_sub(mail.at) < HOOK_WITHIN);
             if waits.is_some() || settling || hooked || self.mailbox.iter().any(|m| m.pane == id) {
                 if let Some(why) = waits
                     && self.mail_held.insert(mail.seq)
@@ -14989,22 +15073,23 @@ mod tests {
     /// is using (#9379).
     #[test]
     fn mail_waits_while_the_user_writes() {
+        // (the user is writing, imkr's last message is unsent, state, queues)
         let hold = super::mail_hold;
-        // Nobody writing: as before (#8800).
-        assert_eq!(hold(false, None, false), None);
-        assert_eq!(hold(false, Some(AgentState::Idle), false), None);
-        assert_eq!(hold(false, Some(AgentState::Done), false), None);
-        assert_eq!(hold(false, Some(AgentState::Failed), false), None);
+        // Nothing in the way: as before (#8800).
+        assert_eq!(hold(false, false, None, false), None);
+        assert_eq!(hold(false, false, Some(AgentState::Idle), false), None);
+        assert_eq!(hold(false, false, Some(AgentState::Done), false), None);
+        assert_eq!(hold(false, false, Some(AgentState::Failed), false), None);
         assert_eq!(
-            hold(false, Some(AgentState::Blocked), false),
+            hold(false, false, Some(AgentState::Blocked), false),
             Some("asking something")
         );
         assert_eq!(
-            hold(false, Some(AgentState::Working), false),
+            hold(false, false, Some(AgentState::Working), false),
             Some("working")
         );
         // Claude Code queues what is typed while it works.
-        assert_eq!(hold(false, Some(AgentState::Working), true), None);
+        assert_eq!(hold(false, false, Some(AgentState::Working), true), None);
         // Somebody writing there: nothing goes in, whatever the state.
         for state in [
             None,
@@ -15013,8 +15098,40 @@ mod tests {
             Some(AgentState::Working),
             Some(AgentState::Blocked),
         ] {
-            assert_eq!(hold(true, state, true), Some("you are typing"));
+            assert_eq!(hold(true, false, state, true), Some("you are typing"));
         }
+    }
+
+    /// What the bee event-gmbh ran into (#9379): a message was typed into an
+    /// agent and stood unsent in its input line, the next one was typed on
+    /// top of it, and the Enter sent both as one prompt — with the older
+    /// message's header in front, so the agent read the same message again
+    /// and the new one was buried. Nothing goes in while something imkr
+    /// typed there is still standing, whatever the agent's state.
+    #[test]
+    fn nothing_is_typed_on_top_of_a_message_the_agent_has_not_taken() {
+        let hold = super::mail_hold;
+        let unsent = Some("what was typed in before is still in its input line");
+        for state in [
+            None,
+            Some(AgentState::Idle),
+            Some(AgentState::Done),
+            Some(AgentState::Failed),
+            Some(AgentState::Working),
+            Some(AgentState::Blocked),
+        ] {
+            // Even the states that otherwise take a message at once, and
+            // even for an agent that queues what is typed while it works.
+            assert_eq!(hold(false, true, state, true), unsent, "{state:?}");
+            assert_eq!(hold(false, true, state, false), unsent, "{state:?}");
+        }
+        // The user's own line still comes first: it is theirs, not imkr's.
+        assert_eq!(
+            hold(true, true, Some(AgentState::Idle), true),
+            Some("you are typing")
+        );
+        // Once the agent has taken it, the next message goes in as before.
+        assert_eq!(hold(false, false, Some(AgentState::Idle), true), None);
     }
 
     /// The orchestration view is about messages between addresses: not

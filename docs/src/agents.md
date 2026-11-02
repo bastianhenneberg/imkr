@@ -275,9 +275,17 @@ Enter after it would send the lot. Your Enter, Esc or Ctrl+C releases them.
 
 **And imkr makes sure the Enter arrived.** A program that is still starting up can swallow the
 Enter after a paste; the text then stands in its input line and the agent sits idle with work it
-never began. If the agent reports no turn within two seconds and what was typed is still on the
-screen, Enter goes once more. Never into a pane you have touched since — there it would send
-what you are writing.
+never began. If the agent has not said it took the line within two seconds and what was typed is
+still on the screen, Enter goes once more. Never into a pane you have touched since — there it
+would send what you are writing.
+
+**And nothing is ever typed on top of it.** While a message imkr typed is still standing in an
+agent's input line unsent, the next one waits. Otherwise it would be appended to the first and
+the Enter would send both as a single prompt, headed by the older message — the agent then reads
+that one again and the new one is buried. What counts as sent is the agent's own word (its
+`UserPromptSubmit` hook), not what the screen looks like: an agent redraws its input line either
+way, and once it has sent the text it stands in the transcript, which looks the same from
+outside. A message held this way says so, in `imkr msg`'s answer and in the message pane.
 
 ### The message pane
 

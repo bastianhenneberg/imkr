@@ -387,6 +387,13 @@ pub enum Request {
         /// Why the agent failed, with `state` failed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        /// The hook event this came from, as the agent named it
+        /// (`UserPromptSubmit`, `Stop`, …). `UserPromptSubmit` is the
+        /// agent's own word that it took an input line — the only proof
+        /// that what imkr typed there was really sent (#9379). `None` from
+        /// an agent that does not say, and from an older imkr.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        event: Option<String>,
     },
     /// All panes.
     List,
@@ -989,6 +996,7 @@ mod tests {
                 session: Some("abc".into()),
                 transcript: Some("/tmp/t.jsonl".into()),
                 reason: None,
+                event: Some("Notification".into()),
             }),
             ClientMsg::Request(Request::Status {
                 pane: 4,
@@ -996,6 +1004,7 @@ mod tests {
                 session: None,
                 transcript: None,
                 reason: Some("limit reached".into()),
+                event: None,
             }),
             ClientMsg::Request(Request::Notify {
                 text: "build finished".into(),

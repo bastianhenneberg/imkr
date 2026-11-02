@@ -90,6 +90,10 @@ pub struct Pane {
     shell: Arc<Mutex<Shell>>,
     /// The agent state the program reported with `imkr status`.
     pub reported: Option<AgentState>,
+    /// How often the agent has said it took an input line (its
+    /// `UserPromptSubmit` hook). Counts up only; the one proof that what
+    /// imkr typed here really went off (#9379).
+    pub prompts: u64,
     /// Why its hook said the agent failed, e.g. "limit reached".
     pub failure: Option<String>,
     /// The agent's session id from its hooks, e.g. for `claude --resume`.
@@ -432,6 +436,7 @@ impl Pane {
             meta: None,
             name: None,
             answered: Cell::new(false),
+            prompts: 0,
             draft: Cell::new(None),
             typed: Cell::new(None),
             takes_mail: false,
