@@ -645,6 +645,31 @@ Projekt-Slug: `imkr`
   begraben (gemessen: 2193 → 3574 → 4374 Zeichen in einem Prompt). Der Eintrag in `entered`
   bleibt deshalb liegen, auch wenn die Nachschick-Versuche verbraucht sind, bis der Agent sie
   nimmt oder der Text vom Schirm ist.
+- **Getippt ist nicht angekommen** (Bug #1307): `Pane::prompts` allein ist faelschbar — Claude
+  Code schickt eigene Fortsetzungen (`isMeta` „Continue from where you left off." mit
+  synthetischer 0-Token-Antwort), die den Zähler hochtreiben und nichts von der Nachricht
+  tragen. Deshalb trägt `Request::Status` jetzt auch `prompt` (Feldname aus dem Binary 2.1.238
+  gelesen: `hook_event_name:"UserPromptSubmit",prompt:r`; gemessen gibt es den **ganzen** Text,
+  4094 Zeichen, kein `[Pasted text]`-Platzhalter) → `Pane::note_prompt`/`submitted`
+  (`PROMPTS_KEPT` 8) → freie Funktion `app::prompt_took` (Prompt nach dem Tippen **und** Inhalt
+  passt) → `took_input`. Bestätigt = `MailWhat::Confirmed`; `Typed` heißt nur noch „geschrieben",
+  die Zeile in `imkr mail` hat kein ✓ mehr und `imkr msg` sagt „typed into pane N, not confirmed
+  yet" statt „delivered". `imkr msg --confirm` wartet auf den Beweis und endet mit Exit != 0
+  (`cli::confirm_arrival`, `CONFIRM_WITHIN`). `check_entered` lässt einen Eintrag nicht mehr
+  fallen, nur weil der Text nicht auf dem Schirm steht (`shows_tail`): genau die langen
+  Nachrichten, die Entscheidungen tragen, faltet Claude Code zu `[Pasted text #1 +N lines]`.
+- **Nicht angekommen wird gesagt, nicht nachgetippt** (Bug #1307): `MAIL_OVERDUE` (600 s) →
+  `App::say_overdue` (Vermerk `MailWhat::Overdue` mit Grund, Flash, `notify(…, "blocked", …)`).
+  Nie eine Nachricht — die stünde hinter der Nachricht, um die es geht. Die 600 s sind
+  gerechnet: gesunde Hook-Zustellungen dauerten gemessen 393 s und 365 s, fünf Minuten hätten
+  also beim Normalfall Alarm geschlagen (Test `saying_a_message_is_overdue_waits_longer_than_a_healthy_turn`).
+- **Mehrere Nachrichten für ein Pane gehen denselben Weg** (Bug #1307): freie Funktion
+  `app::waits_for_hook(fetches, busy, more, age)`; `more` aus `pending` in `deliver_mail`. Eine
+  getippt und der Rest per Hook verdrehte die Reihenfolge (gemessen: die späteren zwei kamen im
+  `Stop`-Hook, während die erste noch in der Eingabezeile stand). Zwei Wege gleichzeitig können
+  keine Reihenfolge halten. Der getippte Rückfall bleibt **nur** für das Pane ohne eigenen Hook
+  (codex, pi, Shell, claude direkt nach SessionEnd) und für den einzelnen, wirklich geparkten
+  Agenten — ihn ganz wegzunehmen hieße, dass ein codex nie wieder Post bekommt.
 - Getippter Rückfall erst bei echter Ruhe (#9379, v0.21.93): `QUIET_BEFORE_TYPING` (5 s ohne
   Ausgabe) zusätzlich zu `HOOK_WITHIN`. Gemeldetes idle allein genügt nicht — zwischen zwei
   Zügen meldet ein Agent kurz idle, während er mitten in der Arbeit ist, und genau dann traf

@@ -287,6 +287,40 @@ that one again and the new one is buried. What counts as sent is the agent's own
 way, and once it has sent the text it stands in the transcript, which looks the same from
 outside. A message held this way says so, in `imkr msg`'s answer and in the message pane.
 
+**Typed in is not arrived, and imkr no longer pretends it is.** A message is only confirmed when
+the agent itself submits a prompt that *carries* it. That the agent submitted *something* proves
+nothing: Claude Code writes continuations of its own — "Continue from where you left off." after
+a turn that ended badly — which say "a prompt went off" while carrying none of your message. So
+imkr compares what the agent took against what it typed, and until that matches, the message
+counts as typed in and not confirmed:
+
+```
+10:14  ← claude@codingmachine:ai-brain/0 (for pane 0)  Take route (b), not (a). This is binding.
+10:14  ⤸ pane 0: typed in, not confirmed yet
+10:15  ✓ pane 0 took it, by its own word
+```
+
+**And a message that does not arrive says so.** Waiting is fine — an agent's own `Stop` hook may
+take minutes to come, and that is normal. Waiting in silence is not. After ten minutes without
+arriving, imkr says so: a line in the message pane and in `Ctrl+B O`, and the same notification
+a waiting question sends. It is never typed in after all — typing is what loses a message.
+
+```
+10:24  ⚠ pane 0 has NOT got it: it was typed in but its agent never took it
+```
+
+Scripts can ask for the proof instead of reading for it:
+
+```bash
+imkr msg api/claude --confirm "Take route (b)."   # waits for the agent's own word,
+                                                  # exits non-zero if it never comes
+```
+
+Why this matters: a receipt that promises a delivery which never happened is worse than one that
+fails. On 3 November 2026 two decisions of the user's vanished on their way to a bee — the bee
+waited instead of asking, because nothing told it anything was missing, and the sender had been
+told the messages were on their way.
+
 ### The message pane
 
 `imkr mail` shows what a session's messages did: what came in and went out, what still waits and

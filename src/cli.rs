@@ -54,6 +54,9 @@ pub fn status(args: &[String]) -> Result<()> {
         reason: (state == Some(AgentState::Failed))
             .then(|| crate::agent::failure_reason(&field("error").unwrap_or_default()).to_owned()),
         event: field("hook_event_name"),
+        // What the agent took, so a typed message can be proven to have
+        // gone off instead of merely counted (#1307).
+        prompt: field("prompt"),
     });
     // The same call fetches the messages waiting for this pane and puts
     // them in front of the agent itself, so nothing is typed into the line
@@ -552,9 +555,11 @@ pub fn cp(args: &[String]) -> Result<()> {
 /// pane's address to answer to. `--stdin` reads the text, `--from` keeps
 /// the sender when the message is passed on over ssh.
 pub fn msg(args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: imkr msg [--wait] <to> <text>... (or the text on stdin)";
+    const USAGE: &str =
+        "usage: imkr msg [--wait] [--confirm] <to> <text>... (or the text on stdin)";
     let mut rest = args.to_vec();
     let wait = take_flag(&mut rest, "--wait");
+    let confirm = take_flag(&mut rest, "--confirm");
     let stdin = take_flag(&mut rest, "--stdin");
     let given = take_value(&mut rest, "--from")?;
     // Sent from a pane here (not passed on for one elsewhere): its session
@@ -644,13 +649,28 @@ pub fn msg(args: &[String]) -> Result<()> {
         },
     )?;
     let pane = reply["pane"].as_u64().unwrap_or_default() as PaneId;
+    let seq = reply["seq"].as_u64().unwrap_or_default();
+    // Never say "delivered" for something that has only been written: a
+    // receipt that promised a delivery which never happened is what made
+    // two of the user's decisions vanish on 03.11.2026 (#1307).
     if reply["queued"].as_bool() == Some(true) {
         let why = reply["why"]
             .as_str()
             .unwrap_or("it is busy or asking something");
-        println!("queued for pane {pane}: {why}, it gets it as soon as it can take it");
+        println!(
+            "waiting for pane {pane}: {why} — not arrived yet. `imkr mail --follow` shows what \
+             becomes of it, and you are told if it has not arrived in ten minutes."
+        );
+    } else if reply["agent"].as_bool() == Some(true) {
+        println!(
+            "typed into pane {pane}, not confirmed yet: its agent has to take the line. \
+             `imkr msg --confirm` waits for its own word."
+        );
     } else {
         println!("delivered to pane {pane}");
+    }
+    if confirm {
+        confirm_arrival(&socket, pane, seq)?;
     }
     if wait {
         wait_for_answer(&socket, pane)?;
@@ -673,6 +693,55 @@ pub(crate) fn note_sent(to: &str, text: &str) {
         to: to.to_owned(),
         text: text.to_owned(),
     });
+}
+
+/// How long `imkr msg --confirm` waits for the agent's own word, in
+/// seconds. A little longer than the server's `MAIL_OVERDUE`, so that the
+/// server has said the message is overdue before this gives up: then the
+/// reason printed here is the server's, not a guess of this process.
+const CONFIRM_WITHIN: u64 = 630;
+
+/// Waits until the message `seq` for `pane` has provably arrived, and fails
+/// if it has not (#1307).
+///
+/// Arrived means the agent's own word: its hook fetched the message
+/// (`taken`), or it submitted a prompt carrying what was typed in
+/// (`confirmed`). Anything else — still waiting, typed in and never taken —
+/// is not an arrival, and a caller that asked to be sure gets a non-zero
+/// exit instead of a promise.
+fn confirm_arrival(socket: &std::path::Path, pane: PaneId, seq: u64) -> Result<()> {
+    let start = std::time::Instant::now();
+    loop {
+        let state = client::request_at(socket, Request::Mail { who: None })?;
+        let empty = Vec::new();
+        let notes = state["notes"].as_array().unwrap_or(&empty);
+        let about = |what: &str| {
+            notes
+                .iter()
+                .any(|n| n["about"].as_u64() == Some(seq) && n["what"].as_str() == Some(what))
+        };
+        if about("taken") {
+            println!("confirmed: pane {pane} fetched it through its own hook");
+            return Ok(());
+        }
+        if about("confirmed") {
+            println!("confirmed: pane {pane} took it, by its own word");
+            return Ok(());
+        }
+        if let Some(note) = notes
+            .iter()
+            .find(|n| n["about"].as_u64() == Some(seq) && n["what"].as_str() == Some("overdue"))
+        {
+            bail!(
+                "NOT arrived at pane {pane}: {}",
+                note["why"].as_str().unwrap_or("it is overdue")
+            );
+        }
+        if start.elapsed() >= std::time::Duration::from_secs(CONFIRM_WITHIN) {
+            bail!("NOT arrived at pane {pane} within {CONFIRM_WITHIN}s, and nothing says why");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
 }
 
 /// Waits until the agent in `pane` has taken up a message and finished,
@@ -1084,8 +1153,16 @@ fn mail_line(note: &serde_json::Value) -> String {
             "{at}  ⏳ pane {pane} waits: {}",
             note["why"].as_str().unwrap_or("busy")
         ),
-        "typed" => format!("{at}  ✓ pane {pane} got it, typed into it"),
+        // No tick here: typing it in is not the same as arriving. A
+        // message typed into a bee that looked idle but was mid-turn was
+        // dropped on 03.11.2026 while the log said it had arrived (#1307).
+        "typed" => format!("{at}  ⤸ pane {pane}: typed in, not confirmed yet"),
         "taken" => format!("{at}  ✓ pane {pane} got it through its own hook"),
+        "confirmed" => format!("{at}  ✓ pane {pane} took it, by its own word"),
+        "overdue" => format!(
+            "{at}  ⚠ pane {pane} has NOT got it: {}",
+            note["why"].as_str().unwrap_or("it is overdue")
+        ),
         _ if note["sent"].as_bool() == Some(true) => {
             format!("{at}  → {peer} (from pane {pane})  {text}")
         }

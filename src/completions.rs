@@ -375,7 +375,12 @@ const COMMANDS: &[Command] = &[
         &["--all", "--json", "--by"],
         Nothing,
     ),
-    cmd("msg", "message an agent", &["--wait", "--from"], Addresses),
+    cmd(
+        "msg",
+        "message an agent",
+        &["--wait", "--confirm", "--from"],
+        Addresses,
+    ),
     cmd(
         "mail",
         "the messages of a session, live",

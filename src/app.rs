@@ -713,6 +713,15 @@ struct Entered {
     pane: PaneId,
     /// When Enter last went in.
     at: Instant,
+    /// When the message was typed in, which the retries do not move: the
+    /// clock for `MAIL_OVERDUE` (#1307).
+    since: Instant,
+    /// The message this was, so that proof and overdue can be noted against
+    /// it. 0 for what `type_into` typed, which is nobody's message.
+    seq: u64,
+    /// Whether it has already been said that this one is overdue, so it is
+    /// said once (#1307).
+    told: bool,
     /// What was typed before it, to find again on the screen.
     text: String,
     /// How often Enter went again.
@@ -743,6 +752,46 @@ struct Entered {
 /// from there, nothing can be stuck in an input line.
 fn enter_again(took: bool, typed_since: bool, shown: bool) -> bool {
     !took && !typed_since && shown
+}
+
+/// Whether one of the prompts an agent took carries what imkr typed, and
+/// so really went off (#1307).
+///
+/// `submitted` are the prompts it said it took with the count it had at the
+/// time (`Pane::submitted`), `since` the count when the message was typed
+/// in: only prompts after it can be about it.
+///
+/// Counting alone was the mistake. On 03.11.2026 a bee lost a decision this
+/// way: imkr typed it, the turn ended badly, and Claude Code recorded a
+/// continuation of its own — `isMeta` "Continue from where you left off."
+/// with a synthetic 0-token answer — which raised the count while carrying
+/// none of the message. The count said "taken", the agent had never seen a
+/// word of it, and nobody was told.
+/// Whether a message waits for the agent's own hook rather than being
+/// typed into its input line (#9379, #1307).
+///
+/// `fetches`: the agent has fetched its mail through its own hook before,
+/// so that way exists at all. `busy`: it is working, and the `Stop` at the
+/// end of its turn is bound to come. `more`: it has other messages pending,
+/// and they all have to go the same way — with one typed in and the rest
+/// fetched, a bee read them out of order on 03.11.2026, the later two
+/// arriving in its hook while the first still stood in its input line. Two
+/// paths at once cannot keep an order. `age`: a message younger than
+/// `HOOK_WITHIN` waits for the hook even from an agent that looks parked,
+/// because the `Stop` of a turn that has just ended is still on its way.
+///
+/// An agent that is really parked, with nothing else pending, is the one
+/// case that is typed to: it fires no hook at all, and nobody would ever
+/// reach it. That typing is no longer taken on trust — it has to be
+/// confirmed by the agent itself, and is said out loud if it is not.
+fn waits_for_hook(fetches: bool, busy: bool, more: bool, age: u64) -> bool {
+    fetches && (busy || more || age < HOOK_WITHIN)
+}
+
+fn prompt_took(submitted: &[(u64, String)], since: u64, typed: &str) -> bool {
+    submitted
+        .iter()
+        .any(|(seen, prompt)| *seen > since && crate::pane::shows_text(prompt, typed))
 }
 
 /// Why a message cannot be typed into a pane right now, if it cannot.
@@ -829,6 +878,29 @@ const PROMPT_EVENT: &str = "UserPromptSubmit";
 /// middle of its work, and typing into it then lands in an input line it
 /// has not emptied yet. A parked agent is quiet, a working one never is.
 const QUIET_BEFORE_TYPING: Duration = Duration::from_secs(5);
+
+/// How long a message may wait for its agent before imkr says so, in
+/// seconds (#1307).
+///
+/// Not a new deadline for typing it in after all — typing is what lost a
+/// message in the first place — but the point at which the sender is told
+/// instead of being left with a receipt that promised delivery.
+///
+/// Ten minutes, and the number is the whole point, so here is the
+/// arithmetic. A notice that fires while a message is still on its way
+/// teaches whoever reads it to ignore the next one, and then it is worth
+/// nothing. So it has to sit above a *healthy* wait. Measured on
+/// 03.11.2026 on messages that arrived perfectly well, fetched by the
+/// agent's own `Stop` hook at the end of a long turn: 6m33s (393s) and
+/// 6m05s (365s). Both are above five minutes — the figure first proposed,
+/// from reading "6m33s" as if it were under 300s — so five minutes would
+/// have cried wolf over the normal case. Ten minutes clears both measured
+/// waits with room for a longer turn, and is still far short of the half
+/// hour a bee sat idle that day on a decision that had been given.
+///
+/// Whoever lowers this: find a healthy turn longer than the number you
+/// pick, or the notice stops meaning anything.
+const MAIL_OVERDUE: Duration = Duration::from_secs(600);
 
 /// How many lines of a waiting agent's screen the inbox shows.
 const INBOX_LINES: usize = 12;
@@ -1127,6 +1199,9 @@ pub struct App {
     /// Which messages the log already says wait, by their note, so that
     /// each one is said once and not with every tick.
     mail_held: HashSet<u64>,
+    /// Messages it has already been said are overdue, so it is said once
+    /// per message (#1307).
+    mail_told: HashSet<u64>,
     prompt: Option<Prompt>,
     /// The accounts new shells start with, by agent, see `account`.
     accounts: BTreeMap<String, String>,
@@ -1282,6 +1357,7 @@ impl App {
             entered: Vec::new(),
             mail_seq: 0,
             mail_held: HashSet::new(),
+            mail_told: HashSet::new(),
             mail_log: Vec::new(),
             prompt: None,
             dir_lists: Arc::default(),
@@ -2531,6 +2607,7 @@ impl App {
                 transcript,
                 reason,
                 event,
+                prompt,
             } => {
                 // An agent in a pane that moved on still reports here.
                 if let Some((socket, there)) = self.moved.get(&pane).cloned() {
@@ -2541,6 +2618,7 @@ impl App {
                         transcript,
                         reason,
                         event,
+                        prompt,
                     };
                     thread::spawn(move || crate::client::request_at(&socket, request));
                     return Ok(serde_json::json!({ "pane": pane, "moved": true }));
@@ -2549,9 +2627,11 @@ impl App {
                 p.reported = state;
                 p.failure = reason;
                 // The agent took an input line: the only proof that what
-                // was typed there really went off (#9379).
+                // was typed there really went off (#9379). What it took is
+                // kept with it, because the count alone proved to be
+                // forgeable (#1307).
                 if event.as_deref() == Some(PROMPT_EVENT) {
-                    p.prompts += 1;
+                    p.note_prompt(prompt);
                 }
                 if session.is_some() {
                     p.session = session;
@@ -2566,6 +2646,9 @@ impl App {
                     // next has to prove its own hook again, else messages
                     // would wait for a hook that never comes (#9379).
                     p.takes_mail = false;
+                    // What the old session took proves nothing about what
+                    // is typed to the new one (#1307).
+                    p.submitted.clear();
                 }
                 Ok(serde_json::json!({ "pane": pane }))
             }
@@ -2708,10 +2791,22 @@ impl App {
                     format!("[imkr message from {from}]")
                 };
                 self.post_mail(pane, &from, &text, format!("{header} {text}"));
+                let seq = self.mail_seq;
                 self.deliver_mail();
                 let queued = self.mailbox.iter().any(|m| m.pane == pane);
                 let why = queued.then(|| self.mail_why(pane)).flatten();
-                Ok(serde_json::json!({ "pane": pane, "queued": queued, "why": why }))
+                // Typed into an agent is not arrived: only the agent's own
+                // word proves that, and `imkr msg --confirm` waits for it
+                // (#1307). A pane without an agent — a shell — takes its
+                // Enter and needs no proof.
+                let agent = self.agent_now(pane).is_some();
+                Ok(serde_json::json!({
+                    "pane": pane,
+                    "queued": queued,
+                    "why": why,
+                    "seq": seq,
+                    "agent": agent,
+                }))
             }
             Request::Sent { pane, to, text } => {
                 if !self.panes.contains_key(&pane) {
@@ -2858,7 +2953,8 @@ impl App {
             // not as part of a paste.
             thread::sleep(Duration::from_millis(20));
             p.write(b"\r").map_err(|e| e.to_string())?;
-            self.watch_enter(pane, text);
+            // Nobody's message: there is no delivery to confirm.
+            self.watch_enter(pane, text, 0);
         }
         Ok(())
     }
@@ -2867,7 +2963,7 @@ impl App {
     /// program that is still starting swallows the Enter after a paste, and
     /// then the text stands in its input line while the agent sits idle
     /// with work it never began (seen with `imkr spawn`, #9379).
-    fn watch_enter(&mut self, pane: PaneId, text: &str) {
+    fn watch_enter(&mut self, pane: PaneId, text: &str, seq: u64) {
         // Only agents: a shell always takes its Enter, and for it an
         // "it is not working" would mean nothing.
         if self.agent_now(pane).is_none() {
@@ -2878,6 +2974,9 @@ impl App {
         self.entered.push(Entered {
             pane,
             at: Instant::now(),
+            since: Instant::now(),
+            seq,
+            told: false,
             text: text.to_owned(),
             tries: 0,
             prompts,
@@ -2892,7 +2991,7 @@ impl App {
     fn check_entered(&mut self) {
         // What is true of each pane first: the closure below cannot ask
         // while it holds `entered`. Panes that are gone are left out.
-        let now: Vec<(PaneId, bool, bool, bool, bool)> = self
+        let now: Vec<(PaneId, bool, bool, bool, bool, bool)> = self
             .entered
             .iter()
             .filter_map(|e| {
@@ -2906,12 +3005,15 @@ impl App {
                     pane.last_typed().is_some_and(|typed| typed > e.at),
                     pane.shows_tail(&e.text, ENTER_LINES),
                     self.took_input(pane, e),
+                    pane.takes_mail,
                 ))
             })
             .collect();
         let mut again = Vec::new();
+        let mut confirmed = Vec::new();
+        let mut late = Vec::new();
         self.entered.retain_mut(|e| {
-            let Some(&(_, working, typed_since, shown, took)) =
+            let Some(&(_, working, typed_since, shown, took, proves)) =
                 now.iter().find(|(pane, ..)| *pane == e.pane)
             else {
                 return false;
@@ -2921,12 +3023,35 @@ impl App {
             e.began |= working;
             // The agent has it: nothing more to watch here.
             if took {
+                if e.seq != 0 {
+                    confirmed.push((e.pane, e.seq));
+                }
                 return false;
             }
             // Gone from the screen: nothing is standing in an input line,
             // so nothing is stuck and nothing is in the way of the next
-            // message either.
-            if !shown {
+            // message either. For an agent that hands over what it takes
+            // that says nothing at all, though. Claude Code shows a long
+            // message as "[Pasted text #1 +N lines]", so the very messages
+            // that carry decisions are never on the screen to read back —
+            // while its hook does hand over the whole text (measured
+            // against 2.1.238: a 4094-character prompt, placeholder
+            // nowhere in it). The screen cannot settle this; the agent
+            // can. Keep watching those until it says it took it, or until
+            // it is overdue (#1307).
+            if !shown && !proves {
+                return false;
+            }
+            // Said once, and only about a real message.
+            if !e.told && e.since.elapsed() >= MAIL_OVERDUE {
+                e.told = true;
+                if e.seq != 0 {
+                    late.push((e.pane, e.seq));
+                }
+            }
+            // Nothing left to wait for: it was said, and there is nothing
+            // standing in an input line that the next message must avoid.
+            if e.told && !shown {
                 return false;
             }
             if e.at.elapsed() < ENTER_AGAIN {
@@ -2955,6 +3080,32 @@ impl App {
                 "⏎ pane {pane} reported no turn after what was typed in: Enter sent again"
             ));
         }
+        for (pane, seq) in confirmed {
+            self.note_became(pane, protocol::MailWhat::Confirmed, None, seq);
+        }
+        for (pane, seq) in late {
+            self.say_overdue(pane, seq, "it was typed in but its agent never took it");
+        }
+    }
+
+    /// Says that a message for pane `pane` has not arrived: a note against
+    /// it in the log (so `imkr mail` and `Ctrl+B O` show it), a flash, and
+    /// the same notification blocked and done already use — never a message
+    /// of its own, which would queue behind the very message it is about
+    /// (#1307).
+    fn say_overdue(&mut self, pane: PaneId, seq: u64, why: &str) {
+        self.note_became(pane, protocol::MailWhat::Overdue, Some(why), seq);
+        let who = self
+            .pane_who(pane)
+            .unwrap_or_else(|| format!("pane {pane}"));
+        let text = format!("a message for {who} has not arrived: {why}");
+        self.flash = Some(format!("✉ {text}"));
+        // As `blocked`, on purpose: that is the kind a push config already
+        // has switched on for "a human is needed here", and a decision that
+        // never arrived needs one exactly that way. A kind of its own would
+        // reach nobody until everyone edited their config — silence is the
+        // very thing this notice exists to end.
+        self.notify(pane, "blocked", &text);
     }
 
     /// The pane a message `to` means: its number, or the one pane with that
@@ -3093,6 +3244,12 @@ impl App {
     /// started working.
     fn took_input(&self, pane: &Pane, entered: &Entered) -> bool {
         if pane.takes_mail {
+            // Where the agent hands over what it took, that decides: the
+            // count alone said "taken" for a continuation the agent wrote
+            // itself (#1307).
+            if pane.says_prompts() {
+                return prompt_took(&pane.submitted, entered.prompts, &entered.text);
+            }
             return pane.prompts > entered.prompts;
         }
         entered.began
@@ -3203,6 +3360,12 @@ impl App {
     fn deliver_mail(&mut self) {
         let mail = std::mem::take(&mut self.mailbox);
         let now = crate::persist::now();
+        // How many messages each pane has pending in this round, so that a
+        // pane with several of them sends them all the same way (#1307).
+        let mut pending: HashMap<PaneId, usize> = HashMap::new();
+        for mail in &mail {
+            *pending.entry(mail.pane).or_default() += 1;
+        }
         for mail in mail {
             let id = mail.pane;
             if !self.panes.contains_key(&id) {
@@ -3229,8 +3392,13 @@ impl App {
                     .panes
                     .get(&id)
                     .is_some_and(|p| p.last_output().elapsed() < QUIET_BEFORE_TYPING);
-            let hooked =
-                self.fetches_mail(id) && (busy || now.saturating_sub(mail.at) < HOOK_WITHIN);
+            let more = pending.get(&id).copied().unwrap_or(0) > 1;
+            let hooked = waits_for_hook(
+                self.fetches_mail(id),
+                busy,
+                more,
+                now.saturating_sub(mail.at),
+            );
             if waits.is_some() || settling || hooked || self.mailbox.iter().any(|m| m.pane == id) {
                 if let Some(why) = waits
                     && self.mail_held.insert(mail.seq)
@@ -3238,7 +3406,18 @@ impl App {
                     self.note_became(id, protocol::MailWhat::Held, Some(why), mail.seq);
                     self.flash = Some(format!("✉ message for pane {id} waits: {why}"));
                 }
+                // Waiting is fine, waiting in silence is not: past
+                // `MAIL_OVERDUE` the sender is told rather than left with a
+                // receipt that promised delivery (#1307). It keeps waiting
+                // — the agent's own hook does fetch it, just late — and it
+                // is never typed in after all.
+                let seq = mail.seq;
+                let late = now.saturating_sub(mail.at) >= MAIL_OVERDUE.as_secs();
                 self.mailbox.push(mail);
+                if late && self.mail_told.insert(seq) {
+                    let why = waits.unwrap_or("its agent has not come for it");
+                    self.say_overdue(id, seq, why);
+                }
                 continue;
             }
             let Some(pane) = self.panes.get_mut(&id) else {
@@ -3257,7 +3436,7 @@ impl App {
             }
             thread::sleep(Duration::from_millis(20));
             let _ = pane.write(b"\r");
-            self.watch_enter(id, &mail.text);
+            self.watch_enter(id, &mail.text, mail.seq);
             self.mail_sent.insert(id, Instant::now());
             self.mail_held.remove(&mail.seq);
             self.note_became(id, protocol::MailWhat::Typed, None, mail.seq);
@@ -3267,6 +3446,7 @@ impl App {
             .retain(|_, at| at.elapsed() < Duration::from_secs(3));
         let waiting: HashSet<u64> = self.mailbox.iter().map(|m| m.seq).collect();
         self.mail_held.retain(|seq| waiting.contains(seq));
+        self.mail_told.retain(|seq| waiting.contains(seq));
     }
 
     /// Starts `command` in a new pane: floating or split off the focused one,
@@ -15066,6 +15246,99 @@ mod tests {
                 assert!(!again(began, true, shown));
             }
         }
+    }
+
+    /// What the bee `mailbox-freelancer` lost on 03.11.2026 (#1307): imkr
+    /// typed a decision of the user's into it, the turn it was in ended
+    /// badly, and Claude Code 2.1.238 recorded a continuation of its own —
+    /// an `isMeta` "Continue from where you left off." with a synthetic
+    /// 0-token answer. That raised `Pane::prompts`, which was the whole
+    /// proof v0.21.93 went by, so imkr wrote the message off as taken and
+    /// told nobody. The agent had never seen a word of it: 0 occurrences
+    /// in its transcript, against 3 for every message its hook fetched.
+    ///
+    /// So the count cannot be the proof. What the agent took has to carry
+    /// the message.
+    #[test]
+    fn a_prompt_the_agent_wrote_itself_is_no_proof_a_message_went_off() {
+        let took = super::prompt_took;
+        let msg = "ENTSCHEIDUNG von Bastian: die Weiche (a)/(b) ist beantwortet, nimm (b).";
+        // The real case. The count went up — 2 against the 1 it had when
+        // the message was typed in — and that used to pass for proof.
+        let own = [(2, "Continue from where you left off.".to_owned())];
+        assert!(!took(&own, 1, msg));
+        // The agent really took it: the prompt it hands over carries the
+        // message, header and all.
+        let real = [(
+            2,
+            format!("[imkr message from claude@codingmachine:ai-brain/0] {msg}"),
+        )];
+        assert!(took(&real, 1, msg));
+        // A prompt from before the message was typed in says nothing about
+        // it, however well the text matches.
+        assert!(!took(&[(1, format!("asked for: {msg}"))], 1, msg));
+        // Its own continuation first and the message after it: taken.
+        let mixed = [
+            (2, "Continue from where you left off.".to_owned()),
+            (3, format!("{msg} Und leg los.")),
+        ];
+        assert!(took(&mixed, 1, msg));
+        // Nothing taken at all is not proof either — that is the case that
+        // has to end up as overdue rather than as a tick.
+        assert!(!took(&[], 1, msg));
+    }
+
+    /// Several messages for one pane go the same way, all of them: with one
+    /// typed in and the rest fetched by the hook, a bee read three of them
+    /// out of order on 03.11.2026 — the later two arrived inside its `Stop`
+    /// hook while the first still stood unsent in its input line (#1307).
+    #[test]
+    fn several_messages_for_one_pane_all_go_the_same_way() {
+        // (fetches its own mail, busy, more pending, seconds old)
+        let hook = super::waits_for_hook;
+        let old = super::HOOK_WITHIN + 1;
+        // The case that broke the order: parked, long past the grace, but
+        // more are pending — so this one waits for the hook as well.
+        assert!(hook(true, false, true, old));
+        // Alone and really parked: typed to, or nothing would ever reach
+        // it. This is the one message that is typed, and it has to be
+        // confirmed afterwards.
+        assert!(!hook(true, false, false, old));
+        // Working: waits, however long the turn takes.
+        assert!(hook(true, true, false, old));
+        // Fresh: the `Stop` of a turn that has just ended is on its way.
+        assert!(hook(true, false, false, 0));
+        // No hook of its own — codex, pi, a plain shell: always typed to,
+        // whatever else is true. Taking that away would mean they never
+        // heard of a message again.
+        for busy in [false, true] {
+            for more in [false, true] {
+                for age in [0, old] {
+                    assert!(!hook(false, busy, more, age), "{busy} {more} {age}");
+                }
+            }
+        }
+    }
+
+    /// The point of `MAIL_OVERDUE` is that it sits above a *healthy* wait:
+    /// a notice that fires while the message is still on its way teaches
+    /// whoever reads it to ignore the next one. The two waits measured on
+    /// 03.11.2026 on messages that arrived perfectly well are the floor,
+    /// and five minutes — the figure first proposed for it — is under both.
+    #[test]
+    fn saying_a_message_is_overdue_waits_longer_than_a_healthy_turn() {
+        // 6m33s and 6m05s, fetched by the agent's own hook at the end of a
+        // long turn, both arrived.
+        for healthy in [393, 365] {
+            assert!(
+                super::MAIL_OVERDUE.as_secs() > healthy,
+                "a healthy wait of {healthy}s would be called overdue"
+            );
+        }
+        assert!(super::MAIL_OVERDUE.as_secs() > 300);
+        // And still far short of the half hour a bee sat on a decision that
+        // had been given.
+        assert!(super::MAIL_OVERDUE.as_secs() < 30 * 60);
     }
 
     /// The user writing in a pane holds a message back, whatever its agent

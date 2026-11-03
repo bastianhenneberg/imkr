@@ -53,6 +53,12 @@ const DRAFT_HOLDS: Duration = Duration::from_secs(30 * 60);
 /// it to count as still standing in the input line (`shows_text`).
 const SHOWN_TAIL: usize = 40;
 
+/// How many of the prompts an agent took are kept per pane (#1307). Only
+/// the ones since a message was typed in matter, and between two ticks an
+/// agent takes one or two: a handful is plenty, and they are never read
+/// after the message they prove has been answered for.
+const PROMPTS_KEPT: usize = 8;
+
 /// Whether the end of `typed` still stands in `screen`, a piece of the
 /// screen: that is what an Enter the program swallowed looks like (#9379).
 ///
@@ -94,6 +100,12 @@ pub struct Pane {
     /// `UserPromptSubmit` hook). Counts up only; the one proof that what
     /// imkr typed here really went off (#9379).
     pub prompts: u64,
+    /// The prompts the agent said it took, newest last, with the count it
+    /// had when it took each. `Pane::prompts` alone cannot say whether a
+    /// *particular* message went off — an agent raises it with
+    /// continuations of its own (#1307) — so what it took is kept here and
+    /// compared against what was typed. Only the newest `PROMPTS_KEPT`.
+    pub submitted: Vec<(u64, String)>,
     /// Why its hook said the agent failed, e.g. "limit reached".
     pub failure: Option<String>,
     /// The agent's session id from its hooks, e.g. for `claude --resume`.
@@ -437,6 +449,7 @@ impl Pane {
             name: None,
             answered: Cell::new(false),
             prompts: 0,
+            submitted: Vec::new(),
             draft: Cell::new(None),
             typed: Cell::new(None),
             takes_mail: false,
@@ -845,6 +858,25 @@ impl Pane {
             None => return,
         }
         self.typed.set(Some(Instant::now()));
+    }
+
+    /// Notes a prompt the agent said it took (`UserPromptSubmit`), so that
+    /// a typed message can be proven to have gone off (#1307).
+    pub fn note_prompt(&mut self, prompt: Option<String>) {
+        self.prompts += 1;
+        if let Some(prompt) = prompt {
+            let seen = self.prompts;
+            self.submitted.push((seen, prompt));
+            let over = self.submitted.len().saturating_sub(PROMPTS_KEPT);
+            self.submitted.drain(..over);
+        }
+    }
+
+    /// Whether this pane's agent says what it takes, so that the prompts
+    /// themselves can be compared instead of only counted (#1307). An
+    /// agent that only ever raised the count cannot be asked that way.
+    pub fn says_prompts(&self) -> bool {
+        !self.submitted.is_empty()
     }
 
     /// When the user last typed anything here, Enter included.

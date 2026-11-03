@@ -186,14 +186,18 @@ For scripts and agents:
                                         by its own hook). --follow keeps showing
                                         it; ADDRESS narrows it to one pane, on
                                         another machine too
-  msg [--wait] <to> <text>              message an agent: <to> is a pane number,
+  msg [--wait] [--confirm] <to> <text>  message an agent: <to> is a pane number,
                                         name or program, `session/<to>` or
                                         `machine:session/<to>`. Typed in once it
                                         is idle, never into a question and never
                                         into a line you began; Claude Code with
                                         imkr's hooks gets it without anything
-                                        being typed at all; --wait waits for it
-                                        to finish and prints its screen
+                                        being typed at all. Typed in is not
+                                        arrived: --confirm waits for the agent's
+                                        own word and fails if it never comes,
+                                        and you are told if a message has not
+                                        arrived in ten minutes; --wait waits
+                                        for it to finish and prints its screen
   skill [--install]                     the guide for agents driving imkr, or
                                         install it as a Claude Code skill
   notify [--title T] [--pane N] <text>  show a notification (desktop, terminal or

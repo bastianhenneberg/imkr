@@ -394,6 +394,15 @@ pub enum Request {
         /// an agent that does not say, and from an older imkr.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         event: Option<String>,
+        /// The prompt the agent just took, as its `UserPromptSubmit` hook
+        /// hands it over. The count alone is no proof that *this* message
+        /// went off: an agent submits continuations of its own that raise
+        /// it and carry none of what was typed — measured in Claude Code
+        /// 2.1.238 as an `isMeta` "Continue from where you left off." with
+        /// a synthetic 0-token answer (#1307). `None` from an agent that
+        /// does not say, and from an older imkr.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
     },
     /// All panes.
     List,
@@ -890,6 +899,14 @@ pub enum MailWhat {
     Typed,
     /// The agent's own hook fetched it, so nothing was typed (#9379).
     Taken,
+    /// The agent itself said it took what was typed in, and the prompt it
+    /// took carried the message: the only proof a typed message arrived
+    /// (#1307).
+    Confirmed,
+    /// It has waited longer than `MAIL_OVERDUE` without arriving. Said out
+    /// loud rather than typed in after all: typing is what lost a message
+    /// in the first place (#1307).
+    Overdue,
 }
 
 /// A message an agent here sent or got (`imkr msg`), kept for the
@@ -997,6 +1014,7 @@ mod tests {
                 transcript: Some("/tmp/t.jsonl".into()),
                 reason: None,
                 event: Some("Notification".into()),
+                prompt: None,
             }),
             ClientMsg::Request(Request::Status {
                 pane: 4,
@@ -1005,6 +1023,7 @@ mod tests {
                 transcript: None,
                 reason: Some("limit reached".into()),
                 event: None,
+                prompt: Some("do the thing".into()),
             }),
             ClientMsg::Request(Request::Notify {
                 text: "build finished".into(),
