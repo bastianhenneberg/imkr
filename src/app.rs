@@ -791,6 +791,12 @@ fn enter_again(took: bool, typed_since: bool, shown: bool) -> bool {
 /// a hook that says working, and the copy would sit there until the next
 /// SIGTERM and then be delivered a second time. Waiting for a signal that
 /// does not always come turns the rare duplicate into the normal case.
+///
+/// Whoever tightens this because a stricter signal sounds safer: name the
+/// hook that reports it on a turn where the agent answers in text alone.
+/// There is none. The absence of this signal is what triggers a
+/// re-delivery, so a signal that rarely arrives makes re-delivery the
+/// default — worse than the loss it was built against.
 fn handed_done(reported: Option<AgentState>) -> bool {
     reported.is_some()
 }
