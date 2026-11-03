@@ -704,11 +704,18 @@ Projekt-Slug: `imkr`
   und `--confirm`. `mail_line` zeigt beide Seiten verschieden (`sent` = „your message …
   has NOT arrived").
 - **Nichts in ein Pane tippen, dessen Agent gerade neu startet** (Bug #1314):
-  `switching` ist das erste Argument von `mail_hold` und schlägt alles andere →
+  `restarting` ist das erste Argument von `mail_hold` und schlägt alles andere →
   „its agent is restarting in another account". Vorher galt ein Pane ohne Agent als
   zustellbar, und genau das ist es zwischen `stop_foreground()` und dem Neustart: die
   nackte Shell steht vorn. Die Nachricht bleibt im `mailbox`, der Hook des neuen Agenten
   holt sie, und nach `MAIL_OVERDUE` wird gemeldet — gewartet wird benannt, nicht stumm.
+  **Beide Hälften des Fensters**: `switching.contains_key(&id) || resumed.contains_key(&id)`.
+  `finish_switches` nimmt das Pane ERST aus `switching` und tippt DANN den
+  `imkr account run`-Befehl (`resumed.insert` danach) — die zweite Hälfte ist die, in der
+  die Shell wirklich vorn steht, und nur `switching` zu prüfen lässt sie offen (Fund der
+  Biene konto-wechsel; `resumed` kam mit ihrem `22b1a42` auf main und ist von einem Zweig
+  ab `e9e6f0e` aus unsichtbar). `check_resumed` entfernt den Eintrag, sobald der Agent
+  antwortet — damit endet der Halt von selbst.
   **Gemessen, weil die Schwere davon abhängt:** eine über `imkr msg` getippte Zeile
   trägt den Kopf `[imkr message from …]` und `Request::Message` faltet allen Leerraum
   (auch Zeilenumbrüche) zu einfachen Leerzeichen — die Zeile hat also `[imkr` als

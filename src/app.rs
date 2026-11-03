@@ -823,13 +823,22 @@ fn prompt_took(submitted: &[(u64, String)], since: u64, typed: &str) -> bool {
 
 /// Why a message cannot be typed into a pane right now, if it cannot.
 ///
-/// `switching`: its agent was ended to start again in another account
-/// (`switch_account`, #1314). It outranks everything, because a pane in
-/// that state has no agent at all — the bare shell is in front, and what
-/// is typed there the Enter runs as a COMMAND. Keeper messages carry
-/// commands in plain text all day. The message waits in the mailbox and
-/// the new agent's hook fetches it; past `MAIL_OVERDUE` it is said out
-/// loud, so the wait is named rather than silent.
+/// `restarting`: its agent was ended to start again in another account and
+/// is not back yet — `switching` while it is being ended, `resumed` from
+/// the moment the restart command is typed until the agent answers
+/// (#1314). **Both halves**, because `finish_switches` takes the pane out
+/// of `switching` and only then types the command: the second half is the
+/// one where the bare shell really is in front, and guarding only the
+/// first leaves it open.
+///
+/// It outranks everything, because a pane in that state has no agent at
+/// all. What lands in the shell is eaten by it — and for a note without
+/// imkr's header (`review`, `notes`) the first word is run as a command;
+/// a message from `imkr msg` begins with `[imkr message from …]`, which
+/// the shell refuses (measured: `zsh: bad pattern: [imkr`), so there the
+/// loss is the whole of it. The message waits in the mailbox and the new
+/// agent's hook fetches it; past `MAIL_OVERDUE` it is said out loud, so
+/// the wait is named rather than silent.
 ///
 /// `drafting`: the user began a line there and has not sent it (#9379).
 /// Typing a message into it would land in the middle of what they write,
@@ -848,13 +857,13 @@ fn prompt_took(submitted: &[(u64, String)], since: u64, typed: &str) -> bool {
 /// and into work only for agents that queue what is typed meanwhile, so a
 /// long task does not hold a message back (#8800).
 fn mail_hold(
-    switching: bool,
+    restarting: bool,
     drafting: bool,
     unsent: bool,
     state: Option<AgentState>,
     queues: bool,
 ) -> Option<&'static str> {
-    if switching {
+    if restarting {
         return Some("its agent is restarting in another account");
     }
     if drafting {
@@ -3391,7 +3400,7 @@ impl App {
             .program()
             .is_some_and(|program| agent::queues_input(&program));
         mail_hold(
-            self.switching.contains_key(&id),
+            self.switching.contains_key(&id) || self.resumed.contains_key(&id),
             pane.drafting(),
             self.unsent_typed(id),
             self.agent_now(id),
@@ -15648,16 +15657,22 @@ mod tests {
     }
 
     /// A pane whose agent was ended to start again in another account has
-    /// no agent at all: the bare shell is in front, and the Enter after a
-    /// message typed there runs it as a COMMAND (#1314). Keeper messages
-    /// carry commands in plain text all day, and it would happen in
-    /// silence. So that state holds a message back ahead of everything
-    /// else, and says why.
+    /// no agent at all: the bare shell is in front, and what is typed
+    /// there the shell eats — a note without imkr's header even runs as a
+    /// command (#1314). So that state holds a message back ahead of
+    /// everything else, and says why.
+    ///
+    /// The flag is **both** halves of the window, `switching` and
+    /// `resumed`. `finish_switches` removes the pane from `switching` and
+    /// only then types the restart command, so the half guarded by
+    /// `resumed` is the one where the shell is really in front. Watching
+    /// only the first half leaves the dangerous one open.
     #[test]
     fn nothing_is_typed_into_a_pane_whose_agent_is_being_switched() {
         let hold = super::mail_hold;
         let switching = Some("its agent is restarting in another account");
-        // The dangerous window: SIGTERM has gone, the shell is back, and
+        // The dangerous window, either half: SIGTERM has gone or the
+        // restart command is running, the shell is in front, and
         // `agent_now` therefore says "no agent" — which used to mean
         // "deliverable right away".
         assert_eq!(hold(true, false, false, None, false), switching);
