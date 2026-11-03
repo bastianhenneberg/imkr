@@ -131,6 +131,12 @@ pub struct HandoverPane {
     /// `Pane::takes_mail`.
     #[serde(default)]
     pub takes_mail: bool,
+    /// Mail handed to its agent that it has not shown it acted on, see
+    /// `Pane::handed`. It travels, unlike `takes_mail`: losing it would
+    /// mean losing a message, and carrying it can at worst deliver one
+    /// twice — which is said out loud (#1313).
+    #[serde(default)]
+    pub handed: Vec<crate::protocol::Mail>,
 }
 
 /// The handover left by the server this process was before, if any. The

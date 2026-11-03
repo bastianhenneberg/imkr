@@ -295,6 +295,19 @@ never began. If the agent has not said it took the line within two seconds and w
 still on the screen, Enter goes once more. Never into a pane you have touched since — there it
 would send what you are writing.
 
+**And what a hook already fetched is not lost when its agent is ended.** Fetching takes the
+message out of the mailbox — that is what makes delivery exactly once — so for a moment the
+agent is the only place it exists. If somebody ends that agent before it has acted on it (an
+account switch, a session that ends), the message goes back and is delivered again, in order,
+and says so rather than reappearing quietly:
+
+```
+10:31  ↻ pane 0 gets it again: its agent was restarted in another account first
+```
+
+Once the agent has reported anything at all after the hand-over, it is on its own and nothing
+goes back — so a normal restart does not deliver anything twice.
+
 **And nothing goes into a pane whose agent is restarting.** From the moment an agent is ended
 to start again in another account until the new one answers, the pane has no agent at all —
 the bare shell is in front, and a message typed there is eaten by the shell. Messages wait for

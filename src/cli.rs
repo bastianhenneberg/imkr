@@ -1196,6 +1196,12 @@ fn mail_line(note: &serde_json::Value) -> String {
             "{at}  ⚠ your message from pane {pane} to {peer} has NOT arrived: {}",
             note["why"].as_str().unwrap_or("it is overdue")
         ),
+        "again" => format!(
+            "{at}  ↻ pane {pane} gets it again: {}",
+            note["why"]
+                .as_str()
+                .unwrap_or("its agent never acted on it")
+        ),
         "overdue" => format!(
             "{at}  ⚠ pane {pane} has NOT got it: {}",
             note["why"].as_str().unwrap_or("it is overdue")

@@ -918,6 +918,11 @@ pub enum MailWhat {
     /// loud rather than typed in after all: typing is what lost a message
     /// in the first place (#1307).
     Overdue,
+    /// It was handed to an agent that was then ended on purpose before it
+    /// had shown it acted on it, so it goes again (#1313). Said out loud
+    /// rather than quietly re-delivered: otherwise a keeper sees the same
+    /// message twice at a bee and cannot tell whether they sent it twice.
+    Again,
 }
 
 /// A message an agent here sent or got (`imkr msg`), kept for the

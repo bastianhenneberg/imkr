@@ -775,6 +775,26 @@ fn enter_again(took: bool, typed_since: bool, shown: bool) -> bool {
 /// The restart is what lost the text; the count is what hid it. Any prompt
 /// that is not ours does that, whoever wrote it — so the proof cannot be
 /// that a prompt happened.
+/// Whether a state an agent just reported shows that it survived a
+/// hand-over of its mail, so the copy kept for it can go (#1313).
+///
+/// Any state at all counts. `Pane::handed` only has to answer one
+/// question: is the agent that was given the mail still there and running
+/// its hooks? A living agent reports constantly, and the hand-over's own
+/// report arrives before `Request::TakeMail` in the same `imkr status`
+/// run — so the next report is a later one.
+///
+/// `Working` alone would not do, tempting as it is. After a `Stop` with
+/// `decision: block` the agent carries on in the same run without a new
+/// user prompt, so it reports `working` only if it uses a tool. One that
+/// answers a message in text alone — "understood, doing it" — never fires
+/// a hook that says working, and the copy would sit there until the next
+/// SIGTERM and then be delivered a second time. Waiting for a signal that
+/// does not always come turns the rare duplicate into the normal case.
+fn handed_done(reported: Option<AgentState>) -> bool {
+    reported.is_some()
+}
+
 /// Whether a message waits for the agent's own hook rather than being
 /// typed into its input line (#9379, #1307).
 ///
@@ -2692,6 +2712,13 @@ impl App {
                 if transcript.is_some() {
                     p.transcript = transcript;
                 }
+                // It reported after a hand-over: the agent is there and
+                // running its hooks, so the copy kept for it can go
+                // (#1313). The hand-over's own report came before its
+                // `TakeMail`, so this one is a later one.
+                if handed_done(state) {
+                    p.handed.clear();
+                }
                 if state.is_none() {
                     p.transcript = None;
                     p.meta = None;
@@ -2702,6 +2729,12 @@ impl App {
                     // What the old session took proves nothing about what
                     // is typed to the new one (#1307).
                     p.submitted.clear();
+                }
+                if state.is_none() {
+                    // Its session ended before it acted on what its hook
+                    // fetched: that mail goes back and is said out loud
+                    // (#1313).
+                    self.give_back_mail(pane, "its agent's session ended first");
                 }
                 Ok(serde_json::json!({ "pane": pane }))
             }
@@ -3438,6 +3471,9 @@ impl App {
         self.mailbox = rest;
         if let Some(p) = self.panes.get_mut(&pane) {
             p.takes_mail = true;
+            // The mailbox is no longer the only copy — this is, until the
+            // agent shows it survived the hand-over (#1313).
+            p.handed.extend(taken.iter().cloned());
         }
         for mail in &taken {
             self.mail_held.remove(&mail.seq);
@@ -3453,6 +3489,37 @@ impl App {
             "pane": pane,
             "messages": taken.iter().map(|m| m.text.clone()).collect::<Vec<_>>(),
         }))
+    }
+
+    /// Puts mail handed to pane `id` back in the mailbox, because whatever
+    /// it was handed to is being ended on purpose (#1313).
+    ///
+    /// `take_mail` is exactly-once by design — it takes the message out of
+    /// the mailbox. That is right while the agent lives, and wrong the
+    /// moment somebody kills it: the fetched message was then in no
+    /// context yet and in no mailbox either. So it goes back, at the
+    /// front, where it belongs by age.
+    ///
+    /// Out loud, with a note of its own, never quietly: a keeper who sees
+    /// the same message twice at a bee has to be able to tell that imkr
+    /// sent it again, not that they did.
+    fn give_back_mail(&mut self, id: PaneId, why: &str) {
+        let Some(pane) = self.panes.get_mut(&id) else {
+            return;
+        };
+        let back = std::mem::take(&mut pane.handed);
+        if back.is_empty() {
+            return;
+        }
+        for mail in &back {
+            self.note_became(id, protocol::MailWhat::Again, Some(why), mail.seq);
+        }
+        self.flash = Some(format!(
+            "✉ {} message(s) for pane {id} go again: {why}",
+            back.len()
+        ));
+        // Older than anything already waiting, so in front of it.
+        self.mailbox.splice(0..0, back);
     }
 
     /// The message log, for `Ctrl+B O` and `imkr mail`: the notes, and what
@@ -5889,6 +5956,9 @@ impl App {
             id,
             (line, crate::account::shown(&store, account), Instant::now()),
         );
+        // The agent is gone: whatever its hook fetched and it had not acted
+        // on was in no context and in no mailbox. Back it goes (#1313).
+        self.give_back_mail(id, "its agent was restarted in another account first");
         Ok(serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name }))
     }
 
@@ -15654,6 +15724,34 @@ mod tests {
         // Nothing taken at all is not proof either — that is the case that
         // has to end up as overdue rather than as a tick.
         assert!(!took(&[], 1, msg));
+    }
+
+    /// Mail its hook fetched is kept until the agent shows it survived the
+    /// hand-over, and ANY state it reports shows that (#1313).
+    ///
+    /// `Working` alone was the obvious candidate and does not work: after a
+    /// `Stop` with `decision: block` the agent carries on in the same run
+    /// without a new user prompt, so it reports working only if it uses a
+    /// tool. One that answers a message in text alone never does — and the
+    /// copy would then sit there until the next SIGTERM and be delivered a
+    /// second time. A proof that does not always arrive turns the rare
+    /// duplicate into the normal case.
+    #[test]
+    fn any_state_an_agent_reports_shows_it_survived_the_hand_over() {
+        let done = super::handed_done;
+        for state in [
+            AgentState::Idle,
+            AgentState::Done,
+            AgentState::Working,
+            AgentState::Blocked,
+            AgentState::Failed,
+        ] {
+            assert!(done(Some(state)), "{state:?}");
+        }
+        // `SessionEnd` reports no state at all, and that is the one case
+        // that is not proof but the opposite: the agent is gone, and what
+        // it never acted on has to go back.
+        assert!(!done(None));
     }
 
     /// A pane whose agent was ended to start again in another account has

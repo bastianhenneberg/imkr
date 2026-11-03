@@ -132,6 +132,13 @@ pub struct Pane {
     /// own hook (`Request::TakeMail`): then nothing is ever typed in. Set
     /// by the first hook call that asked, cleared when its session ends.
     pub takes_mail: bool,
+    /// Messages handed to this pane's agent through its own hook that it
+    /// has not yet shown it acted on (#1313). `take_mail` takes them out
+    /// of the mailbox — that is what makes the delivery exactly once — so
+    /// until the agent has reported anything at all after the hand-over,
+    /// this is the only copy there is. Whoever ends the agent on purpose
+    /// puts them back.
+    pub handed: Vec<crate::protocol::Mail>,
     events: Sender<AppEvent>,
     /// The thread reading the pty, while it runs.
     reader: Option<Reader>,
@@ -365,6 +372,9 @@ impl Pane {
         pane.reported = from.reported;
         pane.failure = from.failure.clone();
         pane.transcript = from.transcript.clone();
+        // Mail its agent has not shown it acted on travels, unlike
+        // `takes_mail`: dropping it would drop a message (#1313).
+        pane.handed = from.handed.clone();
         pane.parser.lock().unwrap().set_title(from.title.clone());
         *pane.remote.lock().unwrap() = from.remote.clone();
         // What it wrote was read before the handover: the pane is not busy
@@ -405,6 +415,7 @@ impl Pane {
             title: parser.screen().title(),
             remote: self.remote_agent(),
             takes_mail: self.takes_mail,
+            handed: self.handed.clone(),
         })
     }
 
@@ -453,6 +464,7 @@ impl Pane {
             draft: Cell::new(None),
             typed: Cell::new(None),
             takes_mail: false,
+            handed: Vec::new(),
             events,
             reader: None,
             released: false,

@@ -703,6 +703,22 @@ Projekt-Slug: `imkr`
   Scheitert der Weg, steht der **lokale** Vermerk trotzdem — den liest `imkr mail ADRESSE`
   und `--confirm`. `mail_line` zeigt beide Seiten verschieden (`sent` = „your message …
   has NOT arrived").
+- **Abgeholte Post übersteht ein absichtliches Beenden** (Bug #1313): `take_mail` nimmt die
+  Nachricht aus dem `mailbox` (das ist „exactly once") und legt eine Kopie in
+  `Pane::handed` (im Handover, anders als `takes_mail`: verlieren wäre ein Verlust,
+  mitnehmen höchstens eine Doppelzustellung — und die wird gesagt). Freie Funktion
+  `app::handed_done`: **jeder** gemeldete Zustand löscht die Kopie, weil der Hook-Aufruf
+  seinen eigenen `Request::Status` VOR `TakeMail` schickt und der nächste damit ein
+  späterer ist. `Working` allein geht nicht — nach `Stop` mit `decision: block` arbeitet
+  der Agent im selben Lauf weiter und meldet `working` nur bei einem Werkzeug; wer nur mit
+  Text antwortet, meldet es nie, und die Kopie läge bis zum nächsten SIGTERM herum.
+  `App::give_back_mail` (aus `switch_account` nach `stop_foreground`, und bei
+  `Status { state: None }` = SessionEnd) legt sie vorn in den `mailbox` zurück, mit
+  `MailWhat::Again` + Grund und Flash — **nie stumm**: ein Keeper, der dieselbe Nachricht
+  zweimal bei einer Biene sieht, muss erkennen können, dass imkr sie nochmal geschickt hat
+  und nicht er. Gemessen in der Testwelt: zwei per Hook geholte Nachrichten, SessionEnd
+  davor → beide zurück und in Reihenfolge; Gegenprobe mit einer Zustandsmeldung nach der
+  Übergabe → 2 taken, 0 again.
 - **Nichts in ein Pane tippen, dessen Agent gerade neu startet** (Bug #1314):
   `restarting` ist das erste Argument von `mail_hold` und schlägt alles andere →
   „its agent is restarting in another account". Vorher galt ein Pane ohne Agent als
