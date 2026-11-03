@@ -823,6 +823,14 @@ fn prompt_took(submitted: &[(u64, String)], since: u64, typed: &str) -> bool {
 
 /// Why a message cannot be typed into a pane right now, if it cannot.
 ///
+/// `switching`: its agent was ended to start again in another account
+/// (`switch_account`, #1314). It outranks everything, because a pane in
+/// that state has no agent at all — the bare shell is in front, and what
+/// is typed there the Enter runs as a COMMAND. Keeper messages carry
+/// commands in plain text all day. The message waits in the mailbox and
+/// the new agent's hook fetches it; past `MAIL_OVERDUE` it is said out
+/// loud, so the wait is named rather than silent.
+///
 /// `drafting`: the user began a line there and has not sent it (#9379).
 /// Typing a message into it would land in the middle of what they write,
 /// and the Enter after the message would send the lot — the whole reason
@@ -840,11 +848,15 @@ fn prompt_took(submitted: &[(u64, String)], since: u64, typed: &str) -> bool {
 /// and into work only for agents that queue what is typed meanwhile, so a
 /// long task does not hold a message back (#8800).
 fn mail_hold(
+    switching: bool,
     drafting: bool,
     unsent: bool,
     state: Option<AgentState>,
     queues: bool,
 ) -> Option<&'static str> {
+    if switching {
+        return Some("its agent is restarting in another account");
+    }
     if drafting {
         return Some("you are typing");
     }
@@ -3374,6 +3386,7 @@ impl App {
             .program()
             .is_some_and(|program| agent::queues_input(&program));
         mail_hold(
+            self.switching.contains_key(&id),
             pane.drafting(),
             self.unsent_typed(id),
             self.agent_now(id),
@@ -15407,6 +15420,42 @@ mod tests {
         assert!(!took(&[], 1, msg));
     }
 
+    /// A pane whose agent was ended to start again in another account has
+    /// no agent at all: the bare shell is in front, and the Enter after a
+    /// message typed there runs it as a COMMAND (#1314). Keeper messages
+    /// carry commands in plain text all day, and it would happen in
+    /// silence. So that state holds a message back ahead of everything
+    /// else, and says why.
+    #[test]
+    fn nothing_is_typed_into_a_pane_whose_agent_is_being_switched() {
+        let hold = super::mail_hold;
+        let switching = Some("its agent is restarting in another account");
+        // The dangerous window: SIGTERM has gone, the shell is back, and
+        // `agent_now` therefore says "no agent" — which used to mean
+        // "deliverable right away".
+        assert_eq!(hold(true, false, false, None, false), switching);
+        // Whatever else is true of the pane, including the states that
+        // otherwise take a message at once.
+        for state in [
+            None,
+            Some(AgentState::Idle),
+            Some(AgentState::Done),
+            Some(AgentState::Failed),
+            Some(AgentState::Working),
+            Some(AgentState::Blocked),
+        ] {
+            for queues in [false, true] {
+                assert_eq!(
+                    hold(true, false, false, state, queues),
+                    switching,
+                    "{state:?}"
+                );
+            }
+        }
+        // Not switching: nothing changes for anybody else.
+        assert_eq!(hold(false, false, false, None, false), None);
+    }
+
     /// Not every sender of a message is a pane that can be told it did not
     /// arrive (#1307): a person typing `imkr msg` in a terminal, and the
     /// review and notepad, all put messages in the mailbox. A notice sent
@@ -15491,23 +15540,36 @@ mod tests {
     /// is using (#9379).
     #[test]
     fn mail_waits_while_the_user_writes() {
-        // (the user is writing, imkr's last message is unsent, state, queues)
+        // (switching accounts, the user is writing, imkr's last message is
+        // unsent, state, queues)
         let hold = super::mail_hold;
         // Nothing in the way: as before (#8800).
-        assert_eq!(hold(false, false, None, false), None);
-        assert_eq!(hold(false, false, Some(AgentState::Idle), false), None);
-        assert_eq!(hold(false, false, Some(AgentState::Done), false), None);
-        assert_eq!(hold(false, false, Some(AgentState::Failed), false), None);
+        assert_eq!(hold(false, false, false, None, false), None);
         assert_eq!(
-            hold(false, false, Some(AgentState::Blocked), false),
+            hold(false, false, false, Some(AgentState::Idle), false),
+            None
+        );
+        assert_eq!(
+            hold(false, false, false, Some(AgentState::Done), false),
+            None
+        );
+        assert_eq!(
+            hold(false, false, false, Some(AgentState::Failed), false),
+            None
+        );
+        assert_eq!(
+            hold(false, false, false, Some(AgentState::Blocked), false),
             Some("asking something")
         );
         assert_eq!(
-            hold(false, false, Some(AgentState::Working), false),
+            hold(false, false, false, Some(AgentState::Working), false),
             Some("working")
         );
         // Claude Code queues what is typed while it works.
-        assert_eq!(hold(false, false, Some(AgentState::Working), true), None);
+        assert_eq!(
+            hold(false, false, false, Some(AgentState::Working), true),
+            None
+        );
         // Somebody writing there: nothing goes in, whatever the state.
         for state in [
             None,
@@ -15516,7 +15578,10 @@ mod tests {
             Some(AgentState::Working),
             Some(AgentState::Blocked),
         ] {
-            assert_eq!(hold(true, false, state, true), Some("you are typing"));
+            assert_eq!(
+                hold(false, true, false, state, true),
+                Some("you are typing")
+            );
         }
     }
 
@@ -15540,16 +15605,19 @@ mod tests {
         ] {
             // Even the states that otherwise take a message at once, and
             // even for an agent that queues what is typed while it works.
-            assert_eq!(hold(false, true, state, true), unsent, "{state:?}");
-            assert_eq!(hold(false, true, state, false), unsent, "{state:?}");
+            assert_eq!(hold(false, false, true, state, true), unsent, "{state:?}");
+            assert_eq!(hold(false, false, true, state, false), unsent, "{state:?}");
         }
         // The user's own line still comes first: it is theirs, not imkr's.
         assert_eq!(
-            hold(true, true, Some(AgentState::Idle), true),
+            hold(false, true, true, Some(AgentState::Idle), true),
             Some("you are typing")
         );
         // Once the agent has taken it, the next message goes in as before.
-        assert_eq!(hold(false, false, Some(AgentState::Idle), true), None);
+        assert_eq!(
+            hold(false, false, false, Some(AgentState::Idle), true),
+            None
+        );
     }
 
     /// The orchestration view is about messages between addresses: not

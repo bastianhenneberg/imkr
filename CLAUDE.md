@@ -673,6 +673,19 @@ Projekt-Slug: `imkr`
   Scheitert der Weg, steht der **lokale** Vermerk trotzdem — den liest `imkr mail ADRESSE`
   und `--confirm`. `mail_line` zeigt beide Seiten verschieden (`sent` = „your message …
   has NOT arrived").
+- **Nichts in ein Pane tippen, dessen Agent gerade neu startet** (Bug #1314):
+  `switching` ist das erste Argument von `mail_hold` und schlägt alles andere →
+  „its agent is restarting in another account". Vorher galt ein Pane ohne Agent als
+  zustellbar, und genau das ist es zwischen `stop_foreground()` und dem Neustart: die
+  nackte Shell steht vorn. Die Nachricht bleibt im `mailbox`, der Hook des neuen Agenten
+  holt sie, und nach `MAIL_OVERDUE` wird gemeldet — gewartet wird benannt, nicht stumm.
+  **Gemessen, weil die Schwere davon abhängt:** eine über `imkr msg` getippte Zeile
+  trägt den Kopf `[imkr message from …]` und `Request::Message` faltet allen Leerraum
+  (auch Zeilenumbrüche) zu einfachen Leerzeichen — die Zeile hat also `[imkr` als
+  Befehlsnamen, zsh sagt `bad pattern: [imkr`, der eingebettete Befehl läuft NICHT.
+  Kopflos sind nur `review` und `notes` (die zwei anderen `post_mail`-Aufrufer); dort
+  ist das erste Wort der Notiz der Befehl und läuft (gemessen: `echo IMKR-1314-MARKER`
+  wurde ausgeführt). Verloren ist die Nachricht in beiden Fällen — die Shell frisst sie.
 - **Mehrere Nachrichten für ein Pane gehen denselben Weg** (Bug #1307): freie Funktion
   `app::waits_for_hook(fetches, busy, more, age)`; `more` aus `pending` in `deliver_mail`. Eine
   getippt und der Rest per Hook verdrehte die Reihenfolge (gemessen: die späteren zwei kamen im

@@ -279,6 +279,11 @@ never began. If the agent has not said it took the line within two seconds and w
 still on the screen, Enter goes once more. Never into a pane you have touched since — there it
 would send what you are writing.
 
+**And nothing goes into a pane whose agent is restarting.** While an agent is being ended to
+start again in another account, the pane has no agent at all — the bare shell is in front, and
+a message typed there is eaten by the shell. Messages wait for the new agent instead, and say
+so: `waits: its agent is restarting in another account`.
+
 **And nothing is ever typed on top of it.** While a message imkr typed is still standing in an
 agent's input line unsent, the next one waits. Otherwise it would be appended to the first and
 the Enter would send both as a single prompt, headed by the older message — the agent then reads
