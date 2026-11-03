@@ -396,11 +396,12 @@ pub enum Request {
         event: Option<String>,
         /// The prompt the agent just took, as its `UserPromptSubmit` hook
         /// hands it over. The count alone is no proof that *this* message
-        /// went off: an agent submits continuations of its own that raise
-        /// it and carry none of what was typed — measured in Claude Code
-        /// 2.1.238 as an `isMeta` "Continue from where you left off." with
-        /// a synthetic 0-token answer (#1307). `None` from an agent that
-        /// does not say, and from an older imkr.
+        /// went off: any other prompt raises it too. Measured in Claude
+        /// Code 2.1.238 (#1307): after a restart it resumes with an
+        /// `isMeta` "Continue from where you left off." and a synthetic
+        /// 0-token answer, which raised the count over a message that had
+        /// just been typed in and was thrown away with the old process.
+        /// `None` from an agent that does not say, and from an older imkr.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
     },
@@ -433,6 +434,16 @@ pub enum Request {
     /// so `deliver_mail` never types them in too, and the pane counts as
     /// one that fetches its mail itself from now on.
     TakeMail { pane: PaneId },
+    /// Tells the session of a message's **sender** that it has not arrived
+    /// (#1307): `pane` is the sender's pane here, `to` the address it was
+    /// sent to, `why` what is known. Not a message — a message would queue
+    /// behind the very one it is about.
+    Overdue {
+        pane: PaneId,
+        to: String,
+        text: String,
+        why: String,
+    },
     /// The message log of this session (`Ctrl+B O`, `imkr mail`): what came
     /// and went, what waits and what reached its agent. Only one pane with
     /// `who` given, its number, name or program as `Message` takes it.

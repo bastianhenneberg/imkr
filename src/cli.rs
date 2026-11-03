@@ -678,6 +678,34 @@ pub fn msg(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `imkr overdue <pane> --to ADDRESS --why TEXT` (message text on stdin)
+///
+/// Says in this session that a message its pane `pane` sent has not
+/// arrived (#1307). The far end of `App::tell_sender` over ssh — not a
+/// command to use by hand, and quiet like the other hook-side commands: a
+/// notice must never be the thing that breaks.
+pub fn overdue(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr overdue <pane> --to ADDRESS --why TEXT (text on stdin)";
+    let mut rest = args.to_vec();
+    let to = take_value(&mut rest, "--to")?.unwrap_or_default();
+    let why = take_value(&mut rest, "--why")?.unwrap_or_default();
+    let [pane] = rest.as_slice() else {
+        bail!(USAGE);
+    };
+    let pane: PaneId = pane.parse().context(USAGE)?;
+    let mut text = String::new();
+    if !std::io::stdin().is_terminal() {
+        std::io::stdin().read_to_string(&mut text)?;
+    }
+    client::request(Request::Overdue {
+        pane,
+        to,
+        text,
+        why,
+    })?;
+    Ok(())
+}
+
 /// Tells the session of the pane this runs in that its agent sent `to` a
 /// message, for the orchestration view. Older servers do not know the
 /// request, and outside imkr there is no pane: never an error.
@@ -1153,12 +1181,21 @@ fn mail_line(note: &serde_json::Value) -> String {
             "{at}  ⏳ pane {pane} waits: {}",
             note["why"].as_str().unwrap_or("busy")
         ),
-        // No tick here: typing it in is not the same as arriving. A
-        // message typed into a bee that looked idle but was mid-turn was
-        // dropped on 03.11.2026 while the log said it had arrived (#1307).
+        // No tick here: typing it in is not the same as arriving. On
+        // 03.11.2026 a message typed into a bee was thrown away five
+        // seconds later with the agent's process — an account switch
+        // restarted it and emptied the input line — while the log said it
+        // had arrived (#1307).
         "typed" => format!("{at}  ⤸ pane {pane}: typed in, not confirmed yet"),
         "taken" => format!("{at}  ✓ pane {pane} got it through its own hook"),
         "confirmed" => format!("{at}  ✓ pane {pane} took it, by its own word"),
+        // Two sides of the same notice: the receiving session knows which
+        // of its panes did not get it, the sending one which address it
+        // tried to reach.
+        "overdue" if note["sent"].as_bool() == Some(true) => format!(
+            "{at}  ⚠ your message from pane {pane} to {peer} has NOT arrived: {}",
+            note["why"].as_str().unwrap_or("it is overdue")
+        ),
         "overdue" => format!(
             "{at}  ⚠ pane {pane} has NOT got it: {}",
             note["why"].as_str().unwrap_or("it is overdue")

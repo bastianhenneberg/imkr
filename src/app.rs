@@ -719,6 +719,9 @@ struct Entered {
     /// The message this was, so that proof and overdue can be noted against
     /// it. 0 for what `type_into` typed, which is nobody's message.
     seq: u64,
+    /// Who sent it, so that they are the ones told it did not arrive
+    /// (#1307). Empty for what `type_into` typed.
+    from: String,
     /// Whether it has already been said that this one is overdue, so it is
     /// said once (#1307).
     told: bool,
@@ -762,11 +765,16 @@ fn enter_again(took: bool, typed_since: bool, shown: bool) -> bool {
 /// in: only prompts after it can be about it.
 ///
 /// Counting alone was the mistake. On 03.11.2026 a bee lost a decision this
-/// way: imkr typed it, the turn ended badly, and Claude Code recorded a
-/// continuation of its own — `isMeta` "Continue from where you left off."
-/// with a synthetic 0-token answer — which raised the count while carrying
-/// none of the message. The count said "taken", the agent had never seen a
-/// word of it, and nobody was told.
+/// way: imkr typed it in at 12:18:33, and five seconds later its agent was
+/// restarted by an account switch. Claude Code came back with its resume
+/// prompt — `isMeta` "Continue from where you left off." and a synthetic
+/// 0-token answer — which raised the count while carrying none of the
+/// message. The count said "taken", the agent had never seen a word of it,
+/// and nobody was told.
+///
+/// The restart is what lost the text; the count is what hid it. Any prompt
+/// that is not ours does that, whoever wrote it — so the proof cannot be
+/// that a prompt happened.
 /// Whether a message waits for the agent's own hook rather than being
 /// typed into its input line (#9379, #1307).
 ///
@@ -786,6 +794,25 @@ fn enter_again(took: bool, typed_since: bool, shown: bool) -> bool {
 /// confirmed by the agent itself, and is said out loud if it is not.
 fn waits_for_hook(fetches: bool, busy: bool, more: bool, age: u64) -> bool {
     fetches && (busy || more || age < HOOK_WITHIN)
+}
+
+/// The session and pane to tell that a message has not arrived, from the
+/// `from` a message carries (#1307): the machine (`None`: this one), the
+/// session, and the pane there.
+///
+/// `None` where there is nobody to tell. Not every sender is a pane: a
+/// person typing `imkr msg` in a plain terminal is "the user at <machine>",
+/// and `review` and `notes` put messages in the mailbox as well. Those must
+/// not be guessed into an address — a notice sent to a pane that does not
+/// exist is worse than none, because it looks like one that went out.
+fn sender_place(from: &str) -> Option<(Option<String>, String, PaneId)> {
+    let (machine, session, who) = crate::cli::parse_address(from).ok()?;
+    let pane = who.parse::<PaneId>().ok()?;
+    Some((
+        machine,
+        session.unwrap_or_else(|| protocol::DEFAULT_SESSION.to_owned()),
+        pane,
+    ))
 }
 
 fn prompt_took(submitted: &[(u64, String)], since: u64, typed: &str) -> bool {
@@ -2816,6 +2843,28 @@ impl App {
                 Ok(serde_json::json!({}))
             }
             Request::TakeMail { pane } => self.take_mail(pane),
+            Request::Overdue {
+                pane,
+                to,
+                text,
+                why,
+            } => {
+                if !self.panes.contains_key(&pane) {
+                    return Err(format!("no pane {pane}"));
+                }
+                self.note_what(
+                    pane,
+                    &to,
+                    true,
+                    &text,
+                    protocol::MailWhat::Overdue,
+                    Some(&why),
+                );
+                let what = format!("your message to {to} has not arrived: {why}");
+                self.flash = Some(format!("✉ {what}"));
+                self.notify(pane, "blocked", &what);
+                Ok(serde_json::json!({ "pane": pane }))
+            }
             Request::Mail { who } => {
                 let pane = who.as_deref().map(|who| self.addressee(who)).transpose()?;
                 self.mail_state(pane)
@@ -2954,7 +3003,7 @@ impl App {
             thread::sleep(Duration::from_millis(20));
             p.write(b"\r").map_err(|e| e.to_string())?;
             // Nobody's message: there is no delivery to confirm.
-            self.watch_enter(pane, text, 0);
+            self.watch_enter(pane, text, 0, "");
         }
         Ok(())
     }
@@ -2963,7 +3012,7 @@ impl App {
     /// program that is still starting swallows the Enter after a paste, and
     /// then the text stands in its input line while the agent sits idle
     /// with work it never began (seen with `imkr spawn`, #9379).
-    fn watch_enter(&mut self, pane: PaneId, text: &str, seq: u64) {
+    fn watch_enter(&mut self, pane: PaneId, text: &str, seq: u64, from: &str) {
         // Only agents: a shell always takes its Enter, and for it an
         // "it is not working" would mean nothing.
         if self.agent_now(pane).is_none() {
@@ -2976,6 +3025,7 @@ impl App {
             at: Instant::now(),
             since: Instant::now(),
             seq,
+            from: from.to_owned(),
             told: false,
             text: text.to_owned(),
             tries: 0,
@@ -3046,7 +3096,7 @@ impl App {
             if !e.told && e.since.elapsed() >= MAIL_OVERDUE {
                 e.told = true;
                 if e.seq != 0 {
-                    late.push((e.pane, e.seq));
+                    late.push((e.pane, e.seq, e.from.clone(), e.text.clone()));
                 }
             }
             // Nothing left to wait for: it was said, and there is nothing
@@ -3083,8 +3133,14 @@ impl App {
         for (pane, seq) in confirmed {
             self.note_became(pane, protocol::MailWhat::Confirmed, None, seq);
         }
-        for (pane, seq) in late {
-            self.say_overdue(pane, seq, "it was typed in but its agent never took it");
+        for (pane, seq, from, text) in late {
+            self.say_overdue(
+                pane,
+                seq,
+                "it was typed in but its agent never took it",
+                &from,
+                &text,
+            );
         }
     }
 
@@ -3093,19 +3149,74 @@ impl App {
     /// the same notification blocked and done already use — never a message
     /// of its own, which would queue behind the very message it is about
     /// (#1307).
-    fn say_overdue(&mut self, pane: PaneId, seq: u64, why: &str) {
+    fn say_overdue(&mut self, pane: PaneId, seq: u64, why: &str, from: &str, text: &str) {
         self.note_became(pane, protocol::MailWhat::Overdue, Some(why), seq);
         let who = self
             .pane_who(pane)
             .unwrap_or_else(|| format!("pane {pane}"));
-        let text = format!("a message for {who} has not arrived: {why}");
-        self.flash = Some(format!("✉ {text}"));
+        let what = format!("a message for {who} has not arrived: {why}");
+        self.flash = Some(format!("✉ {what}"));
         // As `blocked`, on purpose: that is the kind a push config already
         // has switched on for "a human is needed here", and a decision that
         // never arrived needs one exactly that way. A kind of its own would
         // reach nobody until everyone edited their config — silence is the
         // very thing this notice exists to end.
-        self.notify(pane, "blocked", &text);
+        self.notify(pane, "blocked", &what);
+        // The sender gets the message's own text back, not this notice: on
+        // their side the notice is about what they sent.
+        self.tell_sender(pane, from, text, why);
+    }
+
+    /// Tells the session a message came from that it has not arrived
+    /// (#1307). Bastian's decision was "plus a message to the sender", and
+    /// over machines is the normal case here, not the exception: three
+    /// keepers on three machines talked to each other all day on
+    /// 03.11.2026, and a notice that only lands locally reaches nobody in
+    /// exactly the situation it is for.
+    ///
+    /// It is a `Request`, never a message: a message would queue behind the
+    /// one it is about. In a thread, because the far end is ssh — and
+    /// whatever happens there, the local note already stands, which is what
+    /// `imkr mail <address>` and `--confirm` read.
+    ///
+    /// Errors are swallowed on purpose, and that covers the version skew as
+    /// well: an older server cannot parse a `Request` variant it does not
+    /// know, and an older imkr over ssh has no `overdue` command. Both just
+    /// fail, and the notice is then only where it always is — in the log of
+    /// the session that did not get the message. A notice must never be the
+    /// thing that breaks.
+    fn tell_sender(&self, pane: PaneId, from: &str, text: &str, why: &str) {
+        // Nobody to tell: a person in a plain terminal, or `review`/`notes`.
+        let Some((machine, session, sender)) = sender_place(from) else {
+            return;
+        };
+        let to = format!(
+            "{}:{}/{pane}",
+            protocol::machine_name(),
+            protocol::session_name()
+        );
+        let (text, why) = (text.to_owned(), why.to_owned());
+        thread::spawn(move || match machine {
+            None => {
+                let Ok(socket) = protocol::session_socket(&session) else {
+                    return;
+                };
+                let _ = crate::client::request_at(
+                    &socket,
+                    Request::Overdue {
+                        pane: sender,
+                        to,
+                        text,
+                        why,
+                    },
+                );
+            }
+            Some(machine) => {
+                let pane = sender.to_string();
+                let args = ["-s", &session, "overdue", &pane, "--to", &to, "--why", &why];
+                let _ = crate::client::remote_output(&machine, &args, &text);
+            }
+        });
     }
 
     /// The pane a message `to` means: its number, or the one pane with that
@@ -3416,7 +3527,13 @@ impl App {
                 self.mailbox.push(mail);
                 if late && self.mail_told.insert(seq) {
                     let why = waits.unwrap_or("its agent has not come for it");
-                    self.say_overdue(id, seq, why);
+                    let (from, text) = self
+                        .mailbox
+                        .iter()
+                        .find(|m| m.seq == seq)
+                        .map(|m| (m.from.clone(), m.text.clone()))
+                        .unwrap_or_default();
+                    self.say_overdue(id, seq, why, &from, &text);
                 }
                 continue;
             }
@@ -3436,7 +3553,7 @@ impl App {
             }
             thread::sleep(Duration::from_millis(20));
             let _ = pane.write(b"\r");
-            self.watch_enter(id, &mail.text, mail.seq);
+            self.watch_enter(id, &mail.text, mail.seq, &mail.from);
             self.mail_sent.insert(id, Instant::now());
             self.mail_held.remove(&mail.seq);
             self.note_became(id, protocol::MailWhat::Typed, None, mail.seq);
@@ -15249,24 +15366,26 @@ mod tests {
     }
 
     /// What the bee `mailbox-freelancer` lost on 03.11.2026 (#1307): imkr
-    /// typed a decision of the user's into it, the turn it was in ended
-    /// badly, and Claude Code 2.1.238 recorded a continuation of its own —
+    /// typed a decision of the user's into it at 12:18:33, and at 12:18:38
+    /// its agent was restarted by an account switch, which emptied the
+    /// input line. Claude Code 2.1.238 came back with its resume prompt —
     /// an `isMeta` "Continue from where you left off." with a synthetic
-    /// 0-token answer. That raised `Pane::prompts`, which was the whole
-    /// proof v0.21.93 went by, so imkr wrote the message off as taken and
-    /// told nobody. The agent had never seen a word of it: 0 occurrences
-    /// in its transcript, against 3 for every message its hook fetched.
+    /// 0-token answer — and that raised `Pane::prompts`, the whole proof
+    /// v0.21.93 went by. So imkr wrote the message off as taken and told
+    /// nobody. The agent had never seen a word of it: 0 occurrences in its
+    /// transcript, against 3 for every message its hook fetched.
     ///
-    /// So the count cannot be the proof. What the agent took has to carry
-    /// the message.
+    /// The count cannot be the proof, whoever wrote the other prompt. What
+    /// the agent took has to carry the message.
     #[test]
-    fn a_prompt_the_agent_wrote_itself_is_no_proof_a_message_went_off() {
+    fn a_prompt_that_carries_none_of_the_message_is_no_proof_it_went_off() {
         let took = super::prompt_took;
         let msg = "ENTSCHEIDUNG von Bastian: die Weiche (a)/(b) ist beantwortet, nimm (b).";
-        // The real case. The count went up — 2 against the 1 it had when
-        // the message was typed in — and that used to pass for proof.
-        let own = [(2, "Continue from where you left off.".to_owned())];
-        assert!(!took(&own, 1, msg));
+        // The real case: the resume prompt after the restart. The count went
+        // up — 2 against the 1 it had when the message was typed in — and
+        // that used to pass for proof.
+        let resumed = [(2, "Continue from where you left off.".to_owned())];
+        assert!(!took(&resumed, 1, msg));
         // The agent really took it: the prompt it hands over carries the
         // message, header and all.
         let real = [(
@@ -15277,7 +15396,7 @@ mod tests {
         // A prompt from before the message was typed in says nothing about
         // it, however well the text matches.
         assert!(!took(&[(1, format!("asked for: {msg}"))], 1, msg));
-        // Its own continuation first and the message after it: taken.
+        // A prompt of somebody else's first and the message after it: taken.
         let mixed = [
             (2, "Continue from where you left off.".to_owned()),
             (3, format!("{msg} Und leg los.")),
@@ -15286,6 +15405,32 @@ mod tests {
         // Nothing taken at all is not proof either — that is the case that
         // has to end up as overdue rather than as a tick.
         assert!(!took(&[], 1, msg));
+    }
+
+    /// Not every sender of a message is a pane that can be told it did not
+    /// arrive (#1307): a person typing `imkr msg` in a terminal, and the
+    /// review and notepad, all put messages in the mailbox. A notice sent
+    /// to an address guessed out of those would look like one that went
+    /// out, which is the kind of lie this whole change is about.
+    #[test]
+    fn only_a_pane_can_be_told_its_message_did_not_arrive() {
+        let place = super::sender_place;
+        // A pane here, with and without its session named.
+        assert_eq!(place("claude@imker/0"), Some((None, "imker".into(), 0)));
+        assert_eq!(place("3"), Some((None, "default".into(), 3)));
+        // A pane on another machine: the notice goes there over ssh.
+        assert_eq!(
+            place("claude@laptop:imker/7"),
+            Some((Some("laptop".into()), "imker".into(), 7))
+        );
+        // Nobody to tell.
+        assert_eq!(place("the user at codingmachine"), None);
+        assert_eq!(place("review"), None);
+        assert_eq!(place("notes"), None);
+        assert_eq!(place(""), None);
+        // A pane named rather than numbered cannot be addressed back: the
+        // name is this machine's word for it, not the sender's.
+        assert_eq!(place("imker/claude"), None);
     }
 
     /// Several messages for one pane go the same way, all of them: with one

@@ -413,6 +413,7 @@ fn main() -> Result<()> {
         ["send", ..] => cli::send(&args[1..]),
         ["msg", ..] => cli::msg(&args[1..]),
         ["mail", ..] => cli::mail(&args[1..]),
+        ["overdue", ..] => cli::overdue(&args[1..]),
         ["note", ..] => cli::note(&args[1..]),
         ["connect", ..] => cli::connect(&args[1..]),
         ["agents", ..] => cli::agents(&args[1..]),

@@ -761,6 +761,9 @@ mod tests {
         "dirs",
         "complete",
         "status",
+        // The far end of `App::tell_sender` over ssh, like `status` for the
+        // hooks: imkr calls it, people do not (#1307).
+        "overdue",
         "--skill",
     ];
 

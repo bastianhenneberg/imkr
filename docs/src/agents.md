@@ -289,10 +289,11 @@ outside. A message held this way says so, in `imkr msg`'s answer and in the mess
 
 **Typed in is not arrived, and imkr no longer pretends it is.** A message is only confirmed when
 the agent itself submits a prompt that *carries* it. That the agent submitted *something* proves
-nothing: Claude Code writes continuations of its own — "Continue from where you left off." after
-a turn that ended badly — which say "a prompt went off" while carrying none of your message. So
-imkr compares what the agent took against what it typed, and until that matches, the message
-counts as typed in and not confirmed:
+nothing: any other prompt counts too. Claude Code resumes after a restart with "Continue from
+where you left off.", which says "a prompt went off" while carrying none of your message — and a
+restart is exactly when a message typed into the input line is lost, because the line goes with
+the old process. So imkr compares what the agent took against what it typed, and until that
+matches, the message counts as typed in and not confirmed:
 
 ```
 10:14  ← claude@codingmachine:ai-brain/0 (for pane 0)  Take route (b), not (a). This is binding.
@@ -309,6 +310,19 @@ a waiting question sends. It is never typed in after all — typing is what lose
 10:24  ⚠ pane 0 has NOT got it: it was typed in but its agent never took it
 ```
 
+**The sender is told, wherever they are.** The notice also goes to the session the message
+came from — on this machine over its socket, on another over ssh — so it reaches the keeper
+who is waiting for an answer and not only the session that did not get it:
+
+```
+10:24  ⚠ your message from pane 0 to codingmachine:bee/0 has NOT arrived: it was typed in
+          but its agent never took it
+```
+
+It is a notice, never a message: a message would queue behind the very one it is about. And
+if the sender cannot be reached, the note on the receiving side still stands — `imkr mail
+ADDRESS` and `imkr msg --confirm` read that one.
+
 Scripts can ask for the proof instead of reading for it:
 
 ```bash
@@ -317,9 +331,15 @@ imkr msg api/claude --confirm "Take route (b)."   # waits for the agent's own wo
 ```
 
 Why this matters: a receipt that promises a delivery which never happened is worse than one that
-fails. On 3 November 2026 two decisions of the user's vanished on their way to a bee — the bee
-waited instead of asking, because nothing told it anything was missing, and the sender had been
-told the messages were on their way.
+fails. On 3 November 2026 two decisions of the user's vanished on their way to a bee. One was
+typed into its input line and thrown away five seconds later, when an account switch restarted
+the agent. The bee waited instead of asking, because nothing told it anything was missing — and
+the sender had been told the message was on its way.
+
+That restart was only found *after* this check was built, and it is the argument for asking the
+agent rather than reasoning about it: the check does not need to know what can go wrong. A
+resume prompt carries none of your message, so nothing is confirmed, so the notice goes out —
+the same as for a swallowed Enter, a crash, or whatever comes next.
 
 ### The message pane
 

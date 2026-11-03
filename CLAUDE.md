@@ -645,10 +645,12 @@ Projekt-Slug: `imkr`
   begraben (gemessen: 2193 → 3574 → 4374 Zeichen in einem Prompt). Der Eintrag in `entered`
   bleibt deshalb liegen, auch wenn die Nachschick-Versuche verbraucht sind, bis der Agent sie
   nimmt oder der Text vom Schirm ist.
-- **Getippt ist nicht angekommen** (Bug #1307): `Pane::prompts` allein ist faelschbar — Claude
-  Code schickt eigene Fortsetzungen (`isMeta` „Continue from where you left off." mit
-  synthetischer 0-Token-Antwort), die den Zähler hochtreiben und nichts von der Nachricht
-  tragen. Deshalb trägt `Request::Status` jetzt auch `prompt` (Feldname aus dem Binary 2.1.238
+- **Getippt ist nicht angekommen** (Bug #1307): `Pane::prompts` allein ist faelschbar — JEDER
+  fremde Prompt treibt den Zähler hoch. Gemessener Fall: imkr tippte 12:18:33, 12:18:38 wurde
+  der Agent von einem Kontowechsel **neu gestartet** (die Eingabezeile geht mit dem Prozess),
+  und Claude Code kam mit seinem Resume-Prompt zurück (`isMeta` „Continue from where you left
+  off." + synthetische 0-Token-Antwort). Der Neustart hat den Text verloren, der Zähler hat es
+  verborgen. Dieselbe Wurzel wie #1314: `deliver_mail` weiß nichts von `switching`. Deshalb trägt `Request::Status` jetzt auch `prompt` (Feldname aus dem Binary 2.1.238
   gelesen: `hook_event_name:"UserPromptSubmit",prompt:r`; gemessen gibt es den **ganzen** Text,
   4094 Zeichen, kein `[Pasted text]`-Platzhalter) → `Pane::note_prompt`/`submitted`
   (`PROMPTS_KEPT` 8) → freie Funktion `app::prompt_took` (Prompt nach dem Tippen **und** Inhalt
@@ -663,6 +665,14 @@ Projekt-Slug: `imkr`
   Nie eine Nachricht — die stünde hinter der Nachricht, um die es geht. Die 600 s sind
   gerechnet: gesunde Hook-Zustellungen dauerten gemessen 393 s und 365 s, fünf Minuten hätten
   also beim Normalfall Alarm geschlagen (Test `saying_a_message_is_overdue_waits_longer_than_a_healthy_turn`).
+- **Der Absender wird benachrichtigt, auch über Rechner** (Bug #1307): `App::tell_sender`
+  (aus `say_overdue`, im Thread) → freie Funktion `app::sender_place` (Adresse → Rechner,
+  Session, Pane; `None` für „the user at X", `review`, `notes` — nicht jeder Absender ist
+  ein Pane) → lokal `Request::Overdue` an den Session-Socket, fremd per ssh `imkr overdue
+  PANE --to ADR --why TEXT` (`cli::overdue`, in `completions::INTERNAL`, Text auf stdin).
+  Scheitert der Weg, steht der **lokale** Vermerk trotzdem — den liest `imkr mail ADRESSE`
+  und `--confirm`. `mail_line` zeigt beide Seiten verschieden (`sent` = „your message …
+  has NOT arrived").
 - **Mehrere Nachrichten für ein Pane gehen denselben Weg** (Bug #1307): freie Funktion
   `app::waits_for_hook(fetches, busy, more, age)`; `more` aus `pending` in `deliver_mail`. Eine
   getippt und der Rest per Hook verdrehte die Reihenfolge (gemessen: die späteren zwei kamen im
