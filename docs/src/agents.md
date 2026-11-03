@@ -192,6 +192,14 @@ with a message saying so, because restarting it would end it for nothing. And wh
 up fails even though one was saved, imkr says that too (*the restart in department found no
 conversation — the agent is gone*) instead of leaving a quiet, empty pane behind.
 
+A restart also empties the input line, and that line lives nowhere else — not in the transcript,
+not in the mailbox, which imkr took the message out of in order to type it in. So a switch asked
+for by hand is refused while something unsent stands there, whether it is a message the agent has
+not taken yet or a line somebody began: *a message is typed in pane 0 and not taken yet: a switch
+restarts claude and would throw it away*. The automatic fallback waits for it instead, and after a
+minute switches anyway and says to send the message again — the agent sits at its limit and will
+never take it, and a standstill nobody sees is no better than the loss.
+
 `Ctrl+B s C` does the same on demand: the agent in the focused pane moves to the freest account
 right away, in the same conversation, whether or not anything is used up. It is the key the
 `ask` message points at — in *that* pane, which the message names in front, since the key goes
