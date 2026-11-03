@@ -122,7 +122,7 @@ echo "$KEY" | imkr account add claude router --url https://openrouter.ai/api \
 imkr account add claude local --url http://localhost:11434 --token ollama --model qwen3-coder
 imkr account                            # every account, in the order to fall back in
 imkr account use privat                 # new shells of this session start in it
-imkr account switch privat --pane 3     # the agent in pane 3 goes on in it, now
+imkr account switch privat --pane 3     # restarts the agent in pane 3 in it, same conversation
 imkr account run privat -- claude       # one command in it
 imkr account sync                       # share what is new in ~/.claude, MCP servers again
 imkr account default henneberg          # new shells on this machine start in it
@@ -165,8 +165,8 @@ so the list says what it costs to pick one. Switching ends the agent and starts 
 its shell as `imkr account run claude:privat -- claude --resume <id>`, so no key shows on the
 screen; the session id comes from the hooks.
 
-When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", Codex: "You've
-hit your usage limit"), imkr notes that account as used up until then and, as *Account used up*
+When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", "You've hit your
+weekly limit ∙ resets Nov 5, 4am", Codex: "You've hit your usage limit"), imkr notes that account as used up until then and, as *Account used up*
 in the settings says, tells you which account to go on in (`ask`, the default), moves the agent
 there by itself (`auto`), or does nothing (`off`). `Ctrl+B s U` steps those three without the
 settings menu. Accounts and keys live in `~/.local/state/imkr/accounts/` (0600).
@@ -181,8 +181,24 @@ The numbers are the ones below, asked of Anthropic per account and kept for two 
 decision is quick without being stale. Asking takes a moment, and an agent at its limit has
 stopped anyway; after 25 seconds without an answer — a machine offline, say — the next account
 in the list takes over, as it always did, and so it does when there are no numbers at all. The
-message names both accounts: *account stelljes (88 % week) used up until today 19:00: goes on
-in department (12 % week)*.
+message names both accounts: *account stelljes (88 % week) used up until today 19:00: restarts
+claude in department (12 % week), same conversation*.
+
+A switch is a **restart**: the environment of a running process cannot be changed from outside,
+so the agent is ended and started again with the other account's environment, picking its
+conversation up again. That is why imkr looks first whether there is a conversation to pick up:
+an agent that has not saved one yet — a session that just started — is **left alone** instead,
+with a message saying so, because restarting it would end it for nothing. And when picking it
+up fails even though one was saved, imkr says that too (*the restart in department found no
+conversation — the agent is gone*) instead of leaving a quiet, empty pane behind.
+
+A restart also empties the input line, and that line lives nowhere else — not in the transcript,
+not in the mailbox, which imkr took the message out of in order to type it in. So a switch asked
+for by hand is refused while something unsent stands there, whether it is a message the agent has
+not taken yet or a line somebody began: *a message is typed in pane 0 and not taken yet: a switch
+restarts claude and would throw it away*. The automatic fallback waits for it instead, and after a
+minute switches anyway and says to send the message again — the agent sits at its limit and will
+never take it, and a standstill nobody sees is no better than the loss.
 
 `Ctrl+B s C` does the same on demand: the agent in the focused pane moves to the freest account
 right away, in the same conversation, whether or not anything is used up. It is the key the

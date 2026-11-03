@@ -39,8 +39,9 @@ sessions across machines, is imkr's own.
   agent once it is idle, on any machine. Also to a colleague's imkr, over a VPN or through
   AI Brain, and only after they accept it.
 - **Several accounts.** Several Claude Code and Codex subscriptions, or OpenRouter and a local
-  Ollama, one per pane. When an agent hits its limit, imkr goes on in the next free account in
-  the same conversation.
+  Ollama, one per pane. When an agent hits its limit, imkr says which account has most of its
+  week left and moves the agent there on a key — or by itself, if you set it to. Either way it
+  keeps the conversation.
 - **Hives.** Save the sessions of every machine under one name and bring them back anywhere,
   also on a new machine that replaces an old one. Switching hives changes from one customer's
   work to another's.

@@ -272,6 +272,14 @@ pub fn question_phrase(screen: &crate::term::Parser) -> Option<String> {
 
 /// What agents print when a turn ends in an error, with the reason shown
 /// for it. Looked for only at the bottom of a quiet agent's screen.
+///
+/// **This list decides what the pane shows, not what imkr does about it.**
+/// Whether a used up account is left for a free one is decided by a
+/// *second* list, in `account::used_up_in` — the only gate to the
+/// automatic switch. The two ran apart once: this list matched “weekly
+/// limit” as a substring, the other wanted “weekly limit reached”, so an
+/// agent showed ✗ “limit reached” and stood at a full account anyway
+/// (#1305). A wording added here belongs there too.
 const FAILURES: &[(&str, &str)] = &[
     ("usage limit", "limit reached"),
     ("hit your limit", "limit reached"),

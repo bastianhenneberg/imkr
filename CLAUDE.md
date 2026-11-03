@@ -88,6 +88,36 @@ Projekt-Slug: `imkr`
   (`FreestAccount` → `move_to_freest_account`, fokussiertes Pane), `Ctrl+B s U`
   (`AccountFallback` → `step_account_fallback`); `imkr account` und die Kontoliste zeigen die
   Woche aus dem Cache (600 s), fragen aber nie selbst — das tut `imkr account usage`.
+  Ein Wechsel ist ein **Neustart** (#1305): die Umgebung eines laufenden Prozesses ist von außen
+  nicht änderbar, `switch_account` beendet den Agenten und `finish_switches` tippt
+  `… -- claude --resume <id>`. Darum vorher `Store::conversation(tool, session)` →
+  `account::Conversation` (`Found`/`Missing`/`Unknown`): `Missing` bricht ab, **ohne** SIGTERM —
+  eine frische Sitzung hat noch keine gespeicherte Konversation, `--resume` endet mit „No
+  conversation found" und der Agent ist weg (so starb die Biene `fallback-konto`). Gesucht wird
+  `<account>/projects/<ordner>/<id>.jsonl`; `projects` ist ein Link auf das gemeinsame
+  `~/.claude/projects`, deshalb trägt ein Wechsel die Konversation überhaupt mit. `Unknown`
+  (ohne Session-ID → `--continue`, oder codex) läuft wie bisher. Danach beobachtet
+  `App::check_resumed` (`RESUME_GRACE` 4 s, `RESUME_WAIT` 60 s, `account::resume_failed`) den
+  Neustart und meldet, wenn er trotzdem scheitert oder der Agent nicht zurückkommt — eine
+  Sitzung darf nicht stumm sterben. Quittungen sagen „restarts … (same conversation)", nicht
+  „goes on in": die alte Zusage las sich harmlos. **Falle:** ein Neustart ist ein SessionEnd,
+  `Pane::takes_mail` fällt weg (`app.rs` Status mit `state: None`) und wird erst vom ersten Hook
+  des neuen Agenten wieder gesetzt — bis dahin läuft die Zustellung über den getippten Weg.
+  Zwei Musterlisten für denselben Bildschirm (#1305): `agent::FAILURES` entscheidet die
+  **Anzeige**, `account::used_up_in` das **Handeln** (einziges Tor zum automatischen Wechsel,
+  `check_used_up` ist der einzige Aufrufer). Sie liefen auseinander — `FAILURES` traf „weekly
+  limit" als Teilstring, `used_up_in` wollte „weekly limit reached" — also stand der Agent auf ✗
+  und wechselte nicht. Nicht zusammengelegt (`FAILURES` umfasst `API Error`, `overloaded`: die
+  dürfen kein Konto wechseln), aber sie nennen sich gegenseitig im Kommentar; eine Formulierung
+  gehört in beide. `used_up_in` trifft die Satzfamilie `hit your <was> limit` (`hit_your_limit`),
+  nicht einen Wortlaut; `reset_date` liest „resets Nov 5, 4am" als Datum (die 5 als Stunde ließ
+  das Konto ~23 h zu früh als frei gelten). Fenster nicht angleichen: `failure` liest 8
+  Bildschirmzeilen **roh**, `used_up_in` bekommt `agent::tail` (30 Zeilen zurück, ohne Rahmen und
+  Leerzeilen, davon die letzten 8).
+  Was `imkr account ls` über den Fallback sagt, steht in `AccountFallback::explained()` **neben
+  dem Enum**, je Modus, mit dem Namen der Einstellung — vorher versprach die Zeile den Fallback
+  als Tatsache, auf einem Rechner mit `ask`, der nie von selbst schaltete. Test
+  `account_ls_describes_every_fallback_mode_truthfully` prüft **alle drei** Modi.
   Logins: `src/login.rs` (`take_renewer` = `renew.lock`, ein imkr je Rechner meldet in
   `App::watch_logins` alle `LOGINS_EVERY` einmal `dead` und `ending` (3 Tage vorher) per
   `send_notification`; `renew` = Claude Code ein Wort antworten lassen, mit Sperre je Konto in

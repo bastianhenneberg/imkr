@@ -543,6 +543,38 @@ impl AccountFallback {
             AccountFallback::Off => "off",
         }
     }
+
+    /// What `imkr account ls` says happens when an account runs out —
+    /// for *this* setting, naming it.
+    ///
+    /// Until #1305 that line promised the fallback as a plain fact, on a
+    /// machine where the setting was `ask` and therefore nothing ever
+    /// switched by itself. The keeper read it, saw an agent stand at a
+    /// full account, and concluded the fallback was broken; it was
+    /// switched off. A line that describes one mode while another is set
+    /// does not just fail to help, it sends people looking in the wrong
+    /// place — so the mode is named here, and `ask` says outright that
+    /// nothing moves on its own.
+    pub fn explained(self) -> String {
+        let freest = "by what it has used (`imkr account usage`)";
+        // Written on one line each on purpose: a `\`-continued literal
+        // keeps the indentation of the next line inside the text, and
+        // that showed up as a gap in the middle of a sentence.
+        match self {
+            AccountFallback::Off => format!(
+                "a used up account is left alone (account_fallback = off): nothing switches by itself. Ctrl+B s C moves the focused agent to the freest account — {freest}, else to the next in this order."
+            ),
+            AccountFallback::Ask => format!(
+                "when an account runs out, imkr says which one is freest and waits (account_fallback = ask): Ctrl+B s C moves the agent there. It does NOT switch by itself. Freest {freest}, else the next in this order."
+            ),
+            // Only here is the restart worth saying: nowhere else does
+            // imkr do it unasked. For off and ask it stands where it is
+            // needed, in the receipt of `account switch`.
+            AccountFallback::Auto => format!(
+                "when an account runs out, imkr moves the agent to the freest of these by itself (account_fallback = auto) — {freest}, else the next in this order. A switch RESTARTS the agent in its own conversation; one that has nothing saved yet is left alone instead."
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1195,6 +1227,59 @@ run = \"notify-send blocked\"
         let mut back = written;
         back.computer_use = before.computer_use;
         assert_eq!(back, before);
+    }
+
+    /// All three modes, not just the one set here. The line that was
+    /// wrong on 03.11.2026 described `auto` while this machine stood on
+    /// `ask` — a test that only checks the current setting is blind to
+    /// exactly that (#1305).
+    #[test]
+    fn account_ls_describes_every_fallback_mode_truthfully() {
+        for mode in AccountFallback::ALL {
+            let text = mode.explained();
+            // Each line says which setting it is talking about, so that
+            // the reader can see there is one at all.
+            assert!(
+                text.contains(&format!("account_fallback = {}", mode.word())),
+                "{mode:?} does not name its setting: {text}"
+            );
+            // And how the freest one is picked, in every mode.
+            assert!(text.contains("imkr account usage"), "{mode:?}: {text}");
+            assert!(text.contains("in this order"), "{mode:?}: {text}");
+        }
+        // Only `auto` may claim that imkr moves an agent on its own.
+        let by_itself = |mode: AccountFallback| mode.explained().contains("by itself");
+        assert!(by_itself(AccountFallback::Auto));
+        // off and ask must say the opposite, and say it plainly.
+        for quiet in [AccountFallback::Off, AccountFallback::Ask] {
+            let text = quiet.explained();
+            assert!(
+                text.contains("nothing switches by itself") || text.contains("does NOT switch"),
+                "{quiet:?} must say that nothing moves on its own: {text}"
+            );
+            assert!(
+                text.contains("Ctrl+B s C"),
+                "{quiet:?} must say what to press instead: {text}"
+            );
+        }
+        // The restart belongs where imkr does it unasked, and nowhere
+        // else: in the other modes a human presses the key and reads the
+        // receipt of `account switch`.
+        assert!(AccountFallback::Auto.explained().contains("RESTARTS"));
+        for quiet in [AccountFallback::Off, AccountFallback::Ask] {
+            assert!(
+                !quiet.explained().contains("RESTARTS"),
+                "{quiet:?} should not talk about restarting"
+            );
+        }
+        // Nothing may promise the fallback as a plain fact any more:
+        // that was the sentence the keeper believed (#1305).
+        for mode in AccountFallback::ALL {
+            assert!(
+                !mode.explained().contains("falls back to the freest"),
+                "{mode:?} still promises the fallback without its condition"
+            );
+        }
     }
 
     /// The hotkey `Ctrl+B s U` and the settings menu step the same three

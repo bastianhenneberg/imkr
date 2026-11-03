@@ -7,7 +7,8 @@ coding agents do now. What imkr adds on top, as far as the docs of herdr (0.9.4)
 - **Several accounts, and the freest one when one is used up**: several Claude Code and Codex
   subscriptions on one machine, plus providers like OpenRouter or a local Ollama, a different
   one in every pane. When an agent hits its limit, imkr notes the account until it resets and
-  goes on in the one with most of its week left, measured, in the same conversation
+  names the one with most of its week left, measured; a key moves the agent there, or imkr does
+  it by itself where that is set (`account_fallback`). The conversation comes along
   (`imkr account`, `Ctrl+B s c`, `Ctrl+B s C`).
 - **Hives, a map of every machine**: one save holds the sessions of all your machines. It is
   shared between them, and `imkr hive restore` brings everything back from any of them, also
