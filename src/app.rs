@@ -1132,7 +1132,11 @@ pub struct App {
     accounts: BTreeMap<String, String>,
     /// Agents ending to start again in another account: the command to
     /// type once the shell is back in front, and since when it waits.
-    switching: HashMap<PaneId, (String, Instant)>,
+    switching: HashMap<PaneId, (String, String, Instant)>,
+    /// Panes whose agent was just restarted in another account, with that
+    /// account and when the command was typed: `check_resumed` watches
+    /// them so a failed resume is never silent (#1305).
+    resumed: HashMap<PaneId, (String, Instant)>,
     /// Agents waiting for the account they start in (`Mode::AgentAccount`).
     agent_start: Option<AgentStart>,
     /// The template's agents of another kind, asked for after `agent_start`.
@@ -1287,6 +1291,7 @@ impl App {
             dir_lists: Arc::default(),
             accounts: BTreeMap::new(),
             switching: HashMap::new(),
+            resumed: HashMap::new(),
             agent_start: None,
             waiting_agents: None,
             used_up_seen: HashMap::new(),
@@ -4262,6 +4267,7 @@ impl App {
 
     fn update_agents(&mut self) {
         self.finish_switches();
+        self.check_resumed();
         self.check_used_up();
         for pane in self.panes.values_mut() {
             pane.refresh_meta();
@@ -5482,6 +5488,25 @@ impl App {
                 name = account.name
             ));
         }
+        // A switch of account is a restart: the environment of a running
+        // process cannot be changed from outside. So before the agent is
+        // ended, make sure there is a conversation to pick up again —
+        // without one it dies for nothing, and takes along whatever it
+        // was told (#1305, the bee `fallback-konto`).
+        let store = crate::account::Store::here()
+            .map_err(|e| format!("cannot read the accounts here: {e}"))?;
+        if store.conversation(&account.tool, pane.session.as_deref())
+            == crate::account::Conversation::Missing
+        {
+            let session = pane.session.as_deref().unwrap_or("unknown");
+            return Err(format!(
+                "{tool} in pane {id} has nothing saved to pick up again (conversation {session}): \
+                 a switch restarts it, so it would be lost. Let it finish one turn, then switch — \
+                 or start a new one: `imkr account run {tool}:{name} -- {tool}`",
+                tool = account.tool,
+                name = account.name
+            ));
+        }
         let mut command = vec![
             imkr_path(),
             "account".to_owned(),
@@ -5503,7 +5528,10 @@ impl App {
         }
         let pane = self.panes.get_mut(&id).expect("looked up above");
         set_account(&mut pane.accounts, &account.tool, &account.name);
-        self.switching.insert(id, (line, Instant::now()));
+        self.switching.insert(
+            id,
+            (line, crate::account::shown(&store, account), Instant::now()),
+        );
         Ok(serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name }))
     }
 
@@ -5517,14 +5545,63 @@ impl App {
                 continue;
             };
             let in_front = agent::is_shell(&pane.foreground_argv());
-            let (line, since) = self.switching[&id].clone();
+            let (line, account, since) = self.switching[&id].clone();
             if in_front {
                 self.switching.remove(&id);
                 let _ = self.type_into(id, &line, true);
+                // From here the restart is watched: it must not fail
+                // quietly (#1305). The account travels with it, because
+                // once the agent is gone the pane no longer names it.
+                self.resumed.insert(id, (account, Instant::now()));
             } else if since.elapsed() > SWITCH_WAIT {
                 self.switching.remove(&id);
                 self.flash = Some(format!("pane {id}: the agent did not end, not switched"));
             }
+        }
+    }
+
+    /// Watches a restarted agent until it is back, and says so when it is
+    /// not: picking the conversation up again can fail even where one was
+    /// saved, and a session that dies must never die quietly (#1305).
+    fn check_resumed(&mut self) {
+        let ids: Vec<PaneId> = self.resumed.keys().copied().collect();
+        for id in ids {
+            let Some(pane) = self.panes.get(&id) else {
+                self.resumed.remove(&id);
+                continue;
+            };
+            let (account, since) = self.resumed[&id].clone();
+            let waited = since.elapsed();
+            if waited < RESUME_GRACE {
+                continue;
+            }
+            let failed = crate::account::resume_failed(&agent::tail(&pane.screen(), USED_UP_LINES));
+            let back = pane
+                .program()
+                .is_some_and(|p| crate::account::TOOLS.contains(&p.as_str()));
+            let gone = crate::agent::is_shell(&pane.foreground_argv());
+            if back && !failed {
+                self.resumed.remove(&id);
+                continue;
+            }
+            if !failed && !gone && waited < RESUME_WAIT {
+                continue;
+            }
+            self.resumed.remove(&id);
+            let where_to = if account.is_empty() {
+                String::new()
+            } else {
+                format!(" in {account}")
+            };
+            let what = if failed {
+                format!(
+                    "pane {id}: the restart{where_to} found no conversation — the agent is gone"
+                )
+            } else {
+                format!("pane {id}: the agent did not come back after the restart{where_to}")
+            };
+            self.notify(id, "account", &what);
+            self.flash = Some(what);
         }
     }
 
@@ -5678,10 +5755,10 @@ impl App {
         if !choice.switch {
             // "there": the key moves the agent in the *focused* pane, and
             // the pane this is about is named in front of the message.
-            return format!("{lead}: Ctrl+B s C there goes on in {there}{free}");
+            return format!("{lead}: Ctrl+B s C restarts it there in {there}{free}");
         }
         match self.switch_account(*id, &next) {
-            Ok(_) => format!("{lead}: goes on in {there}{free}"),
+            Ok(_) => format!("{lead}: restarts {tool} in {there}{free}, same conversation"),
             Err(e) => format!("{lead}, not switched: {e}"),
         }
     }
@@ -12653,7 +12730,10 @@ impl App {
         };
         self.flash = Some(match self.request(request) {
             Ok(_) if pane.is_some() => {
-                format!("{} goes on in account {}", account.tool, account.name)
+                format!(
+                    "restarts {} in account {} (same conversation)",
+                    account.tool, account.name
+                )
             }
             Ok(_) => format!(
                 "new shells of this session use {} account {}",
@@ -14672,6 +14752,14 @@ const USED_UP_QUIET: Duration = Duration::from_secs(600);
 
 /// How long `switch_account` waits for an agent to end.
 const SWITCH_WAIT: Duration = Duration::from_secs(15);
+
+/// How long `check_resumed` lets a restarted agent start before it looks:
+/// right after the command the shell is still in front.
+const RESUME_GRACE: Duration = Duration::from_secs(4);
+
+/// How long it waits for a restarted agent before it says it did not come
+/// back.
+const RESUME_WAIT: Duration = Duration::from_secs(60);
 
 /// How old the measured usage may be to still stand in the account list.
 /// A little longer than `usage::FRESH`, which decides where an agent

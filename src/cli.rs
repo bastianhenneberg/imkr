@@ -3106,9 +3106,12 @@ pub fn account(args: &[String]) -> Result<()> {
                     println!("  {name:<24}{note}");
                 }
             }
+            // What really happens, for the setting this machine has:
+            // the old line described the fallback as a fact and was read
+            // on a machine where it was switched off (#1305).
             println!(
-                "a used up account falls back to the freest of these, by what it has used \
-                 (`imkr account usage`); without numbers, to the next in this order"
+                "{}",
+                crate::config::Config::load().0.account_fallback.explained()
             );
             Ok(())
         }
@@ -3255,8 +3258,11 @@ pub fn account(args: &[String]) -> Result<()> {
                 pane: if now { pane } else { None },
             })?;
             if now {
+                // It restarts the agent — the environment of a running
+                // process cannot be changed. Saying “goes on” read as
+                // harmless and cost a session (#1305).
                 println!(
-                    "pane {}: {} goes on in account {}",
+                    "pane {}: restarts {} in account {} (same conversation)",
                     reply["pane"], account.tool, account.name
                 );
             } else {

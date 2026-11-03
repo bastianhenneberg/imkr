@@ -826,6 +826,89 @@ pub fn variables(tool: &str) -> &'static [&'static str] {
     }
 }
 
+/// Whether the conversation an agent would be restarted with is there.
+/// A switch of account is always a restart — the environment of a running
+/// process cannot be changed from outside — and `claude --resume <id>`
+/// ends with “No conversation found with session ID” when the id has
+/// nothing saved behind it. The agent is then gone, and with it whatever
+/// it was told (#1305).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conversation {
+    /// Saved and ready to be picked up again.
+    Found,
+    /// Looked where it would have to be, and it is not there: restarting
+    /// would end the agent for nothing.
+    Missing,
+    /// Cannot be told from here — then the restart is watched instead of
+    /// refused (`App::check_resumed`).
+    Unknown,
+}
+
+impl Store {
+    /// Whether `session` of `tool` has a saved conversation, looked up
+    /// where the agent keeps it. For Claude Code that is
+    /// `<account>/projects/<directory>/<id>.jsonl`; `projects` is a link
+    /// to the one shared directory (see `sync`), so a conversation
+    /// started in another account is found here too — that is why a
+    /// switch can carry it over at all.
+    ///
+    /// `Unknown` where there is nothing to check against: no session id
+    /// (the command is then `--continue`, which takes whatever is newest)
+    /// or an agent whose store this does not know.
+    pub fn conversation(&self, tool: &str, session: Option<&str>) -> Conversation {
+        if tool != "claude" {
+            return Conversation::Unknown;
+        }
+        let Some(session) = session.filter(|s| !s.is_empty()) else {
+            return Conversation::Unknown;
+        };
+        let file = format!("{session}.jsonl");
+        let mut looked = false;
+        for dir in self.conversation_dirs(tool) {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            looked = true;
+            for entry in entries.flatten() {
+                let kept = entry.path().join(&file);
+                if std::fs::metadata(&kept).is_ok_and(|m| m.len() > 0) {
+                    return Conversation::Found;
+                }
+            }
+        }
+        // Only a directory that could be read says anything.
+        if looked {
+            Conversation::Missing
+        } else {
+            Conversation::Unknown
+        }
+    }
+
+    /// Where the agents keep their conversations, newest account first:
+    /// every account's `projects`, as they are links to the same shared
+    /// directory but one of them may be missing.
+    fn conversation_dirs(&self, tool: &str) -> Vec<PathBuf> {
+        let mut dirs = vec![self.usual_dir(tool).join("projects")];
+        for account in self.of_tool(tool) {
+            if let Some(dir) = self.dir_of(&account) {
+                dirs.push(dir.join("projects"));
+            }
+        }
+        dirs
+    }
+}
+
+/// What an agent prints when picking a conversation up again failed, so
+/// that a session which dies on a restart is never lost quietly (#1305).
+const RESUME_FAILED: &[&str] = &["no conversation found", "no conversation to resume"];
+
+/// Whether `tail`, the end of a pane's screen, says the restart could not
+/// pick the conversation up again.
+pub fn resume_failed(tail: &str) -> bool {
+    let lower = tail.to_lowercase();
+    RESUME_FAILED.iter().any(|p| lower.contains(p))
+}
+
 /// The command that picks `session` (the agent's conversation id from its
 /// hooks) up again, else the newest conversation where it runs.
 pub fn resume_command(tool: &str, session: Option<&str>) -> Vec<String> {
@@ -851,26 +934,63 @@ pub fn resume_command(tool: &str, session: Option<&str>) -> Vec<String> {
 pub fn used_up_in(tail: &str, now: u64) -> Option<u64> {
     let lower = tail.to_lowercase();
     // The agents' own words, not anything about limits.
+    //
+    // **The second list for the same screen is `agent::FAILURES`**
+    // (`src/agent.rs`). That one decides what the pane *shows* (✗
+    // “limit reached”); this one decides whether imkr *acts* — it is the
+    // only gate to the automatic switch, through `App::check_used_up`.
+    // They ran apart once already: `FAILURES` matched “weekly limit” as a
+    // substring while this list wanted “weekly limit reached”, so the
+    // agent showed ✗ and nothing moved (#1305). A wording added to one
+    // belongs in the other.
     let hit = [
         "usage limit reached",
         "-hour limit reached",
         "weekly limit reached",
-        "hit your usage limit",
-        "hit your limit",
+        "limit reached ∙ resets",
     ]
     .iter()
-    .any(|p| lower.contains(p));
+    .any(|p| lower.contains(p))
+        || hit_your_limit(&lower);
     if !hit {
         return None;
     }
     Some(reset_time(&lower, now).unwrap_or(now + 5 * 3600))
 }
 
+/// “hit your … limit”, whatever names the limit in between: Claude Code
+/// says “You've hit your weekly limit”, “… your 5-hour limit”, “… your
+/// opus weekly limit”. A fixed phrase misses every new wording, and
+/// missing it is what left a bee standing in front of a full account
+/// (#1305) — this is the one gate to the automatic switch.
+///
+/// Only the next few words count, so a sentence that merely mentions a
+/// limit somewhere later does not.
+fn hit_your_limit(lower: &str) -> bool {
+    lower.split("hit your ").skip(1).any(|rest| {
+        rest.split_whitespace()
+            .take(3)
+            .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == "limit")
+    })
+}
+
+/// The months as the agents abbreviate them, in the order of `tm_mon`.
+const MONTHS: [&str; 12] = [
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+];
+
 /// The time after “resets” or “reset at”, like `7pm`, `3:30 pm` or
 /// `19:00`, as the next such moment, local time, seconds since 1970.
+/// A reset that names a day as well — “resets Nov 5, 4am” — is read as
+/// that day, not as the hour `5`: a day too early puts a still full
+/// account back in the pool, and the fallback then moves an agent onto
+/// it (#1305).
 fn reset_time(text: &str, now: u64) -> Option<u64> {
     let at = text.find("reset")?;
     let rest = &text[at..];
+    if let Some(day) = reset_date(rest, now) {
+        return Some(day);
+    }
     let start = rest.find(|c: char| c.is_ascii_digit())?;
     // Only a time right after the word, not one further on.
     if start > 14 {
@@ -910,6 +1030,85 @@ fn reset_time(text: &str, now: u64) -> Option<u64> {
     } else {
         target + 24 * 3600
     })
+}
+
+/// A reset that names a month and a day, counted from `rest`, which
+/// starts at the word “reset”: `resets nov 5, 4am`. `None` where no
+/// month stands close behind the word, so the plain hour is read as
+/// before.
+fn reset_date(rest: &str, now: u64) -> Option<u64> {
+    // Only just behind the word — and cut on a character boundary: these
+    // lines carry “·” and “∙”, and slicing a `str` by bytes panics in the
+    // middle of one. This runs in the tick for every agent's screen.
+    let head: String = rest.chars().take(24).collect();
+    let (at, mon) = MONTHS
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| head.find(m).map(|at| (at, i)))
+        .min_by_key(|(at, _)| *at)?;
+    let after = &rest[at + 3..];
+    let digits = |s: &str| -> Option<(u32, usize)> {
+        let start = s.find(|c: char| c.is_ascii_digit())?;
+        let text: String = s[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        Some((text.parse().ok()?, start + text.len()))
+    };
+    let (day, used) = digits(after)?;
+    if !(1..=31).contains(&day) {
+        return None;
+    }
+    // The time behind the day, where one stands there: “nov 5, 4am”.
+    let (mut hour, minute) = match digits(&after[used..]) {
+        Some((h, end)) if h <= 23 => {
+            let mut rest = &after[used + end..];
+            let mut minute = 0;
+            if let Some(m) = rest.strip_prefix(':')
+                && let Some((min, end)) = digits(m)
+            {
+                if min > 59 {
+                    return None;
+                }
+                minute = min;
+                rest = &m[end..];
+            }
+            let rest = rest.trim_start();
+            if rest.starts_with("pm") && h < 12 {
+                (h + 12, minute)
+            } else if rest.starts_with("am") && h == 12 {
+                (0, minute)
+            } else {
+                (h, minute)
+            }
+        }
+        _ => (0, 0),
+    };
+    if hour > 23 {
+        hour = 0;
+    }
+    // That day in the year it is next, local time.
+    let t = now as libc::time_t;
+    // SAFETY: localtime_r only writes the `tm` it is given.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return None;
+    }
+    for year in [tm.tm_year, tm.tm_year + 1] {
+        // SAFETY: mktime only reads and normalises the `tm` it is given.
+        let mut want: libc::tm = unsafe { std::mem::zeroed() };
+        want.tm_year = year;
+        want.tm_mon = mon as i32;
+        want.tm_mday = day as i32;
+        want.tm_hour = hour as i32;
+        want.tm_min = minute as i32;
+        want.tm_isdst = -1;
+        let stamp = unsafe { libc::mktime(&mut want) };
+        if stamp > 0 && stamp as u64 > now {
+            return Some(stamp as u64);
+        }
+    }
+    None
 }
 
 /// The command that logs a subscription in, run in a terminal with the
@@ -1462,5 +1661,177 @@ model = "qwen3-coder"
         assert!(usual.join("projects").is_dir(), "the shared stays");
         assert!(usual.join(".credentials.json").exists());
         let _ = std::fs::remove_dir_all(&base);
+    }
+    /// The wording Claude Code shows today. Bug #1305: the bee
+    /// `mailbox-freelancer` stood in front of exactly these two lines and
+    /// did not move to the free account, because this is the one gate to
+    /// the automatic way (`App::check_used_up`, the only caller) — and it
+    /// knew only “weekly limit *reached*”, never “*hit your* weekly limit”.
+    /// `agent::FAILURES` matches the same screen on the substring “weekly
+    /// limit”, so the agent did show ✗ limit reached: the display saw it,
+    /// the switch did not.
+    #[test]
+    fn the_wording_claude_code_shows_today_counts_as_used_up() {
+        let now = 1_791_900_000;
+        let seen = "You've hit your weekly limit · resets Nov 5, 4am (Europe/Berlin)\n\
+                    /usage-credits to finish what you're working on.\n";
+        assert!(
+            used_up_in(seen, now).is_some(),
+            "the screen that stopped the bee must count as used up"
+        );
+        // Wordings taken from what the agents were seen to print: the
+        // line above, and the two that `used_up_in` already knew.
+        for seen in [
+            "Claude usage limit reached. Your limit will reset at 3:30 pm.",
+            "5-hour limit reached ∙ resets 7pm",
+            "■ You've hit your usage limit. Try again later.",
+        ] {
+            assert!(used_up_in(seen, now).is_some(), "not seen: {seen}");
+        }
+        // Constructed, not observed: the rule is meant to hold for the
+        // whole family “hit your <what> limit”, so a reworded limit does
+        // not fall out of the automatic way again. Named as made up, so
+        // nobody reads them as evidence of what Claude Code prints.
+        for made_up in ["You've hit your 5-hour limit", "hit your opus weekly limit"] {
+            assert!(used_up_in(made_up, now).is_some(), "not seen: {made_up}");
+        }
+        // And nothing that merely talks about limits.
+        for quiet in [
+            "> raise the rate limit in the config",
+            "  ⎿ Updated weekly limit docs",
+        ] {
+            assert!(used_up_in(quiet, now).is_none(), "wrongly seen: {quiet}");
+        }
+    }
+
+    /// A reset that names a date, not just a time: “resets Nov 5, 4am”.
+    /// The digit right behind “resets” is the *day* there, and reading it
+    /// as the hour puts the account back in the pool a day early — so the
+    /// fallback would move an agent onto an account that is still full.
+    /// The guard in front of the SIGTERM: a switch of account restarts
+    /// the agent, so without a saved conversation it dies for nothing.
+    /// That is how the bee `fallback-konto` was lost on 03.11.2026
+    /// (“No conversation found with session ID”, #1305).
+    #[test]
+    fn a_conversation_that_was_never_saved_is_seen_as_missing() {
+        let base = std::env::temp_dir().join(format!("imkr-resume-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        claude_login(&store.home, "me@x", "org1");
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        store
+            .add(Account {
+                name: "other".into(),
+                tool: "claude".into(),
+                ..Account::default()
+            })
+            .unwrap();
+        // Nowhere to look yet: nothing is claimed either way.
+        assert_eq!(
+            store.conversation("claude", Some("3b15b173")),
+            Conversation::Unknown,
+            "without a projects directory nothing can be told"
+        );
+        // The shared directory exists, the conversation does not: this is
+        // the fresh session whose restart would end it.
+        let shared = store.usual_dir("claude").join("projects/-home-me-work");
+        std::fs::create_dir_all(&shared).unwrap();
+        assert_eq!(
+            store.conversation("claude", Some("3b15b173")),
+            Conversation::Missing,
+            "a session id with nothing saved must not be restarted"
+        );
+        // An empty file is not a conversation either.
+        std::fs::write(shared.join("3b15b173.jsonl"), "").unwrap();
+        assert_eq!(
+            store.conversation("claude", Some("3b15b173")),
+            Conversation::Missing
+        );
+        // Saved: the switch may carry it over.
+        std::fs::write(shared.join("3b15b173.jsonl"), "{\"type\":\"user\"}\n").unwrap();
+        assert_eq!(
+            store.conversation("claude", Some("3b15b173")),
+            Conversation::Found
+        );
+        // Found through another account too — `projects` is one shared
+        // directory, which is why a switch can keep the conversation.
+        let linked = store.root.join("claude/other/projects");
+        std::fs::create_dir_all(linked.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(store.usual_dir("claude").join("projects"), &linked).unwrap();
+        assert_eq!(
+            store.conversation("claude", Some("3b15b173")),
+            Conversation::Found
+        );
+        // No id at all means `--continue`, which takes whatever is
+        // newest: nothing to check, so nothing is refused.
+        assert_eq!(store.conversation("claude", None), Conversation::Unknown);
+        assert_eq!(
+            store.conversation("claude", Some("")),
+            Conversation::Unknown
+        );
+        // Another agent keeps its conversations elsewhere.
+        assert_eq!(
+            store.conversation("codex", Some("3b15b173")),
+            Conversation::Unknown
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A restart that fails anyway must be seen, not stay quiet: the
+    /// keeper switched seven sessions and could not tell what had
+    /// happened to them (#1305).
+    #[test]
+    fn a_resume_that_found_nothing_is_recognised_on_the_screen() {
+        assert!(resume_failed(
+            "imkr account run claude:department -- claude --resume 3b15b173-\n             No conversation found with session ID"
+        ));
+        assert!(resume_failed("Error: no conversation to resume"));
+        assert!(!resume_failed(
+            "fake claude running in account: free\ncarrying on with the work"
+        ));
+    }
+
+    /// A multi-byte character where the search window ends. Slicing a
+    /// `str` by bytes panics on a character boundary, and this runs in
+    /// the server's tick for every agent's screen — a panic there takes
+    /// the whole multiplexer with it.
+    #[test]
+    fn a_reset_line_with_wide_characters_does_not_panic() {
+        let now = 1_793_701_200;
+        for pad in 0..40 {
+            let text = format!("resets{}∙ nov 5, 4am", " ".repeat(pad));
+            let _ = used_up_in(&format!("you've hit your weekly limit {text}"), now);
+            let _ = used_up_in(&format!("weekly limit reached {text}"), now);
+        }
+        // And the real line, which carries “·” and “∙”.
+        assert!(
+            used_up_in(
+                "You've hit your weekly limit · resets Nov 5, 4am (Europe/Berlin)",
+                now
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn a_reset_with_a_date_is_not_read_as_an_hour() {
+        // 2026-11-03 11:20:00 +01:00
+        let now = 1_793_701_200;
+        let until = used_up_in(
+            "You've hit your weekly limit · resets Nov 5, 4am (Europe/Berlin)",
+            now,
+        )
+        .expect("seen as used up");
+        // Nov 5, 4am local is a bit over 40 hours away; a day earlier
+        // (reading the 5 as 5am) would be under 20.
+        let hours = (until - now) / 3600;
+        assert!(
+            (36..=48).contains(&hours),
+            "resets in {hours}h, expected Nov 5 4am (~41h)"
+        );
     }
 }
