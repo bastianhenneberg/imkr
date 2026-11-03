@@ -2681,7 +2681,7 @@ impl App {
                         self.accounts.insert(tool.clone(), name.clone());
                         Ok(serde_json::json!({ "tool": tool, "account": name }))
                     }
-                    Some(id) => self.switch_account(id, &account),
+                    Some(id) => self.switch_account(id, &account, Throw::Never),
                 }
             }
             Request::ReloadConfig => {
@@ -5475,17 +5475,55 @@ impl App {
         Ok(())
     }
 
+    /// Whether something unsent would be thrown away by restarting the
+    /// agent in pane `id`: a message imkr typed in that the agent has not
+    /// taken yet, or a line a human began. Neither is kept anywhere — an
+    /// input line lives only in the process (#1305).
+    fn unsent_here(&self, id: PaneId) -> Option<Unsent> {
+        if self.unsent_typed(id) {
+            return Some(Unsent::Message);
+        }
+        let drafting = self.panes.get(&id).is_some_and(|p| p.drafting());
+        drafting.then_some(Unsent::Line)
+    }
+
     /// Starts the agent in pane `id` again in `account`, in the same
     /// conversation: it is ended, and once its shell is back in front
     /// (`finish_switches`), `imkr account run` starts it with that
     /// account's environment, so no key shows on the screen.
-    fn switch_account(&mut self, id: PaneId, account: &crate::account::Account) -> Reply {
+    ///
+    /// `keep` refuses the switch while something unsent stands in the
+    /// pane. Only the automatic fallback passes `Throw::Away`, and only
+    /// after it waited (`decide_accounts`): there the agent sits at its
+    /// limit and will never take the line, so waiting for ever would be a
+    /// standstill instead of a loss.
+    fn switch_account(
+        &mut self,
+        id: PaneId,
+        account: &crate::account::Account,
+        keep: Throw,
+    ) -> Reply {
         let pane = self.panes.get(&id).ok_or(format!("no pane {id}"))?;
         if pane.program().as_deref() != Some(account.tool.as_str()) {
             return Err(format!(
                 "no {tool} runs in pane {id}: start it there with `imkr account run {tool}:{name} -- {tool}`",
                 tool = account.tool,
                 name = account.name
+            ));
+        }
+        // A restart empties the input line, and nothing keeps it: not the
+        // transcript, not the mailbox (imkr took the message out of it to
+        // type it in). On 03.11.2026 a switch threw away a decision that
+        // had been typed in five seconds earlier — imkr knew both facts
+        // and destroyed the first with the second (#1305).
+        if keep == Throw::Never
+            && let Some(unsent) = self.unsent_here(id)
+        {
+            return Err(format!(
+                "{what} in pane {id} and not taken yet: a switch restarts {tool} and would throw \
+                 it away. Wait until the agent takes it, or switch after.",
+                what = unsent.what(),
+                tool = account.tool
             ));
         }
         // A switch of account is a restart: the environment of a running
@@ -5658,6 +5696,8 @@ impl App {
                 current,
                 until: Some(until),
                 switch: auto,
+                throw: Throw::Never,
+                said: false,
                 since: Instant::now(),
             });
         }
@@ -5698,8 +5738,43 @@ impl App {
         } else {
             std::mem::take(&mut self.account_choices)
         };
-        for choice in decide {
+        for mut choice in decide {
             let id = choice.pane;
+            // Something unsent in the pane holds the switch back rather
+            // than being thrown away with the process (#1305). Only the
+            // automatic way waits: a switch asked for by hand is refused
+            // in `switch_account`, so the user can decide. After
+            // `UNSENT_WAIT` it goes ahead — the agent sits at its limit
+            // and will never take the line, and a standstill nobody sees
+            // is no better than the loss.
+            let unsent = choice
+                .switch
+                .then(|| self.unsent_here(id))
+                .flatten()
+                .filter(|_| choice.throw == Throw::Never);
+            match switch_waits_for(unsent, choice.since.elapsed()) {
+                Wait::No => {}
+                Wait::Yes(what) => {
+                    if !choice.said {
+                        choice.said = true;
+                        self.flash = Some(format!(
+                            "pane {id}: {} in — the switch waits for it",
+                            what.what()
+                        ));
+                    }
+                    self.account_choices.push(choice);
+                    continue;
+                }
+                Wait::GiveUp(what) => {
+                    choice.throw = Throw::Away;
+                    let text = format!(
+                        "pane {id}: {} in and the agent never took it — switching anyway, send it again afterwards",
+                        what.what()
+                    );
+                    self.notify(id, "account", &text);
+                    self.flash = Some(text);
+                }
+            }
             let text = self.account_text(&store, &choice, &numbers);
             if choice.until.is_some() {
                 self.notify(id, "account", &text);
@@ -5757,7 +5832,7 @@ impl App {
             // the pane this is about is named in front of the message.
             return format!("{lead}: Ctrl+B s C restarts it there in {there}{free}");
         }
-        match self.switch_account(*id, &next) {
+        match self.switch_account(*id, &next, choice.throw) {
             Ok(_) => format!("{lead}: restarts {tool} in {there}{free}, same conversation"),
             Err(e) => format!("{lead}, not switched: {e}"),
         }
@@ -5816,6 +5891,8 @@ impl App {
             current,
             until: None,
             switch: true,
+            throw: Throw::Never,
+            said: false,
             since: Instant::now(),
         });
         if crate::usage::cached(crate::usage::FRESH).is_none() {
@@ -14753,6 +14830,36 @@ const USED_UP_QUIET: Duration = Duration::from_secs(600);
 /// How long `switch_account` waits for an agent to end.
 const SWITCH_WAIT: Duration = Duration::from_secs(15);
 
+/// What the automatic fallback does about something unsent in the pane it
+/// would restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wait {
+    /// Nothing to weigh: go ahead.
+    No,
+    /// Hold the switch back and let the agent take the line.
+    Yes(Unsent),
+    /// Waited in vain: switch and say what is lost.
+    GiveUp(Unsent),
+}
+
+/// Whether a switch waits for something unsent, as a decision of its own
+/// so it can be read and tested without a running pane — like
+/// `mail_hold`. Waiting for ever would be a standstill nobody sees, and
+/// an agent at its limit never takes the line, so the wait has a cap
+/// (#1305).
+fn switch_waits_for(unsent: Option<Unsent>, waited: Duration) -> Wait {
+    match unsent {
+        None => Wait::No,
+        Some(what) if waited < UNSENT_WAIT => Wait::Yes(what),
+        Some(what) => Wait::GiveUp(what),
+    }
+}
+
+/// How long the automatic fallback waits for an unsent line to be taken
+/// before it switches anyway. The agent is at its limit, so it will
+/// hardly take it — the wait is mostly for a line a human just began.
+const UNSENT_WAIT: Duration = Duration::from_secs(60);
+
 /// How long `check_resumed` lets a restarted agent start before it looks:
 /// right after the command the shell is still in front.
 const RESUME_GRACE: Duration = Duration::from_secs(4);
@@ -14785,7 +14892,39 @@ struct AccountChoice {
     /// Whether to switch without asking: `Ctrl+B s C` and `auto` do, the
     /// `ask` setting only says which account it would be.
     switch: bool,
+    /// Whether the switch may throw away an unsent line by now: set once
+    /// `decide_accounts` waited `UNSENT_WAIT` for it in vain.
+    throw: Throw,
+    /// Whether the user was told that it waits, so it is said once.
+    said: bool,
     since: Instant,
+}
+
+/// Whether a switch may end an agent that still holds something unsent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Throw {
+    /// Refuse the switch and say why.
+    Never,
+    /// Go ahead: waited for it in vain, and the agent is at its limit.
+    Away,
+}
+
+/// What stands unsent in a pane, for the message that refuses a switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unsent {
+    /// A message imkr typed in, which the agent has not taken.
+    Message,
+    /// A line a human began and has not sent.
+    Line,
+}
+
+impl Unsent {
+    fn what(self) -> &'static str {
+        match self {
+            Unsent::Message => "a message is typed",
+            Unsent::Line => "a line is typed",
+        }
+    }
 }
 
 /// An agent waiting for the account it starts in: a new window of one of
@@ -15421,6 +15560,58 @@ mod tests {
         let layout = screen_layout(screen, &Bars::default(), &spacing);
         assert_eq!(layout.bottom, Some(Rect::new(0, 23, 80, 1)));
         assert_eq!(layout.body, Rect::new(2, 1, 76, 21));
+    }
+
+    /// A switch of account restarts the agent, and a restart empties its
+    /// input line — the line lives nowhere else. On 03.11.2026 that threw
+    /// away a decision typed in five seconds earlier (#1305). So the
+    /// automatic way waits for it; a switch asked for by hand is refused
+    /// in `switch_account`, so the person can decide.
+    #[test]
+    fn a_switch_waits_for_an_unsent_line_but_not_for_ever() {
+        use std::time::Duration;
+        // Nothing unsent: nothing to weigh.
+        assert_eq!(switch_waits_for(None, Duration::ZERO), Wait::No);
+        assert_eq!(
+            switch_waits_for(None, UNSENT_WAIT + Duration::from_secs(1)),
+            Wait::No
+        );
+        // Both kinds are the same good: a message imkr typed in, and a
+        // line a human began. Bastian's half-written line is no less his
+        // than a message is.
+        for what in [Unsent::Message, Unsent::Line] {
+            assert_eq!(
+                switch_waits_for(Some(what), Duration::ZERO),
+                Wait::Yes(what)
+            );
+            assert_eq!(
+                switch_waits_for(Some(what), UNSENT_WAIT - Duration::from_secs(1)),
+                Wait::Yes(what)
+            );
+            // But not for ever: an agent at its limit never takes it, and
+            // a standstill nobody sees is no better than the loss.
+            assert_eq!(
+                switch_waits_for(Some(what), UNSENT_WAIT),
+                Wait::GiveUp(what)
+            );
+            assert_eq!(
+                switch_waits_for(Some(what), UNSENT_WAIT + Duration::from_secs(60)),
+                Wait::GiveUp(what)
+            );
+        }
+        // The two reasons must read differently — the message names which
+        // of the two it is, and the user acts differently on each.
+        assert_ne!(Unsent::Message.what(), Unsent::Line.what());
+        // And neither may carry a gap from a broken line continuation:
+        // that happened twice in this change and is invisible in code.
+        for what in [Unsent::Message, Unsent::Line] {
+            assert!(
+                !what.what().contains("  "),
+                "double space in {:?}: {:?}",
+                what,
+                what.what()
+            );
+        }
     }
 
     #[test]
