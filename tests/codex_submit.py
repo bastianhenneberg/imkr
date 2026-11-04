@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import tomllib
 
 
 def main():
@@ -52,14 +53,20 @@ def main():
     notifier.chmod(0o755)
     (root / 'notify.log').touch()
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(('IMKR', 'CODEX', 'CLAUDE', 'ANTHROPIC', 'OPENAI'))
-           and k not in ('DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS', 'NO_COLOR')}
+           if not k.startswith(('IMKR', 'CODEX', 'CLAUDE', 'ANTHROPIC', 'OPENAI', 'DBUS_'))
+           and k not in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'NO_COLOR')}
     env.update(HOME=str(root / 'home'), CODEX_HOME=str(root / 'home/.codex'),
                XDG_CONFIG_HOME=str(root / 'config'), XDG_STATE_HOME=str(root / 'state'),
                XDG_RUNTIME_DIR=str(root / 'runtime'), IMKR_CONFIG=str(root / 'imkr.toml'),
                SHELL='/bin/bash', TERM='xterm-256color', SUBMIT_TEST_ROOT=str(root),
                PATH=str(root / 'bin') + ':' + os.environ['PATH'],
-               DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent/imkr-submit-1343')
+               DBUS_SESSION_BUS_ADDRESS='unix:path=' + str(root / 'no-session-bus'),
+               DBUS_SYSTEM_BUS_ADDRESS='unix:path=' + str(root / 'no-system-bus'))
+    assert tomllib.loads((root / 'imkr.toml').read_text())['notifications'] == 'off'
+    assert Path(shutil.which('notify-send', path=env['PATH'])).resolve() == notifier.resolve()
+    subprocess.run(['notify-send', 'guard self-check'], env=env, check=True)
+    assert (root / 'notify.log').read_text().strip() == 'guard self-check'
+    (root / 'notify.log').write_text('')
     if args.no_color:
         env['NO_COLOR'] = '1'
     requests = []
