@@ -11173,7 +11173,7 @@ impl App {
                         }
                     }
                     PromptFor::SessionDir(place, start) => {
-                        let dir = text.trim().trim_end_matches('/');
+                        let dir = text.trim();
                         let dir = if dir.is_empty() { "~" } else { dir };
                         let start_keeper = start == NewStart::Keeper;
                         let mut template = match start {

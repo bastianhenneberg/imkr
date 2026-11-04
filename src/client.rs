@@ -938,7 +938,7 @@ pub fn kill_server() -> Result<()> {
 
 /// Ends the server at `path` and waits until it is gone.
 pub fn kill_server_at(path: &Path) -> Result<()> {
-    let mut stream = UnixStream::connect(path).context("no imkr server running")?;
+    let mut stream = UnixStream::connect(path).with_context(|| unavailable_session(path))?;
     ClientMsg::KillServer.write_to(&mut stream)?;
     // Wait until the server has closed every shell and let go of the
     // socket, so `imkr kill-server && imkr` starts a new one instead
@@ -952,6 +952,25 @@ pub fn kill_server_at(path: &Path) -> Result<()> {
     bail!("the server did not shut down within 3 seconds")
 }
 
+/// Describe the destination whose socket could not be reached.
+fn unavailable_session(path: &Path) -> String {
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    let dormant = crate::persist::dormant_sessions(&[])
+        .into_iter()
+        .find(|d| d.name == name);
+    match dormant {
+        Some(d) => format!(
+            "session {name} is not running ({} {}); `imkr revive {name}` brings it back",
+            if d.closed { "closed" } else { "stopped" },
+            crate::protocol::chrono_like(d.since).unwrap_or_else(|| "at an unknown time".into())
+        ),
+        None => format!("session {name} is not running (socket {})", path.display()),
+    }
+}
+
 /// Sends `request` to the running server and returns its answer.
 pub fn request(request: Request) -> Result<serde_json::Value> {
     request_at(&socket_path()?, request)
@@ -959,7 +978,7 @@ pub fn request(request: Request) -> Result<serde_json::Value> {
 
 /// Sends `request` to the server at `path`.
 pub fn request_at(path: &Path, request: Request) -> Result<serde_json::Value> {
-    let mut stream = UnixStream::connect(path).context("no imkr server running")?;
+    let mut stream = UnixStream::connect(path).with_context(|| unavailable_session(path))?;
     ClientMsg::Request(request).write_to(&mut stream)?;
     loop {
         match ServerMsg::read_from(&mut stream)? {
@@ -1574,6 +1593,19 @@ pub fn restore_sessions(
         if UnixStream::connect(&socket).is_ok() {
             continue;
         }
+        // Resolve on the destination machine, before writing a layout or
+        // starting a server. Pane spawning itself never creates directories.
+        for pane in saved.layout.panes.values() {
+            if let Some(dir) = &pane.cwd {
+                let dir = crate::template::home_dir(dir);
+                std::fs::create_dir_all(&dir).with_context(|| {
+                    format!(
+                        "cannot create session {session} directory {}",
+                        dir.display()
+                    )
+                })?;
+            }
+        }
         // The server brings back what it finds in its state file.
         let path = crate::persist::path_for(&session)?;
         crate::persist::write(&path, &crate::persist::to_json(&saved.layout)?)?;
@@ -1604,6 +1636,15 @@ pub fn start_from_on(host: &str, name: &str, layout: crate::persist::Saved) -> R
     Ok(!started.is_empty())
 }
 
+#[derive(Debug)]
+pub struct RemoteRejected(String);
+impl std::fmt::Display for RemoteRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for RemoteRejected {}
+
 /// Runs `imkr args...` on `host` through ssh without prompting, with
 /// `input` on its stdin, and returns what it printed.
 pub fn remote_output(host: &str, args: &[&str], input: &str) -> Result<String> {
@@ -1629,7 +1670,11 @@ pub fn remote_output(host: &str, args: &[&str], input: &str) -> Result<String> {
     let output = child.wait_with_output()?;
     if !output.status.success() {
         let why = String::from_utf8_lossy(&output.stderr);
-        bail!("{host}: {}", why.trim());
+        let message = format!("{host}: {}", why.trim());
+        if output.status.code().is_some_and(|code| code != 255) {
+            return Err(RemoteRejected(message).into());
+        }
+        bail!(message);
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -1731,7 +1776,10 @@ pub fn start_server_in(
             cmd.env_remove(&name);
         }
     }
-    if let Some(dir) = dir.filter(|dir| dir.is_dir()) {
+    if let Some(dir) = dir {
+        let dir = crate::template::home_dir(dir);
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("cannot create session directory {}", dir.display()))?;
         cmd.current_dir(dir);
     }
     cmd.arg("server")

@@ -309,7 +309,11 @@ choose one, Tab takes it or completes like a shell, <code>Ctrl+W</code> goes up 
 into a fresh shell, so the shell stays when they end. A window that starts <code>claude</code> or <code>codex</code> asks first which
 account it runs in, when more than one is logged in (Esc: the default); it starts as
 <code>imkr account run claude:NAME -- &lt;command&gt;</code>. Templates come along to other machines
-like plugins, and <code>~</code> is that machine's home.</p>
+like plugins, and <code>~</code> is that machine's home. Missing directories are created on the
+machine starting the session, including parent directories. If creation fails, the error
+names the session and path; the session does not start in another directory. <code>/</code> stays
+the filesystem root. <code>imkr new --start --dir PATH</code> also creates a missing session directory;
+ordinary new panes require their explicit directory to exist.</p>
 <pre><code class="language-bash">imkr template save coding          # this session's windows, splits and agents as `coding`
 imkr template ls
 imkr template start coding api     # start session `api` from it, without a terminal

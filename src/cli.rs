@@ -608,6 +608,7 @@ pub fn msg(args: &[String]) -> Result<()> {
         }
         match client::remote_output(&machine, &args, &text) {
             Ok(out) => print!("{out}"),
+            Err(e) if e.downcast_ref::<client::RemoteRejected>().is_some() => return Err(e),
             // Out of reach from here, e.g. a laptop seen from a server: it
             // picks the message up when it next asks this machine.
             Err(e) => {
@@ -1929,7 +1930,8 @@ pub fn new(args: &[String]) -> Result<()> {
     let mut options = options;
     let float = take_flag(&mut options, "--float");
     let workspace = take_window(&mut options)?;
-    let dir = take_value(&mut options, "--dir")?.map(std::path::PathBuf::from);
+    let dir =
+        take_value(&mut options, "--dir")?.map(|dir| crate::template::home_dir(Path::new(&dir)));
     // `--focus` shows the new pane right away, `--name` names a new window:
     // for plugins that open a program to work in, like a conversation.
     let focus = take_flag(&mut options, "--focus");

@@ -113,7 +113,11 @@ choose one, Tab takes it or completes like a shell, `Ctrl+W` goes up one; relati
 into a fresh shell, so the shell stays when they end. A window that starts `claude` or `codex` asks first which
 account it runs in, when more than one is logged in (Esc: the default); it starts as
 `imkr account run claude:NAME -- <command>`. Templates come along to other machines
-like plugins, and `~` is that machine's home.
+like plugins, and `~` is that machine's home. Missing directories are created on the
+machine starting the session, including parent directories. If creation fails, the error
+names the session and path; the session does not start in another directory. `/` stays
+the filesystem root. `imkr new --start --dir PATH` also creates a missing session directory;
+ordinary new panes require their explicit directory to exist.
 
 ```bash
 imkr template save coding          # this session's windows, splits and agents as `coding`

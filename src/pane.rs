@@ -278,7 +278,14 @@ impl Pane {
             CommandBuilder::from_argv(spawn.command.iter().map(Into::into).collect())
         };
         match spawn.cwd {
-            Some(cwd) if cwd.is_dir() => cmd.cwd(cwd),
+            Some(cwd) => {
+                anyhow::ensure!(
+                    cwd.is_dir(),
+                    "pane directory {} does not exist or is not a directory",
+                    cwd.display()
+                );
+                cmd.cwd(cwd);
+            }
             _ => {
                 if let Ok(cwd) = std::env::current_dir() {
                     cmd.cwd(cwd);

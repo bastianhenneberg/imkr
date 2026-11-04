@@ -29,6 +29,9 @@ and named sessions show their name in the control bar. In that menu `n` starts a
 which machine, if others are known, is asked first),
 `x` ends the selected one, `r` renames it (like `imkr rename-session NAME`, `-s OLD` for
 another one), `s` saves all running sessions as a hive and `h` opens the hives.
+A message to an ended session names that destination and says whether it was *stopped*
+(crash or reboot) or *closed* deliberately, with `imkr revive NAME` to bring it back.
+A remote session's rejection is returned directly; only transport failures queue the message.
 Every list (sessions, agents, hives, marks, machines) takes `/` to search: typing narrows it to
 what matches every word, in name, machine, session or directory, Esc clears the search.
 Sessions an agent started for its workers (`imkr new --by`) sit under it with an arrow — see
