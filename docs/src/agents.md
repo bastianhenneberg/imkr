@@ -221,7 +221,12 @@ the target-host server reads the selected UTF-8 text and copies it as private `b
 inside the same durable package **before ending the source**. Missing, unreadable or
 empty briefs refuse the switch. The first target prompt says to read this saved brief
 first and reconcile it with the historical handoff before any task actions; superseded
-historical tasks must not be resumed. The original brief can disappear after saving.
+historical tasks must not be resumed. The original brief can disappear after saving. Relative references inside it keep their
+original reference directory (the canonical selected file's parent, including for symlinks).
+The first prompt names that directory and grants target access to it separately from the
+new snapshot; it must be treated as read-only evidence. References such as
+`source/transcript.jsonl` are never reinterpreted as the new snapshot's `source.jsonl`.
+If cited sources are unavailable, the target must stop and report the missing evidence.
 The selected brief supplies current context, while historical tool text still grants no
 permissions. An older server rejects explicit start options it does not support; there is no fallback
 that drops the brief or directory.

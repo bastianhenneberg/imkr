@@ -6068,6 +6068,17 @@ impl App {
         let source_session =
             crate::handoff::source_session(source_tool, source_session, pane.session.as_deref())
                 .map_err(|e| format!("cannot preserve context; source kept running: {e}"))?;
+        // Preserve the actual original reference base even for a selected symlink.
+        let selected_brief = brief
+            .map(std::fs::canonicalize)
+            .transpose()
+            .map_err(|e| format!("cannot read selected brief; source kept running: {e}"))?;
+        let brief = selected_brief.as_deref();
+        if let Some(origin) = brief.and_then(|p| p.parent()) {
+            crate::handoff::check_cwd(origin).map_err(|e| {
+                format!("brief reference directory unavailable; source kept running: {e}")
+            })?;
+        }
         // The foreground agent can chdir without changing its waiting shell.
         // Capture once, validate before SIGTERM, and explicitly cd at startup.
         let cwd = pane
@@ -6115,6 +6126,7 @@ impl App {
                 "source_tool": source_tool, "source_accounts": pane.accounts,
                 "target_tool": account.tool, "target_account": account.name,
                 "selected_brief": brief,
+                "brief_reference_directory": brief.and_then(|p| p.parent()),
                 "keeper_directory": crate::keeper::dir(&protocol::session_name()).ok(),
                 "pending_mail": self.mailbox.iter().filter(|m| m.pane == id).collect::<Vec<_>>(),
                 "handed_mail": pane.handed, "notes": pane.notes,
@@ -6144,7 +6156,7 @@ impl App {
                 path,
                 same_tool,
                 resume_session,
-                brief.is_some(),
+                brief,
             )
         } else {
             account_switch_line(
@@ -15584,7 +15596,7 @@ fn handoff_switch_line(
     path: &std::path::Path,
     same_tool: bool,
     session: Option<&str>,
-    brief: bool,
+    brief: Option<&std::path::Path>,
 ) -> String {
     let resume = if same_tool {
         crate::account::resume_command(&account.tool, session)
@@ -15596,11 +15608,16 @@ fn handoff_switch_line(
     } else {
         String::new()
     };
+    let references = match (brief.is_some(), account.tool.as_str()) {
+        (true, "claude") => " \"$3\"",    // Claude's variadic --add-dir.
+        (true, _) => " --add-dir \"$3\"", // Codex's repeated single-directory option.
+        (false, _) => "",
+    };
     let script = format!(
-        "exec {} {resume} --add-dir \"$1\" -- \"$2\"",
+        "exec {} {resume} --add-dir \"$1\"{references} -- \"$2\"",
         account_start_command(config, &account.tool)
     );
-    [
+    let mut command = vec![
         imkr.to_owned(),
         "account".into(),
         "run".into(),
@@ -15614,12 +15631,16 @@ fn handoff_switch_line(
             .expect("handoff directory")
             .to_string_lossy()
             .into_owned(),
-        crate::handoff::prompt(path, brief),
-    ]
-    .iter()
-    .map(|w| crate::client::sh_quote(w))
-    .collect::<Vec<_>>()
-    .join(" ")
+        crate::handoff::prompt(path, brief.and_then(|p| p.parent())),
+    ];
+    if let Some(origin) = brief.and_then(|p| p.parent()) {
+        command.push(origin.to_string_lossy().into_owned());
+    }
+    command
+        .iter()
+        .map(|w| crate::client::sh_quote(w))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// How long `check_resumed` lets a restarted agent start before it looks:

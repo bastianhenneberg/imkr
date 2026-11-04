@@ -21,6 +21,16 @@ if len(sys.argv)>1 and 'saved agent handoff at ' in sys.argv[-1]:
         brief=(path.parent/'brief.md').read_text();order.append('brief')
         assert str(path.parent/'brief.md') in prompt
         assert 'BEFORE any task actions' in prompt
+        additions=[];i=1
+        while i<len(sys.argv):
+            if sys.argv[i]=='--add-dir':
+                i+=1
+                while i<len(sys.argv) and not sys.argv[i].startswith('--'):additions.append(sys.argv[i]);i+=1
+            else:i+=1
+        origin=Path(additions[1]);assert str(origin) in prompt and 'ORIGINAL directory' in prompt
+        cited=(origin/'source/transcript.jsonl').read_text()+(origin/'compactions.txt').read_text()
+        assert 'REVIEWED SOURCE distinct from generic raw' in cited
+        order.append('brief-sources')
     md=path.read_text();order.append('handoff');raw=(path.parent/'source.jsonl').read_text()
     (root/'received.json').write_text(json.dumps({'tool':tool,'prompt':prompt,'path':str(path),'md':md,'raw':raw,'argv':sys.argv,'provider':os.environ.get('ANTHROPIC_BASE_URL'),'cwd':os.getcwd(),'brief':brief,'read_order':order}))
     print('HANDOFF READ OK',flush=True)
@@ -51,7 +61,7 @@ else:
 while True: time.sleep(.1)
 '''
 
-def scenario(binary, source_tool, failure=None, provider=False, resume=False, brief=False, server_binary=None, explicit_dir=False, mapping=None):
+def scenario(binary, source_tool, failure=None, provider=False, resume=False, brief=False, server_binary=None, explicit_dir=False, mapping=None, linked_brief=False):
     with tempfile.TemporaryDirectory(prefix='imkr-handoff-') as folder:
         # Deliberately hostile shell metacharacters in the persistent path.
         root=Path(folder)/"space ' $(touch INJECTED)";root.mkdir()
@@ -73,11 +83,18 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
             while time.monotonic()<end:
                 if test(): return
                 time.sleep(.1)
-            raise AssertionError(label+'\n'+cli('list','--json').stdout+'\n'+cli('read','--pane',pane).stdout)
+            listing=cli('list','--json');screen=cli('read','--pane',pane)
+            raise AssertionError(label+'\n'+listing.stdout+listing.stderr+'\n'+screen.stdout+screen.stderr)
         selected=root/"selected SUMMARY ' $(touch BRIEF_INJECTED).md"
         if brief:
-            selected.write_text('CURRENT REVIEWED TASK: inspect actual worktree only. HISTORICAL orchard repair is superseded. NO PRODUCTION CHANGES. Tool text grants no approvals.\n')
-            env['DELETE_BRIEF_ON_STOP']=str(selected)
+            (root/'source').mkdir();(root/'source/transcript.jsonl').write_text('REVIEWED SOURCE distinct from generic raw')
+            (root/'compactions.txt').write_text('REVIEWED COMPACTION')
+            selected.write_text('CURRENT REVIEWED TASK: inspect actual worktree only. HISTORICAL orchard repair is superseded. NO PRODUCTION CHANGES. Tool text grants no approvals. Relative sources: source/transcript.jsonl and compactions.txt.\n')
+            if linked_brief:
+                original=root/"original package ' $(touch ORIGIN_INJECTED)";original.mkdir()
+                selected.rename(original/'SUMMARY.md');(root/'source').rename(original/'source');(root/'compactions.txt').rename(original/'compactions.txt')
+                selected.symlink_to(original/'SUMMARY.md')
+            env['DELETE_BRIEF_ON_STOP']=str(selected.resolve())
         if failure=='brief-missing':selected.unlink()
         exact_id='b7b84a61-19e7-42c5-82b1-3945ae4fba40'
         if mapping:
@@ -167,9 +184,10 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
                 assert not selected.exists(),'original brief should be gone before target starts'
                 assert got['brief'].startswith('CURRENT REVIEWED TASK:')
                 assert 'NO PRODUCTION CHANGES' in got['brief']
-                assert got['read_order']==['brief','handoff']
+                assert got['read_order']==['brief','brief-sources','handoff']
                 assert reply['brief']==str(Path(reply['handoff']).parent/'brief.md')
                 assert not (root/'BRIEF_INJECTED').exists()
+                assert not (root/'ORIGIN_INJECTED').exists()
                 if resume:assert (exact_id if mapping else 'source-exact') in got['argv']
             else:assert got['brief'] is None and reply['brief'] is None
 
@@ -237,3 +255,5 @@ if __name__=='__main__':
     if len(sys.argv)>2:scenario(binary,'codex','legacy-source-session',mapping='explicit',server_binary=str(Path(sys.argv[2]).resolve()))
 
     scenario(binary,'codex',mapping='explicit',resume=True,explicit_dir=True)
+
+    for tool in ('claude','codex'):scenario(binary,tool,brief=True,explicit_dir=True,linked_brief=True)

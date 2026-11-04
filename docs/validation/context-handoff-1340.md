@@ -168,3 +168,21 @@ cannot be silently ignored. Totals: 40 normal PTY scenarios, 44 with all old-ser
 checks. These are isolated fake-source process tests, not a claim of a paid-model
 Work-managed 0.166 round trip. Real local `/status` and 0.166 saved-rollout FD probes
 remain separately scoped evidence; original sessions were never touched.
+
+## Original brief reference directory
+
+The original selected brief is canonicalized before persistence; its canonical parent
+is recorded as `brief_reference_directory`. The first prompt and saved Markdown
+explicitly resolve relative citations against this original directory, never against
+the new snapshot. A second literal `--add-dir` preserves access to those source files;
+the prompt restricts them to read-only evidence and requires stopping/reporting if
+unavailable. No source bundle or automatic relative-link rewriting is introduced.
+
+All briefed PTY cases now read distinct original `source/transcript.jsonl` and
+`compactions.txt` before the generic handoff. Their markers differ from `source.jsonl`
+in the new package, proving the target uses the original source base. Both directions
+also pass with a selected symlink whose actual brief and citations are in a separate
+original directory containing spaces, apostrophes and command substitution characters.
+The source SIGTERM handler deletes the original brief while leaving its cited evidence;
+the target reads its durable brief copy and resolves citations correctly. Totals: 42
+regular scenarios, 46 including the independently built old-server checks.
