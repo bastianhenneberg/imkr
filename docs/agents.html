@@ -323,7 +323,11 @@ session writes its agents this way.</p>
 this session, <code>d</code> makes it the standard of this machine (like <code>imkr account default</code>), handy
 when an account is used up for the week: new shells in every session start in the other one.
 Each account also shows how full its week is where that was measured in the last ten minutes,
-so the list says what it costs to pick one. Switching ends the agent and starts it again in the same conversation, typed into
+so the list says what it costs to pick one. Switching ends the focused agent. Choosing another
+account of the same agent resumes its conversation; choosing another agent (Claude ↔ Codex)
+starts a new conversation using its configured <code>[agent_commands]</code> command. A conversation ID
+is never passed between agents. In a shell, Enter chooses the account for new shells.
+A same-agent restart is typed into
 its shell as <code>imkr account run claude:privat -- claude --resume &lt;id&gt;</code>, so no key shows on the
 screen; the session id comes from the hooks.</p>
 <p>When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", "You've hit your

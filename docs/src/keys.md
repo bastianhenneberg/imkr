@@ -147,7 +147,7 @@ Hives (Ctrl+B, H), in the list
 
 Accounts (Ctrl+B, s c), in the list
   ↑↓             select
-  Enter          use: the focused agent goes on in it, else new shells
+  Enter          restart/change the focused agent, else new shells
   u              new shells of this session
   d              standard for this machine (new shells in every session)
   Esc            cancel

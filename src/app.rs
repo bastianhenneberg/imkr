@@ -1281,11 +1281,11 @@ pub struct App {
     accounts: BTreeMap<String, String>,
     /// Agents ending to start again in another account: the command to
     /// type once the shell is back in front, and since when it waits.
-    switching: HashMap<PaneId, (String, String, Instant)>,
+    switching: HashMap<PaneId, (String, String, String, Instant)>,
     /// Panes whose agent was just restarted in another account, with that
     /// account and when the command was typed: `check_resumed` watches
     /// them so a failed resume is never silent (#1305).
-    resumed: HashMap<PaneId, (String, Instant)>,
+    resumed: HashMap<PaneId, (String, String, Instant)>,
     /// Agents waiting for the account they start in (`Mode::AgentAccount`).
     agent_start: Option<AgentStart>,
     /// The template's agents of another kind, asked for after `agent_start`.
@@ -5879,8 +5879,8 @@ impl App {
         drafting.then_some(Unsent::Line)
     }
 
-    /// Starts the agent in pane `id` again in `account`, in the same
-    /// conversation: it is ended, and once its shell is back in front
+    /// Starts the chosen agent in pane `id` in `account`. The same agent
+    /// resumes its conversation; another starts a new one. Once its shell is back in front
     /// (`finish_switches`), `imkr account run` starts it with that
     /// account's environment, so no key shows on the screen.
     ///
@@ -5895,8 +5895,18 @@ impl App {
         account: &crate::account::Account,
         keep: Throw,
     ) -> Reply {
+        if self.switching.contains_key(&id) || self.resumed.contains_key(&id) {
+            return Err(format!(
+                "pane {id}: an account switch is already in progress"
+            ));
+        }
         let pane = self.panes.get(&id).ok_or(format!("no pane {id}"))?;
-        if pane.program().as_deref() != Some(account.tool.as_str()) {
+        let current_tool = pane.program();
+        let same_tool = current_tool.as_deref() == Some(account.tool.as_str());
+        if !current_tool
+            .as_deref()
+            .is_some_and(|tool| crate::account::TOOLS.contains(&tool))
+        {
             return Err(format!(
                 "no {tool} runs in pane {id}: start it there with `imkr account run {tool}:{name} -- {tool}`",
                 tool = account.tool,
@@ -5925,8 +5935,9 @@ impl App {
         // was told (#1305, the bee `fallback-konto`).
         let store = crate::account::Store::here()
             .map_err(|e| format!("cannot read the accounts here: {e}"))?;
-        if store.conversation(&account.tool, pane.session.as_deref())
-            == crate::account::Conversation::Missing
+        if same_tool
+            && store.conversation(&account.tool, pane.session.as_deref())
+                == crate::account::Conversation::Missing
         {
             let session = pane.session.as_deref().unwrap_or("unknown");
             return Err(format!(
@@ -5937,22 +5948,13 @@ impl App {
                 name = account.name
             ));
         }
-        let mut command = vec![
-            imkr_path(),
-            "account".to_owned(),
-            "run".to_owned(),
-            format!("{}:{}", account.tool, account.name),
-            "--".to_owned(),
-        ];
-        command.extend(crate::account::resume_command(
-            &account.tool,
+        let line = account_switch_line(
+            &imkr_path(),
+            &self.config,
+            account,
+            same_tool,
             pane.session.as_deref(),
-        ));
-        let line = command
-            .iter()
-            .map(|w| crate::client::sh_quote(w))
-            .collect::<Vec<_>>()
-            .join(" ");
+        );
         if !pane.stop_foreground() {
             return Err(format!("could not end the agent in pane {id}"));
         }
@@ -5960,12 +5962,20 @@ impl App {
         set_account(&mut pane.accounts, &account.tool, &account.name);
         self.switching.insert(
             id,
-            (line, crate::account::shown(&store, account), Instant::now()),
+            (
+                line,
+                crate::account::shown(&store, account),
+                account.tool.clone(),
+                Instant::now(),
+            ),
         );
         // The agent is gone: whatever its hook fetched and it had not acted
         // on was in no context and in no mailbox. Back it goes (#1313).
         self.give_back_mail(id, "its agent was restarted in another account first");
-        Ok(serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name }))
+        Ok(
+            serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name,
+            "conversation": if same_tool { "same" } else { "new" } }),
+        )
     }
 
     /// Types the commands of `switching` into shells that are back in front,
@@ -5978,14 +5988,31 @@ impl App {
                 continue;
             };
             let in_front = agent::is_shell(&pane.foreground_argv());
-            let (line, account, since) = self.switching[&id].clone();
+            let (line, account, tool, since) = self.switching[&id].clone();
             if in_front {
                 self.switching.remove(&id);
-                let _ = self.type_into(id, &line, true);
+                // SessionEnd is not guaranteed (Codex has no such hook).
+                // The next agent must establish its own session and mail
+                // hook, even when it is the same tool in another account.
+                let pane = self.panes.get_mut(&id).expect("looked up above");
+                pane.session = None;
+                pane.reported = None;
+                pane.failure = None;
+                pane.transcript = None;
+                pane.meta = None;
+                pane.takes_mail = false;
+                pane.submitted.clear();
+                if let Err(error) = self.type_into(id, &line, true) {
+                    let what =
+                        format!("pane {id}: could not start the agent in {account}: {error}");
+                    self.notify(id, "account", &what);
+                    self.flash = Some(what);
+                    continue;
+                }
                 // From here the restart is watched: it must not fail
                 // quietly (#1305). The account travels with it, because
                 // once the agent is gone the pane no longer names it.
-                self.resumed.insert(id, (account, Instant::now()));
+                self.resumed.insert(id, (account, tool, Instant::now()));
             } else if since.elapsed() > SWITCH_WAIT {
                 self.switching.remove(&id);
                 self.flash = Some(format!("pane {id}: the agent did not end, not switched"));
@@ -6003,15 +6030,13 @@ impl App {
                 self.resumed.remove(&id);
                 continue;
             };
-            let (account, since) = self.resumed[&id].clone();
+            let (account, tool, since) = self.resumed[&id].clone();
             let waited = since.elapsed();
             if waited < RESUME_GRACE {
                 continue;
             }
             let failed = crate::account::resume_failed(&agent::tail(&pane.screen(), USED_UP_LINES));
-            let back = pane
-                .program()
-                .is_some_and(|p| crate::account::TOOLS.contains(&p.as_str()));
+            let back = pane.program().is_some_and(|p| p == tool);
             let gone = crate::agent::is_shell(&pane.foreground_argv());
             if back && !failed {
                 self.resumed.remove(&id);
@@ -13150,7 +13175,8 @@ impl App {
     }
 
     /// The account list: Enter puts the focused agent into the chosen
-    /// account if it is that agent, else (and with `u`) new shells; `d`
+    /// account, starting a new conversation when changing agents. With
+    /// a shell in front (and with `u`) it chooses for new shells; `d`
     /// makes it the standard of this machine (`imkr account default`).
     fn accounts_key(&mut self, key: KeyEvent, selected: usize) {
         let (accounts, _) = self.account_items();
@@ -13190,7 +13216,12 @@ impl App {
         };
         self.mode = Mode::Normal;
         let focus = self.ws.focus;
-        let runs_it = self
+        let runs_it = self.panes.get(&focus).is_some_and(|p| {
+            p.program()
+                .as_deref()
+                .is_some_and(|tool| crate::account::TOOLS.contains(&tool))
+        });
+        let same_tool = self
             .panes
             .get(&focus)
             .is_some_and(|p| p.program().as_deref() == Some(account.tool.as_str()));
@@ -13203,8 +13234,14 @@ impl App {
         self.flash = Some(match self.request(request) {
             Ok(_) if pane.is_some() => {
                 format!(
-                    "restarts {} in account {} (same conversation)",
-                    account.tool, account.name
+                    "starts {} in account {} ({})",
+                    account.tool,
+                    account.name,
+                    if same_tool {
+                        "same conversation"
+                    } else {
+                        "new conversation"
+                    }
                 )
             }
             Ok(_) => format!(
@@ -14559,7 +14596,7 @@ impl App {
             Mode::Accounts(_) => (
                 "ACCOUNTS",
                 t.accent,
-                "↑↓ choose · Enter focused agent goes on in it · u new shells here · Esc cancel",
+                "↑↓ choose · Enter restart/change focused agent · u new shells here · Esc cancel",
             ),
             Mode::AgentAccount(_)
                 if self
@@ -15255,6 +15292,38 @@ fn switch_waits_for(unsent: Option<Unsent>, waited: Duration) -> Wait {
 /// hardly take it — the wait is mostly for a line a human just began.
 const UNSENT_WAIT: Duration = Duration::from_secs(60);
 
+/// A conversation belongs to its tool. Only an account change within
+/// that tool may resume it; changing tools uses the configured fresh start.
+fn account_switch_line(
+    imkr: &str,
+    config: &Config,
+    account: &crate::account::Account,
+    same_tool: bool,
+    session: Option<&str>,
+) -> String {
+    let mut command = vec![
+        imkr.to_owned(),
+        "account".to_owned(),
+        "run".to_owned(),
+        format!("{}:{}", account.tool, account.name),
+        "--".to_owned(),
+    ];
+    if same_tool {
+        command.extend(crate::account::resume_command(&account.tool, session));
+    } else {
+        command.extend([
+            "sh".to_owned(),
+            "-c".to_owned(),
+            config.agent_command(&account.tool),
+        ]);
+    }
+    command
+        .iter()
+        .map(|w| crate::client::sh_quote(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// How long `check_resumed` lets a restarted agent start before it looks:
 /// right after the command the shell is still in front.
 const RESUME_GRACE: Duration = Duration::from_secs(4);
@@ -15664,6 +15733,42 @@ fn with_title(label: String, title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::agent::AgentState;
+
+    #[test]
+    fn account_switch_resumes_only_the_same_agent() {
+        for tool in ["claude", "codex"] {
+            let account = crate::account::Account {
+                tool: tool.into(),
+                name: "work".into(),
+                ..Default::default()
+            };
+            let mut config = crate::config::Config::default();
+            config
+                .agent_commands
+                .insert(tool.into(), format!("{tool} --model 'custom model'"));
+            let run = |same, session| {
+                super::account_switch_line("/tmp/my imkr", &config, &account, same, session)
+            };
+            let resumed = run(true, Some("saved-session"));
+            assert!(resumed.contains("saved-session"));
+            assert!(resumed.contains(if tool == "codex" {
+                "resume"
+            } else {
+                "--resume"
+            }));
+            let fresh = run(false, Some("foreign-session"));
+            assert!(!fresh.contains("foreign-session"));
+            assert!(!fresh.contains("resume"));
+            assert!(fresh.contains("custom model"));
+            assert!(fresh.contains("'/tmp/my imkr' account run"));
+            let fallback = run(true, None);
+            assert!(fallback.contains(if tool == "codex" {
+                "--last"
+            } else {
+                "--continue"
+            }));
+        }
+    }
 
     /// Enter goes again only where something is really stuck — never into a
     /// pane somebody has touched since, where it would send what they are

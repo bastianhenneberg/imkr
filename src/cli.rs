@@ -3382,8 +3382,11 @@ pub fn account(args: &[String]) -> Result<()> {
                 // process cannot be changed. Saying “goes on” read as
                 // harmless and cost a session (#1305).
                 println!(
-                    "pane {}: restarts {} in account {} (same conversation)",
-                    reply["pane"], account.tool, account.name
+                    "pane {}: starts {} in account {} ({} conversation)",
+                    reply["pane"],
+                    account.tool,
+                    account.name,
+                    reply["conversation"].as_str().unwrap_or("same")
                 );
             } else {
                 println!(

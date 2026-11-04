@@ -1063,10 +1063,7 @@ pub const SESSION_LIST_KEYS: &[KeyHint] = &[
 /// The keys of the accounts (`Ctrl+B s c`).
 pub const ACCOUNT_LIST_KEYS: &[KeyHint] = &[
     ("↑↓", "select"),
-    (
-        "Enter",
-        "use: the focused agent goes on in it, else new shells",
-    ),
+    ("Enter", "restart/change the focused agent, else new shells"),
     ("u", "new shells of this session"),
     (
         "d",
