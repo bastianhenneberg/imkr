@@ -96,3 +96,29 @@ have not been validated. A transcript deliberately ending in the exact live
 footer can still mimic a dialog: screen inspection cannot prove modal state.
 A process freeze without those controls remains governed by output/idle
 heuristics. No claim of general hang detection is made.
+
+## Follow-up: actual live dialogs and color requirement
+
+A later keeper message reported real approval dialogs in the worker sessions
+while installed imkr still said working. On receipt, both dialogs were already
+gone: fresh `imkr read` and `explain` showed normal working composers (2/10 ms
+since output), so those particular transient screens could not be captured
+again without inventing a new approval. No foreign approval was answered.
+The installed binary still reported 0.21.94; this commit had only been tested
+in the isolated server.
+
+The first colorless capture was explained by `NO_COLOR=1` inherited from the
+tool environment. Repeating the actual isolated TUI with that variable removed
+produced ANSI foreground `38;5;9` for `codex ◆ blocked`, its frame and sidebar
+indicator: **light red, not blue**, under the built-in theme. Blue
+`38;2;97;175;239` belonged to focus/window labels. Captures and JSON from this
+repeat run are preserved separately at `/tmp/imkr-1335/color-recheck/`; the
+original driver filenames now hold this later run. The earlier notes/stale
+hook capture remains in `notes-explain.json`.
+
+This proves the current color output, not a desktop screenshot. The explicit
+request for blue needs a separate UI color change; sharing Claude's existing
+blocked state alone does not prove it blue. The keeper and the worker assigned
+visual bug #1338 were sent the exact evidence and source locations
+(`theme::HONEY.danger`, `sidebar::state_style`). That color requirement remains
+pending their visual integration check. The status fix does not change colors.
