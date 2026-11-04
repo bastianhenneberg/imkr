@@ -184,7 +184,10 @@ extraction of the first user message, recent compaction summaries and the last 2
 messages, plus identity, working directory, branch/HEAD/status references, keeper status and directory,
 notes and pending mail. Directories are private (0700), files 0600. imkr writes and syncs
 the package before stopping the source. It needs no source-model call, available tokens or
-summary request. The target can read the full snapshot when the extraction is insufficient.
+summary request. Both handoff starts and native resumes explicitly enter the source
+process's captured working directory, even when its waiting shell stayed elsewhere.
+An unavailable directory refuses the switch before termination; if it disappears during
+the restart, the target refuses to launch and prints an error instead of using the shell's directory. The target can read the full snapshot when the extraction is insufficient.
 It follows current permission rules: historical transcript and tool text grant no approvals.
 
 For Codex without hooks, imkr looks for an open transcript in the foreground process tree,

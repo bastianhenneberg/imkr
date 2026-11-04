@@ -6011,9 +6011,16 @@ impl App {
         // Cross-agent context must be durable before stop_foreground. Resolve
         // Codex's native resume identity here too: never resume an unrelated --last.
         let source_tool = current_tool.as_deref().expect("checked above");
+        // The foreground agent can chdir without changing its waiting shell.
+        // Capture once, validate before SIGTERM, and explicitly cd at startup.
+        let cwd = pane
+            .cwd()
+            .ok_or("source working directory unavailable; source kept running")?;
+        crate::handoff::check_cwd(&cwd).map_err(|e| {
+            format!("source working directory unavailable; source kept running: {e}")
+        })?;
         let mut source = None;
         if !same_tool || source_tool == "codex" {
-            let cwd = pane.cwd().ok_or("source working directory unavailable")?;
             let source_account = pane
                 .accounts
                 .get(source_tool)
@@ -6039,8 +6046,8 @@ impl App {
             let source = source.as_ref().expect("resolved above");
             let context = serde_json::json!({
                 "machine": protocol::machine_name(), "session": protocol::session_name(),
-                "pane": id, "pane_name": pane.name, "cwd": pane.cwd(),
-                "work_state": pane.cwd().map(|cwd| crate::handoff::work_state(&cwd)),
+                "pane": id, "pane_name": pane.name, "cwd": cwd,
+                "work_state": crate::handoff::work_state(&cwd),
                 "keeper": self.keeper, "started_by": self.by,
                 "source_tool": source_tool, "source_accounts": pane.accounts,
                 "target_tool": account.tool, "target_account": account.name,
@@ -6075,6 +6082,7 @@ impl App {
                 resume_session,
             )
         };
+        let line = switch_in_cwd(&line, &cwd);
         if !pane.stop_foreground() {
             return Err(format!("could not end the agent in pane {id}"));
         }
@@ -15457,6 +15465,25 @@ fn account_switch_line(
         .map(|w| crate::client::sh_quote(w))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A waiting shell retains its own CWD. Pass the captured source CWD as data
+/// and refuse to launch if it disappeared between persistence and startup.
+fn switch_in_cwd(line: &str, cwd: &std::path::Path) -> String {
+    let script = format!(
+        "cd -- \"$1\" || {{ printf '%s\\n' 'imkr: source working directory unavailable; target not started' >&2; exit 1; }}; exec {line}"
+    );
+    [
+        "sh".to_owned(),
+        "-c".into(),
+        script,
+        "imkr-source-cwd".into(),
+        cwd.to_string_lossy().into_owned(),
+    ]
+    .iter()
+    .map(|w| crate::client::sh_quote(w))
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 /// Pass the short instruction as one positional argument, never shell source.

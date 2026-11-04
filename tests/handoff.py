@@ -10,17 +10,18 @@ import json, os, signal, sys, time
 from pathlib import Path
 root = Path(os.environ['HANDOFF_TEST_ROOT'])
 tool = Path(sys.argv[0]).name
-with (root/'launches.jsonl').open('a') as log: log.write(json.dumps({'tool':tool,'argv':sys.argv})+'\n')
+if len(sys.argv)==1: os.chdir(root/"actual worktree ' $(touch CWD_INJECTED)")
+with (root/'launches.jsonl').open('a') as log: log.write(json.dumps({'tool':tool,'argv':sys.argv,'cwd':os.getcwd()})+'\n')
 if len(sys.argv)>1 and 'Read the saved agent handoff at ' in sys.argv[-1]:
     prompt=sys.argv[-1]
     path=Path(prompt.split('Read the saved agent handoff at ',1)[1].split(' and continue its original task.',1)[0])
     md=path.read_text(); raw=(path.parent/'source.jsonl').read_text()
-    (root/'received.json').write_text(json.dumps({'tool':tool,'prompt':prompt,'path':str(path),'md':md,'raw':raw,'argv':sys.argv,'provider':os.environ.get('ANTHROPIC_BASE_URL')}))
+    (root/'received.json').write_text(json.dumps({'tool':tool,'prompt':prompt,'path':str(path),'md':md,'raw':raw,'argv':sys.argv,'provider':os.environ.get('ANTHROPIC_BASE_URL'),'cwd':os.getcwd()}))
     print('HANDOFF READ OK',flush=True)
 else:
     source=root/('.codex/sessions/source-exact.jsonl' if tool=='codex' else '.claude/projects/test/source-exact.jsonl')
     source.parent.mkdir(parents=True,exist_ok=True)
-    records=([{'type':'session_meta','payload':{'id':'source-exact','cwd':str(root)}}, {'type':'response_item','payload':{'type':'message','role':'user','content':[{'type':'input_text','text':'LITERAL TASK repair the orchard'}]}}, {'type':'compacted','payload':{'summary':'DECISION preserve keeper role'}}, {'type':'response_item','payload':{'type':'message','role':'assistant','content':[{'type':'output_text','text':'WORK modified orchard.rs; next validate'}]}}] if tool=='codex' else [{'type':'user','sessionId':'source-exact','message':{'content':'LITERAL TASK repair the orchard'}},{'type':'summary','summary':'DECISION preserve keeper role'},{'type':'assistant','message':{'content':'WORK modified orchard.rs; next validate'}}])
+    records=([{'type':'session_meta','payload':{'id':'source-exact','cwd':os.getcwd()}}, {'type':'response_item','payload':{'type':'message','role':'user','content':[{'type':'input_text','text':'LITERAL TASK repair the orchard'}]}}, {'type':'compacted','payload':{'summary':'DECISION preserve keeper role'}}, {'type':'response_item','payload':{'type':'message','role':'assistant','content':[{'type':'output_text','text':'WORK modified orchard.rs; next validate'}]}}] if tool=='codex' else [{'type':'user','sessionId':'source-exact','message':{'content':'LITERAL TASK repair the orchard'}},{'type':'summary','summary':'DECISION preserve keeper role'},{'type':'assistant','message':{'content':'WORK modified orchard.rs; next validate'}}])
     source.write_text(''.join(json.dumps(r)+'\n' for r in records))
     held=source.open('a') # exact open FD, Codex has no status hook
     if tool=='claude':
@@ -29,7 +30,9 @@ else:
     (root/'source-ready').write_text(str(os.getpid()))
     def stop(*args):
         snapshots=[{'path':str(p),'raw_contains_task':'LITERAL TASK repair the orchard' in (p.parent/'source.jsonl').read_text()} for p in (root/'imkr/handoffs').glob('*/handoff.md')]
-        (root/'stopped').write_text(json.dumps(snapshots)); sys.exit(0)
+        (root/'stopped').write_text(json.dumps(snapshots))
+        if os.environ.get('REMOVE_CWD_ON_STOP'): Path.cwd().rename(root/'removed-worktree')
+        sys.exit(0)
     signal.signal(signal.SIGTERM,stop)
     if tool=='codex':
         h=os.get_terminal_size(0).lines
@@ -42,6 +45,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
     with tempfile.TemporaryDirectory(prefix='imkr-handoff-') as folder:
         # Deliberately hostile shell metacharacters in the persistent path.
         root=Path(folder)/"space ' $(touch INJECTED)";root.mkdir()
+        workdir=root/"actual worktree ' $(touch CWD_INJECTED)";workdir.mkdir()
         for tool in ('claude','codex'):
             p=root/tool;p.write_text(FAKE);p.chmod(0o755)
         policy={'claude':'--dangerously-skip-permissions','codex':'--yolo'}
@@ -58,6 +62,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 if test(): return
                 time.sleep(.1)
             raise AssertionError(label+'\n'+cli('list','--json').stdout+'\n'+cli('read','--pane',pane).stdout)
+        if failure=='cwd-race':env['REMOVE_CWD_ON_STOP']='1'
         tap=None
         try:
             r=cli('new','--start','--','bash','--noprofile','--norc');assert r.returncode==0,r.stderr
@@ -76,6 +81,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 for p in root.rglob('source-exact.jsonl'):p.unlink()
             if failure=='write':
                 base=root/'imkr/handoffs';base.parent.mkdir(parents=True,exist_ok=True);base.write_text('blocked')
+            if failure=='cwd-missing':workdir.rmdir()
             if failure=='draft':
                 tap=subprocess.Popen([binary,'tap',pane],env=env,cwd=root,text=True,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 tap.stdin.write(json.dumps({'text':'KEEP THIS DRAFT'})+'\n');tap.stdin.flush();time.sleep(.5)
@@ -84,6 +90,13 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 sent=cli('msg',pane,'PENDING MAIL preserve orchard decision')
                 assert sent.returncode==0,sent.stderr
             r=cli('account','switch',target_account,'--pane',pane,'--json')
+            if failure=='cwd-race':
+                assert r.returncode==0,(r.stdout,r.stderr)
+                until(lambda:'source working directory unavailable; target not started' in cli('read','--pane',pane).stdout,'runtime CWD refusal')
+                assert len((root/'launches.jsonl').read_text().splitlines())==1
+                assert not (root/'received.json').exists()
+                print('PASS',source_tool,'missing CWD at startup refuses target instead of falling back to shell CWD',flush=True)
+                return
             if failure:
                 assert r.returncode!=0,(failure,r.stdout,r.stderr)
                 assert not (root/'stopped').exists(),failure
@@ -97,11 +110,13 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 until(lambda:len((root/'launches.jsonl').read_text().splitlines())==2,'native resume launch')
                 launches=[json.loads(line) for line in (root/'launches.jsonl').read_text().splitlines()]
                 assert launches[-1]['argv'][1:]==['--model','custom model',policy[source_tool]]+(['resume','source-exact'] if source_tool=='codex' else ['--resume','source-exact']),launches
+                assert launches[-1]['cwd']==str(workdir),launches
                 assert not (root/'imkr/handoffs').exists()
                 print('PASS',source_tool,'same agent uses exact native resume without handoff',flush=True)
                 return
             assert reply['conversation']=='handoff'
             until(lambda:(root/'received.json').exists(),'target reads handoff')
+            until(lambda:any(p.get('program')==target for p in json.loads(cli('list','--json').stdout)),'target recognized in foreground')
             got=json.loads((root/'received.json').read_text())
             assert got['path']==reply['handoff']
             for marker in ('LITERAL TASK repair the orchard','DECISION preserve keeper role','WORK modified orchard.rs; next validate'):
@@ -109,6 +124,8 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 assert marker in got['raw'],marker
             assert '"keeper": true' in got['md']
             assert 'PENDING MAIL preserve orchard decision' in got['md']
+            assert got['cwd']==str(workdir),('TARGET CWD WRONG',got['cwd'],str(workdir))
+            assert not (root/'CWD_INJECTED').exists()
             assert got['tool']==target
             assert got['argv'][1:4]==['--model','custom model',policy[target]],got['argv']
             if provider:assert got['provider']=='http://127.0.0.1:9'
@@ -130,3 +147,7 @@ if __name__=='__main__':
     scenario(binary,'codex','missing')
 
     for tool in ('claude','codex'):scenario(binary,tool,resume=True)
+
+    for tool in ('claude','codex'):
+        scenario(binary,tool,'cwd-missing')
+        scenario(binary,tool,'cwd-race')

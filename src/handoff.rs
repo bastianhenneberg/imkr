@@ -303,6 +303,20 @@ pub fn prompt(path: &Path) -> String {
     )
 }
 
+/// Check before ending the source; startup checks again to close the race.
+pub fn check_cwd(cwd: &Path) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    if !fs::metadata(cwd)?.is_dir() {
+        bail!("source CWD is not a directory")
+    }
+    let path = std::ffi::CString::new(cwd.as_os_str().as_bytes())?;
+    // SAFETY: path is NUL-terminated and lives for the entire access call.
+    if unsafe { libc::access(path.as_ptr(), libc::X_OK) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("source CWD is not searchable");
+    }
+    Ok(())
+}
+
 /// Capture work references without running a shell or asking any model.
 pub fn work_state(cwd: &Path) -> Value {
     let mut result = serde_json::Map::new();

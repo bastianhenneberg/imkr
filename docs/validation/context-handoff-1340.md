@@ -39,6 +39,15 @@ literal task, decision and work markers. Checks cover:
 - Missing Claude and Codex transcripts, a handoff path blocked by a regular file,
   and a real input draft sent through `imkr tap`: request fails, source PID remains
   alive, SIGTERM handler was never called.
+- Source agents chdir into an actual worktree while their waiting shells stay in
+  the old directory. Both target directions and native resumes start in that actual
+  worktree, including spaces/apostrophes/`$(touch CWD_INJECTED)` in its path. The CWD
+  is captured once and supplied as a positional argument to a checked `cd` before
+  `exec`. Missing CWD before SIGTERM leaves the source alive; source-termination
+  handler removal of the CWD makes startup fail visibly without launching a target
+  in the old shell directory. These four extra failure scenarios bring the PTY
+  checks to twelve. The independent reviewer reproduction at
+  `/tmp/imkr-review-dc544f5/cwd-regression.py` also passed against this fixed build.
 - State paths containing spaces, apostrophes and `$(touch INJECTED)` remain literal;
   no command is executed. The target sees the exact path returned by CLI JSON.
 - The source SIGTERM handler itself observes the published Markdown and complete
