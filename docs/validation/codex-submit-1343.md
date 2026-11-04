@@ -165,3 +165,76 @@ Both explicit no-false-confirmation runs passed: laptop evidence
 `/tmp/imkr-submit-1343-lqm_6jkf/`. The codingmachine runtime identity, full mail
 logs, results and run logs are also collected on laptop in
 `/tmp/imkr-submit-1343/codingmachine/review-evidence.tgz`.
+
+## Portable keeper acceptance bundle
+
+Prepare a credential-free archive with the test binary, real frontend, the
+executable-only runtime release and the complete harness:
+
+```sh
+python3 tests/package_codex_submit.py \
+  --binary target/debug/imkr \
+  --codex /home/bastian/.local/share/mise/installs/codex/0.163.0/bin/codex \
+  --runtime /home/bastian/.codex/packages/app-server-daemon/releases/0.166.0-x86_64-unknown-linux-musl \
+  --out /tmp/imkr-submit-1343/codex-submit-1339.tgz
+```
+
+The packager exclusively creates a new output file and a SHA-256 sidecar. It
+never starts an application, installs anything or sends files to another host.
+The archive contains `README.txt`, `manifest.json` (per-file hashes), `run.py`,
+`codex_submit.py`, `imkr`, `codex` and `runtime/<release>/`. No account folder is
+packaged. Review those scripts and the manifest before execution.
+
+After copying the reviewed archive to **each host**, use a fresh directory:
+
+```sh
+review_dir=$(mktemp -d /tmp/imkr-1339-review.XXXXXX)
+tar -xzf /path/to/codex-submit-1339.tgz -C "$review_dir"
+python3 "$review_dir/run.py"
+```
+
+For codingmachine, execute those same commands over SSH as `codingmachine`.
+The runner checks artifact hashes and runs no-daemon plus managed sequentially;
+`--mode no-daemon` or `--mode managed` selects one. It writes per-run logs and
+`summary.json`. Every test application/PTY is created by the shielded harness,
+with its own HOME/XDG/config/state, loopback provider and fake notifier. The
+outer runner has a 180-second limit per mode; the harness also bounds individual
+operations and cleans its own servers in `finally`. A forcibly terminated
+harness requires checking only its exact private `SUBMIT_TEST_ROOT` processes.
+
+A passing bundle proves the specified isolated handshakes and guard cases on
+that host. It does not diagnose an unreproduced production already-bracketed
+mail stall or replace keeper rollout review. The history/composer fix on
+`91fd2ca` remains distinct from this direct-send first-submission fix.
+
+For one combined remote command after review, the repository also provides:
+
+```sh
+python3 tests/run_codex_submit_hosts.py \
+  --bundle /tmp/imkr-submit-1343/codex-submit-1339.tgz \
+  --host laptop --host codingmachine \
+  --output /tmp/imkr-1339-two-host-results
+```
+
+Use SSH destinations appropriate to the keeper's machine (`--host` accepts an
+SSH alias or `user@host`). This orchestrator copies the same archive to a fresh
+private `/tmp/imkr-1339-review.*` directory on each host, runs both modes,
+retains per-host logs and a combined summary, and returns nonzero if either host
+fails. The output directory must be new. It does not replace/install binaries
+in PATH or update existing servers. SSH/copy/remote-run operations are bounded.
+
+Prepared artifact: `/tmp/imkr-submit-1343/codex-submit-1339.tgz` with SHA-256
+`1d930f505d93fc13bbf6d336cd2be279e07eb2c1809ca53612d1ff2459100a79`;
+the checksum is also in `codex-submit-1339.tgz.sha256`. This initial archive was
+created at gzip's default compression level; the builder now uses level 1 for
+faster repackaging, so a rebuilt archive can have a different archive hash.
+Its per-file manifest still verifies the actual executable and harness contents.
+
+The prepared archive and SSH orchestrator were exercised together on
+codingmachine: `/tmp/imkr-submit-1343/bundle-run.log` and
+`/tmp/imkr-submit-1343/bundle-codingmachine/summary.json` report exit 0 for
+`/tmp/imkr-1339-review.MLAukv`. Both no-daemon and managed runs passed all real
+frontend assertions. Their remote evidence directories are
+`/tmp/imkr-submit-1343-04alfdp5/` and `/tmp/imkr-submit-1343-fs0wvs6_/`.
+Laptop's real frontend checks were already run directly as documented above;
+the combined two-destination command is provided for keeper reruns after review.
