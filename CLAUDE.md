@@ -56,7 +56,7 @@ Projekt-Slug: `imkr`
   → `agent::configure` (globales `EXTRA`, in `apply_theme`); `imkr explain` → `Pane::explain`. `App::update_agents` läuft bei jedem
   Tick (500 ms) und klingelt bei neuem `blocked`. Beantwortete Fragen: `Pane::note_input`.
   Codex-Ausnahme (#1335): `question_for` erkennt ausschließlich aktuelle Dialog-Footer
-  (`codex_dialog`, auch schmale Panes/Notizen, Codex 0.163.0). Diese schlagen Output und
+  (`codex_dialog`, auch MCP-Allow, schmale Panes/Notizen, Codex 0.163.0). Diese schlagen Output und
   alte Hook-Meldungen; `answered` gilt dort nicht, solange der Dialog weiter angezeigt
   wird (Tab/Pfeile sind keine Antwort). Echte TUI-Fixtures: `src/fixtures/codex-0.163.0/`;
   Messung/Grenzen: `docs/validation/codex-blocked-1335.md`.

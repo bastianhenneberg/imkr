@@ -240,3 +240,77 @@ The explicit **blue** requirement is still not met by this status patch: its
 measured built-in blocked color is light red. The assigned visual worker owns
 that coordinated UI check/change; no blue screenshot is claimed here. Bug
 status remains pending keeper acceptance.
+
+## MCP Allow follow-up: missing generic form footer
+
+The keeper supplied another real worker dialog with options Allow / Allow for
+this session / Always allow / Cancel and footer `enter to submit | esc to
+cancel`. The earlier fix did **not** recognize this footer. That worker
+session was already absent when this worker tried reading it; no approval was
+answered. Integration of the earlier commit was correctly held pending this
+follow-up.
+
+Reproduced with the real installed Codex 0.163.0, empty isolated HOME/state,
+local fake Responses endpoint on loopback port 18741 and a real local stdio MCP
+server exposing only a dummy `approvaltest.control` tool. The isolated Codex
+config sets that server's `default_tools_approval_mode = "prompt"` (official
+configuration reference linked above). The fake model emits a function call
+with `name: control, namespace: mcp__approvaltest`. The real TUI rendered:
+
+```
+Field 1/1
+Allow the approvaltest MCP server to run tool "control"?
+› 1. Allow   Run the tool and continue
+  2. Cancel  Cancel this tool call
+enter to submit | esc to cancel
+```
+
+This two-option dialog has the same reported footer. The literal four-option
+variant is additionally covered as a keeper-supplied test case; it is not
+claimed as a local four-option TUI capture.
+
+Before this follow-up, its recognizable screen remained working and the
+observer inbox was empty. Preserved evidence:
+`/tmp/imkr-1335/mcp-before/{waiting-read.json,waiting.json,inbox.txt}`.
+
+`codex_dialog` now also recognizes the normalized suffix `enter to submit esc
+to cancel`. The captured screen is checked in as
+`src/fixtures/codex-0.163.0/mcp-approval.txt`; it runs through the same
+live-dialog, stale-hook and historical-composer regression checks as the
+other fixtures. The extra suffix is matched only at the bottom of the live
+screen, not anywhere in recent text.
+
+The **real two-session MCP integration** now passes:
+
+1. Observer inbox lists waiting session's actual MCP Allow question.
+2. Empty-answer Enter switches to that session without granting permission.
+3. The MCP dialog is blocked with `reported: working`, output only 67 ms old,
+   `answered: false`, and the normalized MCP footer in `explain`.
+4. Select **Cancel (2)** and Enter only in this own fake test dialog. After
+   the own injected stale hook is cleared, the session returns to idle and
+   the observer inbox is empty. The MCP server's execution marker was never
+   created: the tool was not executed. Initially the fake model requested
+   the tool again after Cancel; returning a final fake answer instead fixed
+   the test harness, without a product-code change.
+
+Driver `/tmp/imkr-1335/mcp-cross.py`, stdio server
+`/tmp/imkr-1335/mcp-server.py`, log `/tmp/imkr-1335/mcp-cross-result.log`.
+Evidence `/tmp/imkr-1335/mcp-cross/`: `waiting-read.json`, `waiting.json`,
+`sessions.json`, `inbox.txt`, `switched.txt`, `after-switch.json`,
+`after-cancel-screen.txt`, `after-cancel-before-clear.json`,
+`after-cancel.json`, `inbox-after-cancel.txt`.
+
+The requested **negative history integration** also passes: a fake executable
+named codex prints the literal captured MCP dialog followed by Finished and
+the normal composer. `explain` reports `question: null, state: idle`; the
+pane list does not report blocked. Driver/log
+`/tmp/imkr-1335/mcp-history.py`, `/tmp/imkr-1335/mcp-history.log`; captures
+`/tmp/imkr-1335/mcp-history/{explain.txt,read.txt,list.txt}`.
+
+After this follow-up: **310 tests passed, 1 ignored**, clippy with warnings
+denied, fmt, diff check and HTML docs build passed. Logs `mcp-tests.log`,
+`mcp-clippy.log`, `mcp-docs.log` under `/tmp/imkr-1335/`. The count stays the
+same because the existing table-driven fixture test was extended. The
+baseline remains 309 passed, 1 ignored. All new test processes stopped. No
+real user/worker approval or production policy was changed. The separate blue
+color requirement and keeper acceptance remain open.

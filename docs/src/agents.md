@@ -31,7 +31,7 @@ Where pi is set up (`~/.pi/agent`), `--install` also puts an extension into its 
 reports pi's state the same way: working while it runs, done after its turn, waiting when an
 error stays after pi's own retries.
 
-Codex approval dialogs and structured questions (`request_user_input`, including notes)
+Codex command/MCP approval dialogs and structured questions (`request_user_input`, including notes)
 count as blocked while their live confirmation or submission controls are visible. This
 also applies while Codex redraws a spinner, after navigating the dialog, or when an older
 hook report still says working or idle. Old dialog text above the normal composer does

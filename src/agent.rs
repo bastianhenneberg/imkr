@@ -287,6 +287,8 @@ pub fn codex_dialog(screen: &crate::term::Parser) -> Option<String> {
         "Press enter to confirm or esc to cancel",
         "tab to add notes enter to submit answer esc to interrupt",
         "tab or esc to clear notes enter to submit answer",
+        // MCP tool approvals use the generic form dialog controls.
+        "enter to submit esc to cancel",
     ]
     .into_iter()
     .find(|footer| controls.ends_with(footer))
@@ -510,6 +512,9 @@ mod tests {
             include_str!("fixtures/codex-0.163.0/approval.txt"),
             include_str!("fixtures/codex-0.163.0/question.txt"),
             include_str!("fixtures/codex-0.163.0/notes.txt"),
+            include_str!("fixtures/codex-0.163.0/mcp-approval.txt"),
+            // Four-option variant reported from a real worker session.
+            "Field 1/1\nAllow tool?\n1. Allow\n2. Allow for this session\n3. Always allow\n4. Cancel\nenter to submit | esc to cancel",
             "Question 1/1 (1 unanswered)\nWhich approach?\n  tab to add notes\n  enter to submit answer\n  esc to interrupt",
         ] {
             let mut parser = crate::term::Parser::new(40, 120, 0);

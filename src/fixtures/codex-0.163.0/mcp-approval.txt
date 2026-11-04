@@ -1,0 +1,20 @@
+──╯
+
+
+  >_ OpenAI Codex (v0.163.0)
+     /tmp/imkr-1335/mcp-cross/work
+
+
+› test
+
+
+• Calling approvaltest.control
+    + Show details
+
+
+  Field 1/1
+  Allow the approvaltest MCP server to run
+  tool "control"?
+  › 1. Allow   Run the tool and continue
+    2. Cancel  Cancel this tool call
+  enter to submit | esc to cancel
