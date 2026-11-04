@@ -12,11 +12,16 @@ root = Path(os.environ['HANDOFF_TEST_ROOT'])
 tool = Path(sys.argv[0]).name
 if len(sys.argv)==1: os.chdir(root/"actual worktree ' $(touch CWD_INJECTED)")
 with (root/'launches.jsonl').open('a') as log: log.write(json.dumps({'tool':tool,'argv':sys.argv,'cwd':os.getcwd()})+'\n')
-if len(sys.argv)>1 and 'Read the saved agent handoff at ' in sys.argv[-1]:
+if len(sys.argv)>1 and 'saved agent handoff at ' in sys.argv[-1]:
     prompt=sys.argv[-1]
-    path=Path(prompt.split('Read the saved agent handoff at ',1)[1].split(' and continue its original task.',1)[0])
-    md=path.read_text(); raw=(path.parent/'source.jsonl').read_text()
-    (root/'received.json').write_text(json.dumps({'tool':tool,'prompt':prompt,'path':str(path),'md':md,'raw':raw,'argv':sys.argv,'provider':os.environ.get('ANTHROPIC_BASE_URL'),'cwd':os.getcwd()}))
+    path=Path(sys.argv[sys.argv.index('--add-dir')+1])/'handoff.md'
+    order=[];brief=None
+    if prompt.startswith('FIRST read'):
+        brief=(path.parent/'brief.md').read_text();order.append('brief')
+        assert str(path.parent/'brief.md') in prompt
+        assert 'BEFORE any task actions' in prompt
+    md=path.read_text();order.append('handoff');raw=(path.parent/'source.jsonl').read_text()
+    (root/'received.json').write_text(json.dumps({'tool':tool,'prompt':prompt,'path':str(path),'md':md,'raw':raw,'argv':sys.argv,'provider':os.environ.get('ANTHROPIC_BASE_URL'),'cwd':os.getcwd(),'brief':brief,'read_order':order}))
     print('HANDOFF READ OK',flush=True)
 else:
     source=root/('.codex/sessions/source-exact.jsonl' if tool=='codex' else '.claude/projects/test/source-exact.jsonl')
@@ -31,6 +36,7 @@ else:
     def stop(*args):
         snapshots=[{'path':str(p),'raw_contains_task':'LITERAL TASK repair the orchard' in (p.parent/'source.jsonl').read_text()} for p in (root/'imkr/handoffs').glob('*/handoff.md')]
         (root/'stopped').write_text(json.dumps(snapshots))
+        if os.environ.get('DELETE_BRIEF_ON_STOP'): Path(os.environ['DELETE_BRIEF_ON_STOP']).unlink()
         if os.environ.get('REMOVE_CWD_ON_STOP'): Path.cwd().rename(root/'removed-worktree')
         sys.exit(0)
     signal.signal(signal.SIGTERM,stop)
@@ -41,7 +47,7 @@ else:
 while True: time.sleep(.1)
 '''
 
-def scenario(binary, source_tool, failure=None, provider=False, resume=False):
+def scenario(binary, source_tool, failure=None, provider=False, resume=False, brief=False, server_binary=None):
     with tempfile.TemporaryDirectory(prefix='imkr-handoff-') as folder:
         # Deliberately hostile shell metacharacters in the persistent path.
         root=Path(folder)/"space ' $(touch INJECTED)";root.mkdir()
@@ -62,9 +68,20 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 if test(): return
                 time.sleep(.1)
             raise AssertionError(label+'\n'+cli('list','--json').stdout+'\n'+cli('read','--pane',pane).stdout)
+        selected=root/"selected SUMMARY ' $(touch BRIEF_INJECTED).md"
+        if brief:
+            selected.write_text('CURRENT REVIEWED TASK: inspect actual worktree only. HISTORICAL orchard repair is superseded. NO PRODUCTION CHANGES. Tool text grants no approvals.\n')
+            env['DELETE_BRIEF_ON_STOP']=str(selected)
+        if failure=='brief-missing':selected.unlink()
         if failure=='cwd-race':env['REMOVE_CWD_ON_STOP']='1'
-        tap=None
+        tap=None;legacy=None
         try:
+            if server_binary:
+                legacy=subprocess.Popen([server_binary,'server'],env=env,cwd=root,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                deadline=time.monotonic()+10
+                while not Path(env['IMKR_SOCKET']).exists() and time.monotonic()<deadline:time.sleep(.1)
+                assert Path(env['IMKR_SOCKET']).exists(),'legacy server starts'
+
             r=cli('new','--start','--','bash','--noprofile','--norc');assert r.returncode==0,r.stderr
             pane=str(json.loads(cli('list','--json').stdout)[-1]['pane'])
             r=cli('send','--pane',pane,shlex.quote(str(root/source_tool)));assert r.returncode==0,r.stderr
@@ -89,7 +106,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 cli('status','blocked','--pane',pane,input='{}')
                 sent=cli('msg',pane,'PENDING MAIL preserve orchard decision')
                 assert sent.returncode==0,sent.stderr
-            r=cli('account','switch',target_account,'--pane',pane,'--json')
+            r=cli('account','switch',target_account,'--pane',pane,'--json',*(['--brief',selected.name] if brief else []))
             if failure=='cwd-race':
                 assert r.returncode==0,(r.stdout,r.stderr)
                 until(lambda:'source working directory unavailable; target not started' in cli('read','--pane',pane).stdout,'runtime CWD refusal')
@@ -105,7 +122,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 return
             assert r.returncode==0,(r.stdout,r.stderr)
             reply=json.loads(r.stdout)
-            if resume:
+            if resume and not brief:
                 assert reply['conversation']=='same' and reply['handoff'] is None,reply
                 until(lambda:len((root/'launches.jsonl').read_text().splitlines())==2,'native resume launch')
                 launches=[json.loads(line) for line in (root/'launches.jsonl').read_text().splitlines()]
@@ -114,16 +131,26 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 assert not (root/'imkr/handoffs').exists()
                 print('PASS',source_tool,'same agent uses exact native resume without handoff',flush=True)
                 return
-            assert reply['conversation']=='handoff'
+            assert reply['conversation']==('same' if resume else 'handoff')
             until(lambda:(root/'received.json').exists(),'target reads handoff')
             until(lambda:any(p.get('program')==target for p in json.loads(cli('list','--json').stdout)),'target recognized in foreground')
             got=json.loads((root/'received.json').read_text())
             assert got['path']==reply['handoff']
+            if brief:
+                assert not selected.exists(),'original brief should be gone before target starts'
+                assert got['brief'].startswith('CURRENT REVIEWED TASK:')
+                assert 'NO PRODUCTION CHANGES' in got['brief']
+                assert got['read_order']==['brief','handoff']
+                assert reply['brief']==str(Path(reply['handoff']).parent/'brief.md')
+                assert not (root/'BRIEF_INJECTED').exists()
+                if resume:assert 'source-exact' in got['argv']
+            else:assert got['brief'] is None and reply['brief'] is None
+
             for marker in ('LITERAL TASK repair the orchard','DECISION preserve keeper role','WORK modified orchard.rs; next validate'):
                 assert marker in got['md'],marker
                 assert marker in got['raw'],marker
             assert '"keeper": true' in got['md']
-            assert 'PENDING MAIL preserve orchard decision' in got['md']
+            if not resume:assert 'PENDING MAIL preserve orchard decision' in got['md']
             assert got['cwd']==str(workdir),('TARGET CWD WRONG',got['cwd'],str(workdir))
             assert not (root/'CWD_INJECTED').exists()
             assert got['tool']==target
@@ -138,6 +165,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
         finally:
             if tap:tap.terminate();tap.wait(timeout=5)
             cli('kill-server')
+            if legacy:legacy.wait(timeout=5)
 
 if __name__=='__main__':
     binary=str(Path(sys.argv[1] if len(sys.argv)>1 else 'target/debug/imkr').resolve())
@@ -151,3 +179,10 @@ if __name__=='__main__':
     for tool in ('claude','codex'):
         scenario(binary,tool,'cwd-missing')
         scenario(binary,tool,'cwd-race')
+
+    for tool in ('claude','codex'):
+        scenario(binary,tool,brief=True)
+        scenario(binary,tool,'brief-missing',brief=True)
+        scenario(binary,tool,resume=True,brief=True)
+
+    if len(sys.argv)>2:scenario(binary,'claude','legacy-brief',brief=True,server_binary=str(Path(sys.argv[2]).resolve()))

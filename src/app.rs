@@ -2897,8 +2897,25 @@ impl App {
                         self.accounts.insert(tool.clone(), name.clone());
                         Ok(serde_json::json!({ "tool": tool, "account": name }))
                     }
-                    Some(id) => self.switch_account(id, &account, Throw::Never),
+                    Some(id) => self.switch_account(id, &account, Throw::Never, None),
                 }
+            }
+            Request::UseAccountWithBrief {
+                tool,
+                name,
+                pane,
+                brief,
+            } => {
+                let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
+                let account = store
+                    .find(&tool, &name)
+                    .ok_or(format!("no {tool} account {name}, see `imkr account`"))?;
+                if !store.logged_in(&account) {
+                    return Err(format!(
+                        "{tool} account {name} is not logged in: `imkr account login {tool}:{name}`"
+                    ));
+                }
+                self.switch_account(pane, &account, Throw::Never, Some(&brief))
             }
             Request::ReloadConfig => {
                 self.reload_config();
@@ -5954,6 +5971,7 @@ impl App {
         id: PaneId,
         account: &crate::account::Account,
         keep: Throw,
+        brief: Option<&std::path::Path>,
     ) -> Reply {
         if self.switching.contains_key(&id) || self.resumed.contains_key(&id) {
             return Err(format!(
@@ -6020,7 +6038,7 @@ impl App {
             format!("source working directory unavailable; source kept running: {e}")
         })?;
         let mut source = None;
-        if !same_tool || source_tool == "codex" {
+        if !same_tool || brief.is_some() || source_tool == "codex" {
             let source_account = pane
                 .accounts
                 .get(source_tool)
@@ -6042,7 +6060,7 @@ impl App {
                 .map_err(|e| format!("cannot preserve context: {e}"))?,
             );
         }
-        let handoff = if !same_tool {
+        let handoff = if !same_tool || brief.is_some() {
             let source = source.as_ref().expect("resolved above");
             let context = serde_json::json!({
                 "machine": protocol::machine_name(), "session": protocol::session_name(),
@@ -6051,6 +6069,7 @@ impl App {
                 "keeper": self.keeper, "started_by": self.by,
                 "source_tool": source_tool, "source_accounts": pane.accounts,
                 "target_tool": account.tool, "target_account": account.name,
+                "selected_brief": brief,
                 "keeper_directory": crate::keeper::dir(&protocol::session_name()).ok(),
                 "pending_mail": self.mailbox.iter().filter(|m| m.pane == id).collect::<Vec<_>>(),
                 "handed_mail": pane.handed, "notes": pane.notes,
@@ -6061,6 +6080,7 @@ impl App {
                     source,
                     source_tool,
                     &context,
+                    brief,
                 )
                 .map_err(|e| format!("handoff not saved; source kept running: {e}"))?,
             )
@@ -6072,7 +6092,15 @@ impl App {
             .as_deref()
             .or_else(|| source.as_ref().map(|s| s.session.as_str()));
         let line = if let Some(path) = handoff.as_deref() {
-            handoff_switch_line(&imkr_path(), &self.config, account, path)
+            handoff_switch_line(
+                &imkr_path(),
+                &self.config,
+                account,
+                path,
+                same_tool,
+                resume_session,
+                brief.is_some(),
+            )
         } else {
             account_switch_line(
                 &imkr_path(),
@@ -6105,7 +6133,8 @@ impl App {
         self.give_back_mail(id, "its agent was restarted in another account first");
         Ok(
             serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name,
-            "conversation": if same_tool { "same" } else { "handoff" }, "handoff": handoff }),
+            "conversation": if same_tool { "same" } else { "handoff" }, "handoff": handoff,
+            "brief": handoff.as_ref().filter(|_| brief.is_some()).map(|path| path.parent().expect("package directory").join("brief.md")) }),
         )
     }
 
@@ -6383,7 +6412,7 @@ impl App {
             // the pane this is about is named in front of the message.
             return format!("{lead}: Ctrl+B s C restarts it there in {there}{free}");
         }
-        match self.switch_account(*id, &next, choice.throw) {
+        match self.switch_account(*id, &next, choice.throw, None) {
             Ok(_) => format!("{lead}: restarts {tool} in {there}{free}, same conversation"),
             Err(e) => format!("{lead}, not switched: {e}"),
         }
@@ -15493,9 +15522,22 @@ fn handoff_switch_line(
     config: &Config,
     account: &crate::account::Account,
     path: &std::path::Path,
+    same_tool: bool,
+    session: Option<&str>,
+    brief: bool,
 ) -> String {
+    let resume = if same_tool {
+        crate::account::resume_command(&account.tool, session)
+            .into_iter()
+            .skip(1)
+            .map(|w| crate::client::sh_quote(&w))
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        String::new()
+    };
     let script = format!(
-        "exec {} --add-dir \"$1\" -- \"$2\"",
+        "exec {} {resume} --add-dir \"$1\" -- \"$2\"",
         config.agent_command(&account.tool)
     );
     [
@@ -15512,7 +15554,7 @@ fn handoff_switch_line(
             .expect("handoff directory")
             .to_string_lossy()
             .into_owned(),
-        crate::handoff::prompt(path),
+        crate::handoff::prompt(path, brief),
     ]
     .iter()
     .map(|w| crate::client::sh_quote(w))

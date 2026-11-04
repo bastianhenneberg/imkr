@@ -494,6 +494,13 @@ pub enum Request {
         #[serde(default)]
         pane: Option<PaneId>,
     },
+    /// Separate variant: older servers must reject, not silently ignore the brief.
+    UseAccountWithBrief {
+        tool: String,
+        name: String,
+        pane: PaneId,
+        brief: PathBuf,
+    },
     /// Marks this session as a keeper's, or takes the mark off (#9133).
     Keeper { mark: bool },
     /// Send the active client to `target` (`host:session`), e.g. once a

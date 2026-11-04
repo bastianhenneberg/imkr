@@ -16,7 +16,7 @@ cargo build
 python3 tests/handoff.py target/debug/imkr
 ```
 
-Results: **319 passed, 1 ignored**; Clippy clean. The hostname override isolates an
+Results: **320 passed, 1 ignored**; Clippy clean. The hostname override isolates an
 existing test that assumes `laptop` is a remote machine (without the override,
 `only_a_pane_can_be_told_its_message_did_not_arrive` fails on this laptop).
 
@@ -91,3 +91,30 @@ real PTYs exercise the restart, shell quoting, account environment and file read
 User approval dialogs were not answered, and target-agent trust/permission policy
 continues to apply. Existing automatic same-agent fallback's bounded draft wait
 was not changed.
+
+## Explicit brief before the first target action
+
+`account switch --brief FILE` reads a selected regular, nonempty UTF-8 file on the
+server host and stores it as `brief.md` (0600) in the staged package. It is synced
+along with the complete transcript and Markdown before the source receives SIGTERM.
+The very first target argument instructs it to read the copied brief first, reconcile
+its current assignment/restrictions with historical context, and avoid superseded
+tasks. This is an explicit selection, not automatic recovery-package discovery or
+an approval inferred from historical tool output. CWD behavior remains source-process
+CWD; the three real recovery summaries must specify their proven action worktrees.
+
+Both cross-agent directions and both native resumes with a brief are tested. The
+source SIGTERM handler deletes the original selected SUMMARY before the target runs;
+the target still reads the private durable copy **before** handoff.md. CLI JSON
+returns both saved paths. Missing selected briefs in both directions refuse with
+the source alive; empty/non-UTF8 briefs are rejected by unit tests. Relative source
+brief paths with spaces/apostrophes/`$(...)` stay literal. The explicit brief uses a
+new wire request, so older servers cannot silently discard the argument. Optional
+integration invocation against an archived old server:
+
+```sh
+python3 tests/handoff.py target/debug/imkr /tmp/imkr-review-dc544f5-target/debug/imkr
+```
+
+The eighteen regular PTY scenarios become nineteen with this old-server refusal
+check. No original session or reviewed recovery summary is changed by these tests.

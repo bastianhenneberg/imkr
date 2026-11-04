@@ -3079,7 +3079,7 @@ pub fn hive(args: &[String]) -> Result<()> {
 pub fn account(args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: imkr account [ls [--json]] | add claude|codex NAME [--url URL] [--model M] \
                          [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
-                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] [--json] \
+                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] [--json] [--brief FILE] \
                          | default [NAME] | usage [--json]";
     // How much each account used of its plan; `--wait` keeps it on screen
     // in the popup of Ctrl+B s u.
@@ -3130,6 +3130,19 @@ pub fn account(args: &[String]) -> Result<()> {
     let switch_json =
         rest.first().is_some_and(|arg| arg == "switch") && take_flag(&mut rest, "--json");
     let pane = take_pane(&mut rest)?;
+    let brief = take_value(&mut rest, "--brief")?
+        .map(|path| {
+            let path = std::path::PathBuf::from(path);
+            if path.is_absolute() {
+                Ok(path)
+            } else {
+                std::env::current_dir().map(|cwd| cwd.join(path))
+            }
+        })
+        .transpose()?;
+    if brief.is_some() && !rest.first().is_some_and(|arg| arg == "switch") {
+        bail!("--brief is only for account switch");
+    }
     let token_stdin = take_flag(&mut rest, "--token-stdin");
     let url = take_value(&mut rest, "--url")?;
     let model = take_value(&mut rest, "--model")?;
@@ -3376,11 +3389,28 @@ pub fn account(args: &[String]) -> Result<()> {
             if now && pane.is_none() {
                 bail!("which pane? `--pane N`, or run it in the pane");
             }
-            let reply = client::request(Request::UseAccount {
-                tool: account.tool.clone(),
-                name: account.name.clone(),
-                pane: if now { pane } else { None },
-            })?;
+            let has_brief = brief.is_some();
+            let request = if let Some(brief) = brief {
+                Request::UseAccountWithBrief {
+                    tool: account.tool.clone(),
+                    name: account.name.clone(),
+                    pane: pane.expect("switch requires a pane"),
+                    brief,
+                }
+            } else {
+                Request::UseAccount {
+                    tool: account.tool.clone(),
+                    name: account.name.clone(),
+                    pane: if now { pane } else { None },
+                }
+            };
+            let reply = if has_brief {
+                client::request(request).context(
+                    "briefed switch failed (server must support --brief; no unbriefed fallback)",
+                )?
+            } else {
+                client::request(request)?
+            };
             if now && switch_json {
                 println!("{}", serde_json::to_string(&reply)?);
             } else if now && reply["handoff"].is_string() {

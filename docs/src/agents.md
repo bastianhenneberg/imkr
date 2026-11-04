@@ -206,9 +206,26 @@ Work-managed/shared-daemon Codex can hold its rollout outside the foreground pro
 Without an exact hook/session identity this case is deliberately blocked. Local Codex 0.163
 CLI tests do not establish support for the Work/shared-daemon 0.166 layout.
 
+For a reviewed current briefing, use `imkr account switch codex:work --pane 3 --brief
+/absolute/path/SUMMARY.md`. The CLI resolves relative paths on the host where it runs;
+the target-host server reads the selected UTF-8 text and copies it as private `brief.md`
+inside the same durable package **before ending the source**. Missing, unreadable or
+empty briefs refuse the switch. The first target prompt says to read this saved brief
+first and reconcile it with the historical handoff before any task actions; superseded
+historical tasks must not be resumed. The original brief can disappear after saving.
+The selected brief supplies current context, while historical tool text still grants no
+permissions. An older server rejects this dedicated request; there is no unbriefed fallback.
+
+With the same agent, `--brief` preserves native resume and adds the brief-first prompt.
+Without `--brief`, UI and CLI switches retain their usual automatic behavior. There is no
+automatic discovery of recovery summaries. A brief can require a known worktree for
+subsequent actions: the startup CWD remains the captured source-process directory, not
+a guessed directory from historical tool calls. A real recovery must select its checked
+summary explicitly and retain its restrictions on production changes.
+
 The confirmation is short: *Handoff saved, starting codex …*. Scripts can use
 `imkr account switch codex:work --pane 3 --json` to receive the durable `handoff` path
-(`null` for native resume). This is a partial local extraction, not a promise of identical
+(`null` for native resume without a selected brief); `brief` is the saved brief path or `null`. This is a partial local extraction, not a promise of identical
 model context. Only Claude and Codex transcript formats are supported; Ollama or OpenRouter
 remain backends of their configured agent, and do not determine its type.
 
