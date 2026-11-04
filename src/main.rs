@@ -293,6 +293,16 @@ Inside imkr, Ctrl+B then q opens the quit menu: detach, close the pane or end th
 session. Ctrl+B then d detaches right away, the shells keep running.";
 
 fn main() -> Result<()> {
+    // Codex's command runner sets NO_COLOR for captured command output.
+    // A server started from it is an interactive terminal for the user,
+    // not captured output: inheriting it hides both imkr's menu highlights
+    // and its programs' colours. Do this before any threads or colour caches
+    // are created, including on live update of an affected server. An
+    // ordinary user's NO_COLOR (without Codex's runner marker) still applies.
+    if std::env::args().skip(1).eq(["server"]) && std::env::var("CODEX_CI").as_deref() == Ok("1") {
+        // SAFETY: main has not started any threads yet.
+        unsafe { std::env::remove_var("NO_COLOR") };
+    }
     // A client that started itself again after an update goes back to where
     // it was.
     if std::env::var_os("IMKR_REEXEC").is_some() {
