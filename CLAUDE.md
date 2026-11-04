@@ -560,12 +560,16 @@ Projekt-Slug: `imkr`
 - Settings-Sync: `src/settings.rs` (`collect`: config + `templates/` + `layouts.json` + eigene
   `plugins/*.toml`, keine Links; `plan` gegen den Stand nach dem letzten Sync (`base`,
   `.sync-base/<host>.json` (0600, enthält die Kontoliste), nur auf dem Rechner, der synct): wer seitdem geändert hat, gewinnt,
-  die Config je Schlüssel (`config_steps`, ohne `LOCAL_KEYS`; beide/erster Sync: dieser Rechner),
+  die Config je Schlüssel (`config_steps`, ohne `LOCAL_KEYS`; beide geändert: dieser Rechner;
+  Erstsync: nur fehlende Schlüssel in beide Richtungen, bestehende Abweichungen als Konflikt).
+  Solange Erstsync-Konflikte offen sind, keine Baseline schreiben (auch bei leerem Plan),
+  sonst überschreibt der nächste 3-Wege-Sync die geschützten Werte.
   Dateien bei beiden geändert: die neuere; Falle: mtime allein sagt nichts, imkr speichert die
   Config auch ohne Änderung durch den User; `apply` prüft Pfade per `allowed`, sichert nach `.sync-backup/<zeit>/`, behält beim Config
   die eigenen `LOCAL_KEYS`, prüft mit `Config::parse`, setzt die mtime der Quelle). CLI
   `settings sync|export|import` (`cli::sync_settings_with`, drüben per `remote_output`), danach
-  `Request::ReloadConfig` an alle Sessions. `hosts sync` gleicht nach den Upgrades nacheinander ab.
+  `Request::ReloadConfig` an alle Sessions. `hosts sync` gleicht nach den Upgrades nacheinander ab, mit Rückfrage
+  wie `settings sync` (kein erzwungenes yes; ohne TTY keine Übertragung).
   Kontoliste (`accounts.toml` aus dem State, `ACCOUNTS`) wird vereinigt statt ersetzt
   (`plan`: Push nur wenn hier seit dem Sync geändert und drüben Namen fehlen, Pull nur wenn drüben
   Namen stehen, die hier fehlen — Listen dürfen dauerhaft verschieden sein; `apply` → `Store::merge_in`: fehlende anhängen samt Ordner,

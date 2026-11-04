@@ -41,10 +41,16 @@ what belongs to one machine: `name`, `hosts`, `web`, `web_listen`), session temp
 layouts, the list of accounts (without their logins) and your own plugins (not the ones installed with `imkr plugin add`, every machine gets
 those itself). imkr remembers what both had after each sync, so whatever one side changed since
 goes to the other: the config setting by setting, the other files whole. What both changed keeps
-this machine's setting (a file: the newer one); so does the very first sync. Missing files are
+this machine's setting (a file: the newer one). On the first sync, only missing config keys
+travel, in both directions. Existing differing values stay on their own machines and are listed
+as conflicts, even with `--yes`. Align them manually and sync again to establish a baseline.
+Until then, later runs still protect those differences; changes to existing keys do not propagate.
+Missing files are
 copied, the replaced file is kept in `.sync-backup/` next to the config, and running sessions
 load the result. It lists what goes where and asks first (`--yes` does not); `imkr hosts sync`
-does it too, after the update. Files deleted on one machine are not deleted on the others.
+does it too, after the update, with the same confirmation. Without a terminal it leaves
+the settings as they were; use `imkr settings sync --yes` explicitly for unattended copying.
+Files deleted on one machine are not deleted on the others.
 Accounts are joined: each machine gets the ones it lacks, a subscription shows there as not
 logged in until `imkr account login NAME`, and its default counts once it is logged in. Logins
 never travel: two machines renewing one login would log each other out.

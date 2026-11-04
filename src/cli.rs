@@ -4096,7 +4096,7 @@ fn hosts_sync() -> Result<()> {
     // Then the settings, one machine after the other: two at once would
     // write the same files here.
     for host in current {
-        match sync_settings_with(&host, true) {
+        match sync_settings_with(&host, false) {
             Ok(done) => println!("{host:<20} {done}"),
             Err(e) => {
                 failed = true;
@@ -4184,11 +4184,16 @@ fn sync_settings_with(host: &str, yes: bool) -> Result<String> {
     let base = crate::settings::base(host);
     let (steps, undecided) = plan(&local, &remote, base.as_deref());
     for path in &undecided {
-        println!("{host:<20} {path}: differs, but both are as old, left alone");
+        println!("{host:<20} {path}: unresolved, left alone");
     }
     if steps.is_empty() {
-        crate::settings::remember_base(host)?;
-        return Ok("settings: the same".into());
+        if undecided.is_empty() {
+            crate::settings::remember_base(host)?;
+            return Ok("settings: the same".into());
+        }
+        return Ok(
+            "settings: unresolved differences kept; align them manually and sync again".into(),
+        );
     }
     println!("{host:<20} settings:");
     for step in &steps {
@@ -4214,8 +4219,9 @@ fn sync_settings_with(host: &str, yes: bool) -> Result<String> {
             &serde_json::to_string(&pushes)?,
         )?;
     }
-    // What both have now is the base for next time; files left alone
-    // stay undecided until one side changes them.
+    // Never record one side of an unresolved config as a shared baseline:
+    // the next run would mistake that difference for a remote edit.
+    // Keep first-sync rules until the conflicting values are aligned.
     if undecided.is_empty() {
         crate::settings::remember_base(host)?;
     }

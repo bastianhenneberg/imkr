@@ -4,8 +4,8 @@
 //! sync (the base), what one side changed goes to the other: the config
 //! setting by setting, the other files whole. What both changed: the
 //! config keeps this machine's value, a file the newer one. Without a
-//! base, this machine's config values win and files the newer one. The
-//! file replaced is backed up first.
+//! base, only missing config keys travel; differing values stay as conflicts.
+//! Files keep the newer one. The file replaced is backed up first.
 
 use std::fs;
 use std::path::Path;
@@ -145,8 +145,8 @@ pub fn allowed(path: &str) -> bool {
 
 /// What to copy between here (`local`) and another machine (`remote`),
 /// given their state after the last sync (`base`, `None` before the
-/// first). Also returns the files both changed to the same age, left
-/// alone.
+/// first). Also returns unresolved config keys and files both changed
+/// to the same age, left alone.
 pub fn plan(local: &[Item], remote: &[Item], base: Option<&[Item]>) -> (Vec<Step>, Vec<String>) {
     let find = |items: &[Item], path: &str| items.iter().find(|i| i.path == path).cloned();
     let mut paths: Vec<&str> = local
@@ -162,12 +162,10 @@ pub fn plan(local: &[Item], remote: &[Item], base: Option<&[Item]>) -> (Vec<Step
         let (here, there) = (find(local, path), find(remote, path));
         let was = base.and_then(|b| find(b, path));
         if path == CONFIG {
-            steps.extend(config_steps(
-                here.as_ref(),
-                there.as_ref(),
-                was.as_ref(),
-                base.is_some(),
-            ));
+            let (config, conflicts) =
+                config_steps(here.as_ref(), there.as_ref(), was.as_ref(), base.is_some());
+            steps.extend(config);
+            undecided.extend(conflicts);
             continue;
         }
         let step = |way, why: &str| Step {
@@ -244,15 +242,51 @@ fn shared_table(item: Option<&Item>) -> toml::Table {
 }
 
 /// The config, setting by setting: what one side changed since `was`
-/// wins; what both changed, or without a base what differs, keeps this
-/// machine's value. Steps to write the result where it differs.
+/// wins; what both changed keeps this machine's value. Without a base,
+/// only missing keys travel and existing differences are reported as conflicts.
 fn config_steps(
     here: Option<&Item>,
     there: Option<&Item>,
     was: Option<&Item>,
     synced: bool,
-) -> Vec<Step> {
+) -> (Vec<Step>, Vec<String>) {
     let (mine, theirs, base) = (shared_table(here), shared_table(there), shared_table(was));
+    if !synced {
+        let mut for_here = mine.clone();
+        let mut for_there = theirs.clone();
+        let mut conflicts = Vec::new();
+        for (key, value) in &mine {
+            match theirs.get(key) {
+                None => {
+                    for_there.insert(key.clone(), value.clone());
+                }
+                Some(other) if value != other => {
+                    conflicts.push(format!(
+                        "config.toml: {key} (conflict; existing values kept)"
+                    ));
+                }
+                _ => {}
+            }
+        }
+        for (key, value) in &theirs {
+            for_here.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        let mut steps = Vec::new();
+        for (way, merged, original) in [
+            (Way::Pull, for_here, &mine),
+            (Way::Push, for_there, &theirs),
+        ] {
+            if &merged != original {
+                steps.push(Step {
+                    path: CONFIG.to_owned(),
+                    way,
+                    why: "first sync, missing keys only".into(),
+                    text: Some(toml::to_string(&merged).unwrap_or_default()),
+                });
+            }
+        }
+        return (steps, conflicts);
+    }
     let mut merged = mine.clone();
     let mut taken = Vec::new();
     let mut kept = Vec::new();
@@ -264,7 +298,7 @@ fn config_steps(
         if m == t {
             continue;
         }
-        if synced && m == b {
+        if m == b {
             match t {
                 Some(value) => merged.insert(key.clone(), value.clone()),
                 None => merged.remove(key),
@@ -285,10 +319,10 @@ fn config_steps(
         });
     }
     if there.is_some() && merged != theirs || there.is_none() && here.is_some() {
-        let why = match (kept.is_empty(), synced) {
-            (true, _) => "only here".to_owned(),
-            (false, true) => format!("changed here: {}", kept.join(", ")),
-            (false, false) => format!("first sync, this machine's: {}", kept.join(", ")),
+        let why = if kept.is_empty() {
+            "only here".to_owned()
+        } else {
+            format!("changed here: {}", kept.join(", "))
         };
         steps.push(Step {
             path: CONFIG.to_owned(),
@@ -297,7 +331,7 @@ fn config_steps(
             text: Some(text),
         });
     }
-    steps
+    (steps, Vec::new())
 }
 
 /// Writes `items` here, each after a backup of the file it replaces, and
@@ -587,16 +621,50 @@ mod tests {
     }
 
     #[test]
-    fn first_sync_keeps_this_machines_settings() {
+    fn first_sync_preserves_existing_values() {
         let here = [item(
             "config.toml",
             1,
             "catalogs = [\"x\"]\nname = \"desk\"\n",
         )];
         let there = [item("config.toml", 9, "catalogs = []\nname = \"srv\"\n")];
-        let (steps, _) = plan(&here, &there, None);
-        assert_eq!(paths(&steps), [("config.toml", Way::Push)]);
-        assert!(steps[0].text.as_deref().unwrap().contains("\"x\""));
+        let (steps, conflicts) = plan(&here, &there, None);
+        assert!(steps.is_empty());
+        assert_eq!(conflicts.len(), 1);
+        assert!(conflicts[0].contains("catalogs"));
+    }
+
+    #[test]
+    fn first_sync_fills_both_sides_without_touching_conflicts() {
+        let here = [item(CONFIG, 1, "a = 1\nb = 2\n")];
+        let there = [item(CONFIG, 2, "a = 9\nc = 3\n")];
+        let (steps, conflicts) = plan(&here, &there, None);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(paths(&steps), [(CONFIG, Way::Pull), (CONFIG, Way::Push)]);
+        let tables: Vec<toml::Table> = steps
+            .iter()
+            .map(|s| s.text.as_ref().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(tables[0]["a"].as_integer(), Some(1));
+        assert_eq!(tables[1]["a"].as_integer(), Some(9));
+        for table in &tables {
+            assert_eq!(table["b"].as_integer(), Some(2));
+            assert_eq!(table["c"].as_integer(), Some(3));
+        }
+        // No baseline is recorded while conflicts remain. A repeat must
+        // report the same conflict, even after the safe copies succeeded.
+        let next_here = [item(CONFIG, 3, steps[0].text.as_ref().unwrap())];
+        let next_there = [item(CONFIG, 3, steps[1].text.as_ref().unwrap())];
+        let (next, still) = plan(&next_here, &next_there, None);
+        assert!(next.is_empty());
+        assert_eq!(still, conflicts);
+    }
+
+    #[test]
+    fn first_sync_copies_a_wholly_missing_config_both_ways() {
+        let config = [item(CONFIG, 1, "theme = \"dark\"\n")];
+        assert_eq!(paths(&plan(&config, &[], None).0), [(CONFIG, Way::Push)]);
+        assert_eq!(paths(&plan(&[], &config, None).0), [(CONFIG, Way::Pull)]);
     }
 
     #[test]
