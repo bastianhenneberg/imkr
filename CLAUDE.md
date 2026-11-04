@@ -888,6 +888,24 @@ Projekt-Slug: `imkr`
 - Manuell testen ohne die eigene Session zu stören: `IMKR_SOCKET=/tmp/x.sock` und `IMKR_CONFIG=/tmp/x.toml`
   setzen (sonst wird die echte Config überschrieben), headless in tmux starten (`tmux new-session -d ...`, `send-keys`, `capture-pane -p`).
 
+## Test-Abschirmung (App/PTY)
+
+- **Vor jedem App-/PTY-Start** muss jede Testconfig `notifications = "off"` enthalten.
+  Zusätzlich einen eigenen Fake `notify-send` ganz vorn in den Test-PATH setzen und
+  Session-/System-DBus auf nicht existierende testlokale Sockets isolieren. Geerbte
+  `DBUS_*`, `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY` entfernen; privates
+  `XDG_RUNTIME_DIR` plus eigene HOME/Config/State/Socket-Welt verwenden. Den Guard
+  speichern und Fake-Auflösung prüfen, bevor irgendein App-Prozess startet.
+- Gilt auch für `tests/mail_stall.py`, `tests/handoff.py`, Demo-/manuelle PTY-Proben
+  und externe Kopien alter Review-Harnesses. Keine ungeschützten Archivskripte starten;
+  keine echten Desktop-Bestätigungen bedienen. Notification-Tests verwenden nur den
+  Fake, nie den echten Desktopclient. Historische Testresultate nicht rückwirkend als
+  nebenwirkungsfrei darstellen: frühere Popup-Leaks waren fehlende Testabschirmung.
+- Vom Keeper beendete temporäre Proben gelten als erwarteter Abbruch, nicht als
+  Produktregression oder Anlass für einen ungeschützten Wiederholungslauf. Originale
+  unangetastet lassen. Bei neuen Desktop-Nebenwirkungen sofort alle eigenen Proben
+  stoppen, zuerst den Guard reparieren; keine weiteren Featuretests davor.
+
 ## Befehle
 
 ```bash

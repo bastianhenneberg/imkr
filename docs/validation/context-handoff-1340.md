@@ -226,3 +226,22 @@ rejection with/without options. All pass with zero app notification dispatches; 
 public `91fd2ca:src/protocol.rs` confirms it has `UseAccount` and no `SwitchAccount`.
 The separate old no-variant runtime test binary is a test fixture, not a compatibility
 promise for any unpublished prototype.
+
+## Remaining repository harness guards
+
+Both repository Python app/PTY harnesses are now guarded: `tests/handoff.py` and
+`tests/mail_stall.py` save notifications off, prepend and exercise a fake notify-send,
+isolate session/system DBus and runtime, remove display inheritance and assert zero
+application notification dispatches. `docs/demo/setup.sh` also saves notifications
+off and isolates fake notifier/PATH/DBus/display/HOME/config/runtime before recording.
+`CLAUDE.md` makes these barriers mandatory before all app/PTY/manual/review probes.
+Historical runs are not retroactively described as side-effect free.
+
+After all guard edits were saved, the full existing mail-stall harness passed its
+21-message/update/restart checks with no intercepted application dispatch. The final
+brief-source-path regression passed in both directions (selected symlink, original
+relative citations, durable brief first and explicit target CWD). No new feature or
+full project test suite was run; demo recording was not executed, only shell syntax
+checked. Logs: `/tmp/imkr-handoff-1340/impl-guarded-mail-stall.log` and
+`impl-final-protected-source-paths.log`. The guard audit is
+`/tmp/imkr-handoff-1340/impl-repo-notification-guard-audit.json`.

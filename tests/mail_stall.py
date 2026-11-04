@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Isolated #1339 integration regression. Run after cargo build; stdlib only.
 No login, network endpoint, real config, or existing imkr server is used.
+Desktop isolation: notifications off, PATH notify-send shim, private DBus/runtime.
 """
 import json
 import os
+import shutil
+import tomllib
 from pathlib import Path
 import subprocess
 import sys
@@ -71,11 +74,32 @@ def run(binary):
         fake.write_text(FAKE)
         fake.chmod(0o755)
         (root / 'mode').write_text('normal')
-        (root / 'config.toml').write_text('')
-        env = {k: v for k, v in os.environ.items() if not k.startswith('IMKR')}
+        (root / 'config.toml').write_text('notifications = "off"\n')
+        # Save all desktop guards before starting any app/PTY process.
+        notify_log = root / 'intercepted-notifications.log'
+        notify = root / 'notify-send'
+        notify.write_text('#!/bin/sh\nprintf \"%s\\n\" intercepted >> \"$MAIL_TEST_NOTIFY_LOG\"\n')
+        notify.chmod(0o755)
+        runtime = root / 'runtime'; runtime.mkdir(mode=0o700)
+        blocked_session = root / 'no-session-bus'
+        blocked_system = root / 'no-system-bus'
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(('IMKR', 'CODEX', 'CLAUDE', 'ANTHROPIC', 'DBUS_'))
+               and k not in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY')}
+
         env.update(HOME=folder, XDG_STATE_HOME=folder, XDG_CONFIG_HOME=folder,
                    IMKR_SOCKET=str(root / 'server.sock'), IMKR_CONFIG=str(root / 'config.toml'),
-                   MAIL_TEST_ROOT=folder)
+                   MAIL_TEST_ROOT=folder, MAIL_TEST_NOTIFY_LOG=str(notify_log),
+                   PATH=folder+':'+os.environ['PATH'], XDG_RUNTIME_DIR=str(runtime),
+                   DBUS_SESSION_BUS_ADDRESS='unix:path='+str(blocked_session),
+                   DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(blocked_system))
+        assert tomllib.loads((root/'config.toml').read_text())['notifications']=='off'
+        assert shutil.which('notify-send',path=env['PATH'])==str(notify)
+        assert not blocked_session.exists() and not blocked_system.exists()
+        subprocess.run(['notify-send','guard self-check'],env=env,check=True,timeout=5)
+        assert notify_log.read_text()=='intercepted\n'
+        notify_log.unlink()
+
 
         def cli(*args):
             return subprocess.run([binary, *args], env=env, text=True,
@@ -105,6 +129,10 @@ def run(binary):
             panes = json.loads(cli('list', '--json').stdout)
             # Find the fake by program, independent of any initial shell.
             pane = str(next(p['pane'] for p in panes if p.get('program') == 'codex'))
+            guarded = cli('notify', '--pane', pane, 'isolated notification guard check')
+            assert guarded.returncode == 0, guarded.stderr
+            assert not notify_log.exists(), 'notifications off must prevent even shim dispatch'
+
 
             def msg(text):
                 result = cli('msg', pane, text)
@@ -165,6 +193,7 @@ def run(binary):
             print('PASS: 21 messages in order; fast reply, queue, draft, paste, approval, working/idle, swallowed Enter, handover and process restart; no extra Enter')
         finally:
             cli('kill-server')
+            assert not notify_log.exists(), 'unexpected notification safely intercepted by test shim'
 
 
 if __name__ == '__main__':
