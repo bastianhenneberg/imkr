@@ -486,6 +486,14 @@ enum Action {
     AllowScreen,
 }
 
+#[derive(Clone)]
+struct RemoteAlert {
+    host: String,
+    title: String,
+    body: String,
+    desktop: (String, String),
+}
+
 /// The sessions besides this one, here and on other machines, as the
 /// watcher thread last found them.
 #[derive(Clone, Default)]
@@ -499,7 +507,7 @@ struct Places {
     )>,
     /// Agents on other machines that came to need the user or finished,
     /// as notification title and text, for the server to pass on.
-    alerts: Vec<(String, String)>,
+    alerts: Vec<RemoteAlert>,
     /// The sessions each host had when it last answered, to show them
     /// while it is off.
     last_seen: HashMap<String, Vec<String>>,
@@ -5053,7 +5061,21 @@ impl App {
             (Some(n), None) => format!("window {n}"),
             _ => String::new(),
         };
-        self.send_notification(&format!("{who} {what}"), &place);
+        if self.config.notifications == Notifications::System {
+            let pane = &self.panes[&id];
+            let (title, body) = crate::desktop::event(
+                kind,
+                what,
+                pane.program().as_deref(),
+                pane.name.as_deref(),
+                self.window_name_of(id).as_deref(),
+                &protocol::session_name(),
+                id,
+            );
+            self.send_notification(&title, &body);
+        } else {
+            self.send_notification(&format!("{who} {what}"), &place);
+        }
     }
 
     /// An agent asks to see or drive this machine's screen, with
@@ -5681,12 +5703,24 @@ impl App {
     /// the bar, a bell when one waits, and a notification.
     fn pass_on_alerts(&mut self) {
         let alerts = std::mem::take(&mut self.places.lock().unwrap().alerts);
-        for (title, body) in alerts {
+        for RemoteAlert {
+            host,
+            title,
+            body,
+            desktop,
+        } in alerts
+        {
             if title.ends_with("needs you") {
                 self.broadcast(b"\x07");
             }
             self.flash = Some(format!("{title} · {body}"));
-            self.send_notification(&title, &body);
+            if self.config.notifications == Notifications::System {
+                if crate::desktop::remote_owner(&host) {
+                    self.send_notification(&desktop.0, &desktop.1);
+                }
+            } else {
+                self.send_notification(&title, &body);
+            }
         }
     }
 
@@ -15412,13 +15446,35 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                         for agent in &session.agent_panes {
                             let key = (host.clone(), session.name.clone(), agent.pane);
                             if let Some(what) = remote_change(states.get(&key), &agent.state) {
-                                alerts.push((
-                                    format!("{} {what}", agent.program),
-                                    format!(
+                                let kind = match agent.state.as_str() {
+                                    "blocked" => "blocked",
+                                    "failed" => "failed",
+                                    _ => "done",
+                                };
+                                let mut desktop = crate::desktop::event(
+                                    kind,
+                                    what,
+                                    Some(&agent.program),
+                                    (!matches!(agent.program.as_str(), "claude" | "codex"))
+                                        .then_some(agent.program.as_str()),
+                                    Some(&agent.dir),
+                                    &session.name,
+                                    agent.pane,
+                                );
+                                desktop.1 = format!(
+                                    "{} · {}",
+                                    crate::desktop::label(host, "remote"),
+                                    desktop.1
+                                );
+                                alerts.push(RemoteAlert {
+                                    host: host.clone(),
+                                    title: format!("{} {what}", agent.program),
+                                    body: format!(
                                         "⇄ {host} · {} · window {}",
                                         session.name, agent.workspace
                                     ),
-                                ));
+                                    desktop,
+                                });
                             }
                             now.insert(key, agent.state.clone());
                         }

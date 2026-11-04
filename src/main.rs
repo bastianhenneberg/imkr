@@ -11,6 +11,7 @@ mod clipboard;
 mod completions;
 mod config;
 mod contacts;
+mod desktop;
 mod fdpass;
 mod filetree;
 mod graphics;

@@ -1,0 +1,307 @@
+{
+  "baseline": {
+    "binary": "/tmp/imkr-notify-9541/before",
+    "remote_counts": {
+      "blocked": 45,
+      "repeat": 0,
+      "failed": 45,
+      "done": 45
+    },
+    "remote_samples": {
+      "blocked": [
+        [
+          "--app-name=imkr",
+          "claude needs you",
+          "⇄ synthetic-host · project-review · window 1"
+        ],
+        [
+          "--app-name=imkr",
+          "codex needs you",
+          "⇄ synthetic-host · project-review · window 1"
+        ]
+      ],
+      "failed": [
+        [
+          "--app-name=imkr",
+          "codex stopped with an error",
+          "⇄ synthetic-host · project-review · window 1"
+        ],
+        [
+          "--app-name=imkr",
+          "claude stopped with an error",
+          "⇄ synthetic-host · project-review · window 1"
+        ]
+      ],
+      "done": [
+        [
+          "--app-name=imkr",
+          "claude is done",
+          "⇄ synthetic-host · project-review · window 1"
+        ],
+        [
+          "--app-name=imkr",
+          "codex is done",
+          "⇄ synthetic-host · project-review · window 1"
+        ]
+      ]
+    },
+    "local": [
+      [
+        "working",
+        []
+      ],
+      [
+        "blocked",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review needs you",
+            "window 1 · /tmp/imkr-notify-9541/before-world"
+          ]
+        ]
+      ],
+      [
+        "blocked",
+        []
+      ],
+      [
+        "failed",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review stopped: limit reached",
+            "window 1 · /tmp/imkr-notify-9541/before-world"
+          ]
+        ]
+      ],
+      [
+        "working",
+        []
+      ],
+      [
+        "idle",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review is done",
+            "window 1 · /tmp/imkr-notify-9541/before-world"
+          ]
+        ]
+      ]
+    ],
+    "manual": [
+      [
+        "--app-name=imkr",
+        "User title <literal>",
+        "User CWD/JT $(touch USER_INJECTED)"
+      ]
+    ]
+  },
+  "final_draft": {
+    "failover": 15,
+    "off_count": 0,
+    "terminal": [
+      "imkr: claude needs you · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: claude stopped: API error · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: claude is done · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: User literal · terminal literal"
+    ],
+    "binary": "/tmp/imkr-notify-9541/after-final",
+    "remote_counts": {
+      "blocked": 15,
+      "repeat": 0,
+      "failed": 15,
+      "done": 15
+    },
+    "remote_samples": {
+      "blocked": [
+        [
+          "--app-name=imkr",
+          "Codex · is waiting for your answer",
+          "synthetic-host · imkr · project-review / bee 5"
+        ],
+        [
+          "--app-name=imkr",
+          "Codex · is waiting for your answer",
+          "synthetic-host · imkr · project-review / bee 3"
+        ]
+      ],
+      "failed": [
+        [
+          "--app-name=imkr",
+          "Codex · stopped with an error",
+          "synthetic-host · imkr · project-review / bee 1"
+        ],
+        [
+          "--app-name=imkr",
+          "Claude · stopped with an error",
+          "synthetic-host · imkr · project-review / bee 2"
+        ]
+      ],
+      "done": [
+        [
+          "--app-name=imkr",
+          "Claude · finished its turn",
+          "synthetic-host · imkr · project-review / bee 2"
+        ],
+        [
+          "--app-name=imkr",
+          "Codex · finished its turn",
+          "synthetic-host · imkr · project-review / bee 5"
+        ]
+      ]
+    },
+    "local": [
+      [
+        "working",
+        []
+      ],
+      [
+        "blocked",
+        [
+          [
+            "--app-name=imkr",
+            "Codex · is waiting for your answer",
+            "imkr · bee-review"
+          ]
+        ]
+      ],
+      [
+        "blocked",
+        []
+      ],
+      [
+        "failed",
+        [
+          [
+            "--app-name=imkr",
+            "Codex · stopped with an error",
+            "imkr · bee-review · stopped: limit reached"
+          ]
+        ]
+      ],
+      [
+        "working",
+        []
+      ],
+      [
+        "idle",
+        [
+          [
+            "--app-name=imkr",
+            "Codex · finished its turn",
+            "imkr · bee-review"
+          ]
+        ]
+      ]
+    ],
+    "manual": [
+      [
+        "--app-name=imkr",
+        "User title <literal>",
+        "User CWD/JT $(touch USER_INJECTED)"
+      ]
+    ]
+  },
+  "baseline_controls": {
+    "failover": null,
+    "off_count": 0,
+    "terminal": [
+      "imkr: claude needs you · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: claude stopped: API error · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: claude is done · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: User literal · terminal literal"
+    ],
+    "binary": "/tmp/imkr-notify-9541/before",
+    "remote_counts": {
+      "blocked": 0,
+      "repeat": 0,
+      "failed": 0,
+      "done": 0
+    },
+    "remote_samples": {
+      "blocked": [],
+      "failed": [],
+      "done": []
+    },
+    "local": [
+      [
+        "working",
+        []
+      ],
+      [
+        "blocked",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review needs you",
+            "window 1 · /tmp/imkr-notify-9541/before-controls"
+          ]
+        ]
+      ],
+      [
+        "blocked",
+        []
+      ],
+      [
+        "failed",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review stopped: limit reached",
+            "window 1 · /tmp/imkr-notify-9541/before-controls"
+          ]
+        ]
+      ],
+      [
+        "working",
+        []
+      ],
+      [
+        "idle",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review is done",
+            "window 1 · /tmp/imkr-notify-9541/before-controls"
+          ]
+        ]
+      ]
+    ],
+    "manual": [
+      [
+        "--app-name=imkr",
+        "User title <literal>",
+        "User CWD/JT $(touch USER_INJECTED)"
+      ]
+    ]
+  },
+  "transport_boundaries": {
+    "push": {
+      "byte_equal": true,
+      "sha256": "c69d23180ebc7e013bf61743646806d8954ebacdb5f4b8b1a31f3faa3ec961da"
+    },
+    "send_notification": {
+      "byte_equal": true,
+      "sha256": "2a9ccd663379bcd5b96118ba43649500049fa86686d1577aa43e3bced57a888d"
+    },
+    "src/push.rs": {
+      "byte_equal": true
+    },
+    "src/brain.rs": {
+      "byte_equal": true
+    },
+    "src/config.rs": {
+      "byte_equal": true
+    },
+    "src/term.rs": {
+      "byte_equal": true
+    },
+    "src/pane.rs": {
+      "byte_equal": true
+    },
+    "src/protocol.rs": {
+      "byte_equal": true
+    }
+  }
+}
