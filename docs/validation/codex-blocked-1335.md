@@ -184,3 +184,59 @@ Codex-specific live-control precedence fix; the supported hook control above
 works. The initial Claude attempt stopped at its dummy API-key confirmation;
 only the later run with that dummy key preconfigured and the literal Bash
 approval is counted as the tool-approval control. No dialog was answered.
+
+## Full lifecycle acceptance: both dialog kinds
+
+Two more independent isolated two-session runs verified that the waiting entry
+also disappears after a response. These are the newly created deterministic
+fake-model test dialogs only; no user's or other worker's approval was touched.
+
+- **Command approval:** observer inbox listed waiting Codex → empty-answer
+  Enter switched to waiting without approving → selected option **3, No**,
+  then Enter in that test dialog → live controls disappeared → after quiet,
+  `state: idle`, `question: null` → reopened observer inbox showed
+  `nothing waits for you`. The command was refused, not approved. An initial
+  Esc-only attempt failed the immediate controls-removed check; the successful
+  runner still printed the stale label “Esc”, corrected by an appended log
+  clarification. Its actual code and capture show option 3 / interrupted turn.
+- **Structured question:** same observer inbox and session switch → Enter
+  submitted the first answer to the isolated `request_user_input` question →
+  fake model returned `Finished.` → `state: idle`, `question: null` → observer
+  inbox showed `nothing waits for you`.
+
+Both runs first verified live controls override an injected stale working
+report. After the own test response, `question` was already null before
+clearing that deliberately injected report. A still-reported working state
+otherwise remains authoritative; the driver then explicitly clears its own
+fake report to measure the normal no-hook idle path. It does not claim to
+repair arbitrary stale hooks after a turn. The waiting client had viewed the
+result before returning to observer, so it was idle rather than unseen done
+(which is intentionally also listed in the inbox).
+
+CLI/TUI protocol artifacts:
+
+- `/tmp/imkr-1335/lifecycle-approval.log` and
+  `/tmp/imkr-1335/lifecycle-question.log` (PASS).
+- Drivers `/tmp/imkr-1335/lifecycle-{approval,question}.py`, endpoints only on
+  loopback ports 18739/18740, own HOME/config/state/runtime/tmux per run.
+- `/tmp/imkr-1335/lifecycle-approval/` and
+  `/tmp/imkr-1335/lifecycle-question/`: `inbox.txt`, `switched.txt`,
+  `after-response-before-clear.json`, `after-response.json`,
+  `after-response-screen.txt`, `inbox-after-response.txt`.
+- Historical literal footers followed by a normal composer remain negative
+  in the fixture unit test and the earlier fake Codex integration control.
+
+All fake endpoints and isolated servers stopped. These checks do not change
+production approval policy or install user hooks. Fixed-suite result remains
+**310 passed, 1 ignored**. Exact baseline `a86e823`, measured separately from a
+Git archive in `/tmp/imkr-1335/baseline` with local empty Git metadata for the
+branch-detection test: **309 passed, 1 ignored**, log
+`/tmp/imkr-1335/baseline-tests.log`. Both suites used
+`IMKR_HOSTNAME=imkr1335-test` and unrestricted test sockets. The initial archive
+without `.git` failed only that branch-detection test; it passed after local
+`git init -b baseline`. This follow-up changes evidence/docs only.
+
+The explicit **blue** requirement is still not met by this status patch: its
+measured built-in blocked color is light red. The assigned visual worker owns
+that coordinated UI check/change; no blue screenshot is claimed here. Bug
+status remains pending keeper acceptance.
