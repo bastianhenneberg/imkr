@@ -186,3 +186,26 @@ original directory containing spaces, apostrophes and command substitution chara
 The source SIGTERM handler deletes the original brief while leaving its cited evidence;
 the target reads its durable brief copy and resolves citations correctly. Totals: 42
 regular scenarios, 46 including the independently built old-server checks.
+
+## Desktop-notification isolation correction
+
+Earlier test isolation omitted desktop notifications; the tests could reach the
+real desktop despite private HOME/config/socket paths. The keeper deliberately
+terminated one temporary test server. That interrupted run is an expected external
+termination, not a demonstrated product failure; it must not trigger an unguarded retry.
+
+The harness now saves `notifications = "off"` in every test config before starting
+imkr, prepends a fake `notify-send` that records only an interception marker, and
+sets session/system DBus addresses to nonexistent test-local sockets. It also removes
+inherited DBus/display variables and uses a private XDG_RUNTIME_DIR. Before each app
+start, assertions parse the config, resolve PATH to the shim, check the absent bus
+sockets and exercise the shim itself. An actual CLI notify request must cause no
+shim invocation, and shutdown asserts no notification dispatch occurred.
+
+Only protected smoke checks were run after saving these guards: both agent directions
+with brief/directory and an old-server rejection (three scenarios). All passed with
+zero application notification dispatches; the direct shim self-check was intercepted.
+Evidence: `/tmp/imkr-handoff-1340/impl-notification-guard-smoke.log` and
+`impl-notification-guard-evidence.json`. No product source or original session was
+changed for this correction. Historical full-suite counts above are not claims of a
+new full guarded run.

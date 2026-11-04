@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Isolated real imkr PTYs + fake agents; no model calls or original sessions.
 Run: python3 tests/handoff.py target/debug/imkr
+Desktop isolation is mandatory: notifications off, PATH notify-send shim, private DBus/runtime.
 """
-import json, os, re, shlex, subprocess, sys, tempfile, time
+import json, os, re, shlex, shutil, subprocess, sys, tempfile, time, tomllib
 from pathlib import Path
 
 FAKE = r'''#!/usr/bin/python3
@@ -71,11 +72,33 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
         for tool in ('claude','codex'):
             p=root/tool;p.write_text(FAKE);p.chmod(0o755)
         policy={'claude':'--dangerously-skip-permissions','codex':'--yolo'}
-        (root/'config.toml').write_text('[agent_commands]\n'+''.join(tool+' = '+json.dumps(tool+" --model 'custom model' "+policy[tool])+'\n' for tool in ('claude','codex')))
-        env={k:v for k,v in os.environ.items() if not k.startswith(('IMKR','CODEX','CLAUDE','ANTHROPIC'))}
+        (root/'config.toml').write_text('notifications = "off"\n[agent_commands]\n'+''.join(tool+' = '+json.dumps(tool+" --model 'custom model' "+policy[tool])+'\n' for tool in ('claude','codex')))
+        # Save all three notification barriers BEFORE starting any imkr process.
+        notify_log=root/'intercepted-notifications.log'
+        fake_notify=root/'notify-send'
+        fake_notify.write_text('#!/bin/sh\nprintf \"%s\\n\" intercepted >> \"$HANDOFF_NOTIFY_LOG\"\n')
+        fake_notify.chmod(0o755)
+        runtime=Path(folder)/'runtime';runtime.mkdir(mode=0o700)
+        blocked_session=Path(folder)/'no-session-bus'
+        blocked_system=Path(folder)/'no-system-bus'
+        env={k:v for k,v in os.environ.items()
+             if not k.startswith(('IMKR','CODEX','CLAUDE','ANTHROPIC','DBUS_'))
+             and k not in ('DISPLAY','WAYLAND_DISPLAY','XAUTHORITY')}
+
         env.update(HOME=str(root),XDG_STATE_HOME=str(root),XDG_CONFIG_HOME=str(root),
                    IMKR_CONFIG=str(root/'config.toml'),IMKR_SOCKET=str(Path(folder)/'s.sock'),
-                   HANDOFF_TEST_ROOT=str(root),TEST_IMKR=binary,PATH=str(root)+':'+os.environ['PATH'],SHELL='/bin/bash')
+                   HANDOFF_TEST_ROOT=str(root),TEST_IMKR=binary,PATH=str(root)+':'+os.environ['PATH'],SHELL='/bin/bash',
+                   HANDOFF_NOTIFY_LOG=str(notify_log),XDG_RUNTIME_DIR=str(runtime),
+                   DBUS_SESSION_BUS_ADDRESS='unix:path='+str(blocked_session),
+                   DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(blocked_system))
+        assert tomllib.loads((root/'config.toml').read_text())['notifications']=='off'
+        assert shutil.which('notify-send',path=env['PATH'])==str(fake_notify)
+        assert not blocked_session.exists() and not blocked_system.exists()
+        # Exercise the shim itself, without invoking the real desktop client.
+        subprocess.run(['notify-send','guard self-check'],env=env,check=True,timeout=5)
+        assert notify_log.read_text()=='intercepted\n'
+        notify_log.unlink()
+
         def cli(*args, **kw):
             return subprocess.run([binary,*args],env=env,cwd=root,text=True,capture_output=True,timeout=15,**kw)
         def until(test,label):
@@ -113,6 +136,10 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
 
             r=cli('new','--start','--','bash','--noprofile','--norc');assert r.returncode==0,r.stderr
             pane=str(json.loads(cli('list','--json').stdout)[-1]['pane'])
+            guarded=cli('notify','--pane',pane,'isolated notification guard check')
+            assert guarded.returncode==0,guarded.stderr
+            assert not notify_log.exists(),'notifications=off must prevent even shim dispatch'
+
             r=cli('send','--pane',pane,shlex.quote(str(root/source_tool)));assert r.returncode==0,r.stderr
             until(lambda:(root/'source-ready').exists(),'source starts')
             until(lambda:any(p.get('program')==source_tool for p in json.loads(cli('list','--json').stdout)),'source recognized')
@@ -216,6 +243,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
             cli('kill-server')
             if legacy:legacy.wait(timeout=5)
             if failure=='dir-unsearchable':targetdir.chmod(0o700)
+            assert not notify_log.exists(),'unexpected notification was safely intercepted by test shim'
 
 if __name__=='__main__':
     binary=str(Path(sys.argv[1] if len(sys.argv)>1 else 'target/debug/imkr').resolve())
