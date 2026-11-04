@@ -1,0 +1,35 @@
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.163.0 -> 0.166.0                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+
+  >_ OpenAI Codex (v0.163.0)
+     /tmp/imkr-1335/work
+
+
+› test
+
+
+• Running true
+
+
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: May I run this harmless isolated test command?
+
+  $ true
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `true` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

@@ -756,7 +756,7 @@ impl Pane {
         }
         let argv = self.foreground_argv();
         let since = self.last_output.lock().unwrap().elapsed();
-        let asking = agent::asks_question(self.screen().screen());
+        let asking = agent::question_for(&argv, self.screen().screen()).is_some();
         if !asking {
             self.answered.set(false);
         }
@@ -766,7 +766,8 @@ impl Pane {
             &argv,
             self.reported,
             since,
-            asking && !self.answered.get(),
+            asking
+                && (agent::agent_name(&argv).as_deref() == Some("codex") || !self.answered.get()),
             failed,
         )
     }
@@ -811,7 +812,7 @@ impl Pane {
         let argv = self.foreground_argv();
         let found = agent::agent_match(&argv);
         let since = self.last_output.lock().unwrap().elapsed();
-        let phrase = agent::question_phrase(self.screen().screen());
+        let phrase = agent::question_for(&argv, self.screen().screen());
         let state = self.agent_state();
         let why = if argv.is_empty() {
             "no foreground process found".to_owned()
@@ -826,6 +827,8 @@ impl Pane {
                 }
                 None => "a shell runs in the foreground: no agent".to_owned(),
             }
+        } else if found.as_ref().is_some_and(|(name, _)| name == "codex") && phrase.is_some() {
+            "Codex shows live dialog controls: blocked, including while redrawing".to_owned()
         } else if let Some(reported) = self.reported {
             format!(
                 "its hooks reported {} (`imkr status`), that wins",

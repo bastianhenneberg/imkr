@@ -256,6 +256,9 @@ pub fn asks_question(screen: &crate::term::Parser) -> bool {
 
 /// The phrase that makes `asks_question` see a question, if one does.
 pub fn question_phrase(screen: &crate::term::Parser) -> Option<String> {
+    if let Some(dialog) = codex_dialog(screen) {
+        return Some(dialog);
+    }
     let (_, cols) = screen.size();
     let last = last_row(screen);
     let text = screen.contents_between(last.saturating_sub(14), 0, last, cols);
@@ -268,6 +271,36 @@ pub fn question_phrase(screen: &crate::term::Parser) -> Option<String> {
         .iter()
         .find(|q| !q.is_empty() && text.contains(q.as_str()))
         .cloned()
+}
+
+/// Codex redraws its dialog (and sometimes a spinner) while waiting. Look
+/// for its live controls at the bottom, not question text in the transcript.
+pub fn codex_dialog(screen: &crate::term::Parser) -> Option<String> {
+    let text = tail(screen, 4);
+    // Joining also handles a footer wrapped by the TUI in a narrow pane.
+    let controls = text
+        .split_whitespace()
+        .filter(|word| *word != "|")
+        .collect::<Vec<_>>()
+        .join(" ");
+    [
+        "Press enter to confirm or esc to cancel",
+        "tab to add notes enter to submit answer esc to interrupt",
+        "tab or esc to clear notes enter to submit answer",
+    ]
+    .into_iter()
+    .find(|footer| controls.ends_with(footer))
+    .map(str::to_owned)
+}
+
+/// Codex's transcript can retain old approval wording next to the normal
+/// composer. Only live dialog controls count for this agent.
+pub fn question_for(argv: &[String], screen: &crate::term::Parser) -> Option<String> {
+    if agent_name(argv).as_deref() == Some("codex") {
+        codex_dialog(screen)
+    } else {
+        question_phrase(screen)
+    }
 }
 
 /// What agents print when a turn ends in an error, with the reason shown
@@ -368,6 +401,11 @@ pub fn state(
     if argv.is_empty() || (agent.is_none() && is_shell(argv)) {
         return None;
     }
+    // For Codex `asking` is a live modal, not a transcript phrase. It
+    // remains blocked even while drawing, or after an old hook said idle.
+    if agent.as_deref() == Some("codex") && asking {
+        return Some(AgentState::Blocked);
+    }
     // Working, said or guessed, but quiet with an error at the bottom: the
     // turn ended in it, and no hook says so (Codex, or an older Claude).
     let quiet_error = failed && since_output >= QUIET_ERROR;
@@ -463,6 +501,43 @@ mod tests {
              ❯ No, exit\r\n   Yes, I trust this folder\r\n Enter to confirm · Esc to cancel",
         );
         assert!(asks_question(trust.screen()));
+    }
+
+    #[test]
+    fn codex_live_dialogs_override_output_and_stale_hooks() {
+        let codex = argv(&["/opt/codex"]);
+        for fixture in [
+            include_str!("fixtures/codex-0.163.0/approval.txt"),
+            include_str!("fixtures/codex-0.163.0/question.txt"),
+            include_str!("fixtures/codex-0.163.0/notes.txt"),
+            "Question 1/1 (1 unanswered)\nWhich approach?\n  tab to add notes\n  enter to submit answer\n  esc to interrupt",
+        ] {
+            let mut parser = crate::term::Parser::new(40, 120, 0);
+            parser.process(fixture.replace('\n', "\r\n").as_bytes());
+            assert!(question_for(&codex, &parser).is_some());
+            for reported in [None, Some(AgentState::Working), Some(AgentState::Idle)] {
+                assert_eq!(
+                    state(&codex, reported, Duration::ZERO, true, false),
+                    Some(AgentState::Blocked)
+                );
+            }
+            // The old dialog remains visible above the normal composer.
+            parser.process(
+                b"\r\nDone.\r\n\r\n\xe2\x80\xba Ask Codex to do anything\r\n? for shortcuts",
+            );
+            assert!(question_for(&codex, &parser).is_none());
+            assert_eq!(
+                state(&codex, None, ACTIVE, false, false),
+                Some(AgentState::Idle)
+            );
+        }
+        for text in [
+            "Would you like to run the following command?\r\nDone.\r\n> ",
+            "Which approach should we use?\r\n> ",
+            "Working (5s • esc to interrupt)\r\n> Ask Codex to do anything\r\n? for shortcuts",
+        ] {
+            assert!(question_for(&codex, &screen(text)).is_none());
+        }
     }
 
     #[test]

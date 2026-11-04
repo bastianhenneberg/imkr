@@ -31,6 +31,14 @@ Where pi is set up (`~/.pi/agent`), `--install` also puts an extension into its 
 reports pi's state the same way: working while it runs, done after its turn, waiting when an
 error stays after pi's own retries.
 
+Codex approval dialogs and structured questions (`request_user_input`, including notes)
+count as blocked while their live confirmation or submission controls are visible. This
+also applies while Codex redraws a spinner, after navigating the dialog, or when an older
+hook report still says working or idle. Old dialog text above the normal composer does
+not count. This screen detection was checked with Codex 0.163.0, including narrow panes;
+plain questions in an assistant's prose and other dialog layouts are not inferred from
+question marks. Codex uses the same blocked styling and inbox entry as other agents.
+
 The hooks call `imkr status working|blocked|idle|clear`, which knows its pane from
 `$IMKR_PANE` and does nothing outside imkr. It reads the hook's JSON from stdin: a subagent
 finishing does not mark the agent done, and the session id is kept to resume the agent later. The

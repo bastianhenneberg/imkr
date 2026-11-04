@@ -55,6 +55,11 @@ Projekt-Slug: `imkr`
   auf dem Screen; gemeldeter Status aus Hooks hat Vorrang). Config `extra_agents`/`question_phrases`
   → `agent::configure` (globales `EXTRA`, in `apply_theme`); `imkr explain` → `Pane::explain`. `App::update_agents` läuft bei jedem
   Tick (500 ms) und klingelt bei neuem `blocked`. Beantwortete Fragen: `Pane::note_input`.
+  Codex-Ausnahme (#1335): `question_for` erkennt ausschließlich aktuelle Dialog-Footer
+  (`codex_dialog`, auch schmale Panes/Notizen, Codex 0.163.0). Diese schlagen Output und
+  alte Hook-Meldungen; `answered` gilt dort nicht, solange der Dialog weiter angezeigt
+  wird (Tab/Pfeile sind keine Antwort). Echte TUI-Fixtures: `src/fixtures/codex-0.163.0/`;
+  Messung/Grenzen: `docs/validation/codex-blocked-1335.md`.
 - Rechner-Identität: `protocol::machine_id()` (/etc/machine-id; `IMKR_HOSTNAME` in Tests) für Hives,
   `machine_name()` (Config `name`, sonst Hostname) für Anzeige und Origin – zwei Omarchy-Rechner
   heißen beide `omarchy`! Server nimmt `newest_origin()` (Client mit `via`), nicht stur den aktiven.

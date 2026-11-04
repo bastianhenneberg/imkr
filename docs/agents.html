@@ -220,6 +220,13 @@ skipped, by the notification that a question waits. Agents started after it repo
 Where pi is set up (<code>~/.pi/agent</code>), <code>--install</code> also puts an extension into its extensions that
 reports pi's state the same way: working while it runs, done after its turn, waiting when an
 error stays after pi's own retries.</p>
+<p>Codex approval dialogs and structured questions (<code>request_user_input</code>, including notes)
+count as blocked while their live confirmation or submission controls are visible. This
+also applies while Codex redraws a spinner, after navigating the dialog, or when an older
+hook report still says working or idle. Old dialog text above the normal composer does
+not count. This screen detection was checked with Codex 0.163.0, including narrow panes;
+plain questions in an assistant's prose and other dialog layouts are not inferred from
+question marks. Codex uses the same blocked styling and inbox entry as other agents.</p>
 <p>The hooks call <code>imkr status working|blocked|idle|clear</code>, which knows its pane from
 <code>$IMKR_PANE</code> and does nothing outside imkr. It reads the hook's JSON from stdin: a subagent
 finishing does not mark the agent done, and the session id is kept to resume the agent later. The

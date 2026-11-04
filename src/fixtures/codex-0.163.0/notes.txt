@@ -1,0 +1,34 @@
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.163.0 -> 0.166.0                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+
+  >_ OpenAI Codex (v0.163.0)
+     /tmp/imkr-1335/work
+
+
+› test
+
+
+
+
+
+
+
+
+
+
+  Question 1/1 (1 unanswered)
+  Which approach should we use?
+
+  › 1. First (Recommended)  Use first approach.
+    2. Second               Use second approach.
+    3. None of the above    Optionally, add details in notes (tab)
+
+  › Add notes
+
+  tab or esc to clear notes | enter to submit answer
