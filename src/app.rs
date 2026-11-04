@@ -3120,13 +3120,17 @@ impl App {
     }
 
     /// Types `text` into pane `pane`, then Enter if `enter`, as a paste if
-    /// it has several lines and the program takes pastes.
+    /// it has several lines or goes to Codex, if the program takes pastes.
     fn type_into(&mut self, pane: PaneId, text: &str, enter: bool) -> Result<(), String> {
         let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
         p.note_input();
         let bracketed = p.screen().screen().bracketed_paste();
         let mut bytes = Vec::new();
-        if bracketed && text.contains('\n') {
+        // A single-line burst can leave Codex's [Pasted Content ...] unsent
+        // despite our Enter 20 ms later (#1343, real frontend regression).
+        // Give it an explicit paste boundary before our one Enter instead
+        // of relying on a timing gap. Keep shell single-line input as keys.
+        if bracketed && (text.contains('\n') || p.program().as_deref() == Some("codex")) {
             bytes.extend_from_slice(b"\x1b[200~");
             bytes.extend_from_slice(text.as_bytes());
             bytes.extend_from_slice(b"\x1b[201~");
