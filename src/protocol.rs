@@ -502,6 +502,15 @@ pub enum Request {
         brief: Option<PathBuf>,
         dir: Option<PathBuf>,
     },
+    /// Explicit source identity must never be silently ignored by an older server.
+    SwitchAccountFromSession {
+        tool: String,
+        name: String,
+        pane: PaneId,
+        brief: Option<PathBuf>,
+        dir: Option<PathBuf>,
+        source_session: String,
+    },
     /// Marks this session as a keeper's, or takes the mark off (#9133).
     Keeper { mark: bool },
     /// Send the active client to `target` (`host:session`), e.g. once a

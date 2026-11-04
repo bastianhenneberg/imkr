@@ -3079,7 +3079,7 @@ pub fn hive(args: &[String]) -> Result<()> {
 pub fn account(args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: imkr account [ls [--json]] | add claude|codex NAME [--url URL] [--model M] \
                          [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
-                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] [--json] [--brief FILE] [--dir DIR] \
+                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] [--json] [--brief FILE] [--dir DIR] [--source-session UUID] \
                          | default [NAME] | usage [--json]";
     // How much each account used of its plan; `--wait` keeps it on screen
     // in the popup of Ctrl+B s u.
@@ -3142,8 +3142,11 @@ pub fn account(args: &[String]) -> Result<()> {
         .map(absolute)
         .transpose()?;
     let dir = take_value(&mut rest, "--dir")?.map(absolute).transpose()?;
-    if (brief.is_some() || dir.is_some()) && !rest.first().is_some_and(|arg| arg == "switch") {
-        bail!("--brief and --dir are only for account switch");
+    let source_session = take_value(&mut rest, "--source-session")?;
+    if (brief.is_some() || dir.is_some() || source_session.is_some())
+        && !rest.first().is_some_and(|arg| arg == "switch")
+    {
+        bail!("--brief, --dir and --source-session are only for account switch");
     }
     let token_stdin = take_flag(&mut rest, "--token-stdin");
     let url = take_value(&mut rest, "--url")?;
@@ -3391,8 +3394,17 @@ pub fn account(args: &[String]) -> Result<()> {
             if now && pane.is_none() {
                 bail!("which pane? `--pane N`, or run it in the pane");
             }
-            let explicit = brief.is_some() || dir.is_some();
-            let request = if explicit {
+            let explicit = brief.is_some() || dir.is_some() || source_session.is_some();
+            let request = if let Some(source_session) = source_session {
+                Request::SwitchAccountFromSession {
+                    tool: account.tool.clone(),
+                    name: account.name.clone(),
+                    pane: pane.expect("switch requires a pane"),
+                    brief,
+                    dir,
+                    source_session,
+                }
+            } else if explicit {
                 Request::SwitchAccount {
                     tool: account.tool.clone(),
                     name: account.name.clone(),
@@ -3408,7 +3420,7 @@ pub fn account(args: &[String]) -> Result<()> {
                 }
             };
             let reply = if explicit {
-                client::request(request).context("explicit switch failed (server must support --brief/--dir; no fallback that drops these options)")?
+                client::request(request).context("explicit switch failed (server must support the selected switch options; no fallback that drops these options)")?
             } else {
                 client::request(request)?
             };

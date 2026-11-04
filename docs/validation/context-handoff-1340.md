@@ -16,7 +16,7 @@ cargo build
 python3 tests/handoff.py target/debug/imkr
 ```
 
-Results: **320 passed, 1 ignored**; Clippy clean. The hostname override isolates an
+Results: **321 passed, 1 ignored**; Clippy clean. The hostname override isolates an
 existing test that assumes `laptop` is a remote machine (without the override,
 `only_a_pane_can_be_told_its_message_did_not_arrive` fails on this laptop).
 
@@ -113,7 +113,7 @@ new wire request, so older servers cannot silently discard the argument. Optiona
 integration invocation against an archived old server:
 
 ```sh
-python3 tests/handoff.py target/debug/imkr /tmp/imkr-review-dc544f5-target/debug/imkr
+python3 tests/handoff.py target/debug/imkr /tmp/imkr-handoff-1340/impl-legacy-1f-target/debug/imkr
 ```
 
 The eighteen regular PTY scenarios become nineteen with this old-server refusal
@@ -143,3 +143,28 @@ Access-denied target directories are also checked with the unprivileged test use
 real targets require the exact contract CWD and `<package>/SUMMARY.md` as `--dir` and
 `--brief`, respectively. No real start, account selection, production-tree mutation
 or recovery-package edit was performed by this implementation.
+
+## Explicit managed-source identity
+
+`account switch --source-session UUID` accepts only a full explicit Codex UUID.
+It is checked against any pane hook ID before locating exactly one readable source
+transcript in the source process/account root; metadata session identity and source
+CWD must agree. Target `--dir` does not weaken this source-CWD check. The existing
+local `/status` UI is the operator's token-free source of the UUID; imkr never types
+it automatically or treats it as a machine protocol. Mapping failure points to
+`/status` plus this explicit option. No database, daemon IPC or newest/CWD heuristic
+was added, and `--no-daemon` is not globally forced.
+
+Seven managed-source PTY scenarios simulate a source frontend with no rollout FD;
+a separate harness process holds its exact JSONL. Explicit UUID succeeds and the
+target reads that transcript; wrong/malformed UUID, mismatching hook ID, wrong source
+CWD, missing zero-turn history and no explicit mapping refuse with the source alive.
+The last case checks the actionable error. A further native resume case uses the
+explicit UUID and the chosen target directory. Rust tests also check explicit
+identity against an externally held rollout in a distinct live process tree.
+An independently rebuilt exact `1f054a2` server (separate target directory, not a mutable
+review build path) is used for compatibility checks. An additional old-server scenario verifies that the dedicated source-identity request
+cannot be silently ignored. Totals: 40 normal PTY scenarios, 44 with all old-server
+checks. These are isolated fake-source process tests, not a claim of a paid-model
+Work-managed 0.166 round trip. Real local `/status` and 0.166 saved-rollout FD probes
+remain separately scoped evidence; original sessions were never touched.

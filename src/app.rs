@@ -2897,7 +2897,7 @@ impl App {
                         self.accounts.insert(tool.clone(), name.clone());
                         Ok(serde_json::json!({ "tool": tool, "account": name }))
                     }
-                    Some(id) => self.switch_account(id, &account, Throw::Never, None, None),
+                    Some(id) => self.switch_account(id, &account, Throw::Never, None, None, None),
                 }
             }
             Request::SwitchAccount {
@@ -2922,6 +2922,33 @@ impl App {
                     Throw::Never,
                     brief.as_deref(),
                     dir.as_deref(),
+                    None,
+                )
+            }
+            Request::SwitchAccountFromSession {
+                tool,
+                name,
+                pane,
+                brief,
+                dir,
+                source_session,
+            } => {
+                let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
+                let account = store
+                    .find(&tool, &name)
+                    .ok_or(format!("no {tool} account {name}, see `imkr account`"))?;
+                if !store.logged_in(&account) {
+                    return Err(format!(
+                        "{tool} account {name} is not logged in: `imkr account login {tool}:{name}`"
+                    ));
+                }
+                self.switch_account(
+                    pane,
+                    &account,
+                    Throw::Never,
+                    brief.as_deref(),
+                    dir.as_deref(),
+                    Some(&source_session),
                 )
             }
             Request::ReloadConfig => {
@@ -5980,6 +6007,7 @@ impl App {
         keep: Throw,
         brief: Option<&std::path::Path>,
         dir: Option<&std::path::Path>,
+        source_session: Option<&str>,
     ) -> Reply {
         if self.switching.contains_key(&id) || self.resumed.contains_key(&id) {
             return Err(format!(
@@ -6037,6 +6065,9 @@ impl App {
         // Cross-agent context must be durable before stop_foreground. Resolve
         // Codex's native resume identity here too: never resume an unrelated --last.
         let source_tool = current_tool.as_deref().expect("checked above");
+        let source_session =
+            crate::handoff::source_session(source_tool, source_session, pane.session.as_deref())
+                .map_err(|e| format!("cannot preserve context; source kept running: {e}"))?;
         // The foreground agent can chdir without changing its waiting shell.
         // Capture once, validate before SIGTERM, and explicitly cd at startup.
         let cwd = pane
@@ -6061,12 +6092,17 @@ impl App {
                 crate::handoff::locate(
                     source_tool,
                     pane.transcript.as_deref(),
-                    pane.session.as_deref(),
+                    source_session,
                     &root,
                     &cwd,
                     pane.foreground_pid().ok_or("source PID unavailable")?,
                 )
-                .map_err(|e| format!("cannot preserve context: {e}"))?,
+                .map_err(|e| {
+                    let hint = if source_tool == "codex" {
+                        "; read local /status in that Codex (no model turn or tokens), then retry account switch with --source-session UUID; a readable saved conversation is still required"
+                    } else { "" };
+                    format!("cannot preserve context; source kept running: {e}{hint}")
+                })?,
             );
         }
         let handoff = if !same_tool || brief.is_some() {
@@ -6422,7 +6458,7 @@ impl App {
             // the pane this is about is named in front of the message.
             return format!("{lead}: Ctrl+B s C restarts it there in {there}{free}");
         }
-        match self.switch_account(*id, &next, choice.throw, None, None) {
+        match self.switch_account(*id, &next, choice.throw, None, None, None) {
             Ok(_) => format!("{lead}: restarts {tool} in {there}{free}, same conversation"),
             Err(e) => format!("{lead}, not switched: {e}"),
         }

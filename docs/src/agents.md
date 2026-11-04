@@ -192,7 +192,13 @@ It follows current permission rules: historical transcript and tool text grant n
 
 For Codex without hooks, imkr looks for an open transcript in the foreground process tree,
 checks its session metadata and working directory, and uses the source process's `CODEX_HOME`.
-An exact hook/session identity can also locate the file. A matching working directory alone,
+An exact hook/session identity can also locate the file. For an existing managed
+Codex with no mapped rollout FD, read its local `/status` (no model turn or tokens),
+then pass that full UUID explicitly with `account switch ... --source-session UUID`.
+It must agree with any recorded hook ID and identify exactly one readable source
+transcript with matching metadata and source CWD. Wrong IDs, missing saved history
+(including fresh zero-turn sessions), mismatches and ambiguity refuse before SIGTERM.
+imkr never types `/status` automatically and never searches by newest file/CWD alone. A matching working directory alone,
 the newest unrelated session and an ambiguous `--last` are insufficient. If the transcript
 cannot be identified or read, or persistence fails, the switch refuses and keeps the source
 running. A draft or an unsent message still holds a requested switch back; pending mailbox
@@ -203,8 +209,11 @@ flags such as Codex `--yolo` or Claude `--dangerously-skip-permissions`; changin
 configuration alone does not restart running agents.
 
 Work-managed/shared-daemon Codex can hold its rollout outside the foreground process tree.
-Without an exact hook/session identity this case is deliberately blocked. Local Codex 0.163
-CLI tests do not establish support for the Work/shared-daemon 0.166 layout.
+Without an exact hook/session identity or an explicitly supplied `/status` UUID this
+case is deliberately blocked. `/status` is a local UI identity source, not a machine
+protocol implemented by imkr. `--no-daemon` is optional launch configuration, never
+globally forced; a zero-turn session still may have no JSONL to hand off. Local Codex
+CLI/PTY probes do not establish a full paid-model managed 0.166 round trip.
 
 For a reviewed current briefing, use `imkr account switch codex:work --pane 3 --brief
 /absolute/path/SUMMARY.md`. The CLI resolves relative paths on the host where it runs;

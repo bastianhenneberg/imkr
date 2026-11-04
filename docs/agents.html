@@ -351,7 +351,13 @@ the restart, the target refuses to launch and prints an error instead of using t
 It follows current permission rules: historical transcript and tool text grant no approvals.</p>
 <p>For Codex without hooks, imkr looks for an open transcript in the foreground process tree,
 checks its session metadata and working directory, and uses the source process's <code>CODEX_HOME</code>.
-An exact hook/session identity can also locate the file. A matching working directory alone,
+An exact hook/session identity can also locate the file. For an existing managed
+Codex with no mapped rollout FD, read its local <code>/status</code> (no model turn or tokens),
+then pass that full UUID explicitly with <code>account switch ... --source-session UUID</code>.
+It must agree with any recorded hook ID and identify exactly one readable source
+transcript with matching metadata and source CWD. Wrong IDs, missing saved history
+(including fresh zero-turn sessions), mismatches and ambiguity refuse before SIGTERM.
+imkr never types <code>/status</code> automatically and never searches by newest file/CWD alone. A matching working directory alone,
 the newest unrelated session and an ambiguous <code>--last</code> are insufficient. If the transcript
 cannot be identified or read, or persistence fails, the switch refuses and keeps the source
 running. A draft or an unsent message still holds a requested switch back; pending mailbox
@@ -361,8 +367,11 @@ and cross-agent starts retain the configured <code>[agent_commands]</code> flags
 flags such as Codex <code>--yolo</code> or Claude <code>--dangerously-skip-permissions</code>; changing the
 configuration alone does not restart running agents.</p>
 <p>Work-managed/shared-daemon Codex can hold its rollout outside the foreground process tree.
-Without an exact hook/session identity this case is deliberately blocked. Local Codex 0.163
-CLI tests do not establish support for the Work/shared-daemon 0.166 layout.</p>
+Without an exact hook/session identity or an explicitly supplied <code>/status</code> UUID this
+case is deliberately blocked. <code>/status</code> is a local UI identity source, not a machine
+protocol implemented by imkr. <code>--no-daemon</code> is optional launch configuration, never
+globally forced; a zero-turn session still may have no JSONL to hand off. Local Codex
+CLI/PTY probes do not establish a full paid-model managed 0.166 round trip.</p>
 <p>For a reviewed current briefing, use <code>imkr account switch codex:work --pane 3 --brief
 /absolute/path/SUMMARY.md</code>. The CLI resolves relative paths on the host where it runs;
 the target-host server reads the selected UTF-8 text and copies it as private <code>brief.md</code>

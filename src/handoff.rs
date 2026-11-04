@@ -52,6 +52,33 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) -> Result<()> {
     Ok(())
 }
 
+/// An operator may supply the local Codex /status UUID, never a guess.
+pub fn source_session<'a>(
+    tool: &str,
+    explicit: Option<&'a str>,
+    hook: Option<&'a str>,
+) -> Result<Option<&'a str>> {
+    let Some(id) = explicit else { return Ok(hook) };
+    if tool != "codex" {
+        bail!("--source-session is only for a Codex source")
+    }
+    let uuid = id.len() == 36
+        && id.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        });
+    if !uuid {
+        bail!("--source-session must be the full UUID from local Codex /status")
+    }
+    if hook.is_some_and(|known| known != id) {
+        bail!("explicit source UUID disagrees with the pane hook session")
+    }
+    Ok(Some(id))
+}
+
 /// Hooks identify Claude; Codex without hooks is identified by an open rollout
 /// in the foreground process tree. CWD alone is deliberately insufficient.
 pub fn locate(
@@ -528,8 +555,12 @@ mod tests {
             .read_line(&mut ready)
             .unwrap();
         let unavailable = locate("codex", None, None, &root, &root, frontend.id());
+        let explicit = locate("codex", None, Some("exact"), &root, &root, frontend.id());
+        let wrong = locate("codex", None, Some("unknown"), &root, &root, frontend.id());
         frontend.kill().unwrap();
         frontend.wait().unwrap();
+        assert_eq!(explicit.unwrap().session, "exact");
+        assert!(wrong.is_err());
         assert!(
             unavailable.is_err(),
             "must refuse rather than guess shared-daemon identity"
@@ -581,6 +612,19 @@ mod tests {
                 .ends_with(".tmp"))
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_source_uuid_is_validated_and_checked_against_hook() {
+        let id = "b7b84a61-19e7-42c5-82b1-3945ae4fba40";
+        assert_eq!(source_session("codex", Some(id), None).unwrap(), Some(id));
+        assert_eq!(
+            source_session("codex", Some(id), Some(id)).unwrap(),
+            Some(id)
+        );
+        assert!(source_session("codex", Some(id), Some("different")).is_err());
+        assert!(source_session("codex", Some("short-or-command"), None).is_err());
+        assert!(source_session("claude", Some(id), None).is_err());
     }
 
     #[test]
