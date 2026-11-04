@@ -947,13 +947,29 @@ fn codex_composer(screen: &crate::term::Parser) -> Option<String> {
     let rows: Vec<_> = screen.rows(0, cols).collect();
     let (cursor, column) = screen.cursor_position();
     let cursor = usize::from(cursor);
-    let footer = rows.iter().rposition(|r| r.contains("? for shortcuts"))?;
-    let start = rows[..footer]
+    let start = rows.iter().rposition(|r| r == "›" || r.starts_with("› "))?;
+    // Tooltips are optional. Real Codex 0.166 screens at both 21x48 and
+    // 85x230 have only a blank row and the model status below the composer
+    // (#1339). Keep recognizing the hint layout, but do not require it.
+    let footer = rows[start + 1..]
         .iter()
-        .rposition(|r| r == "›" || r.starts_with("› "))?;
-    // The composer ends at the first blank row before its status/footer.
-    // This also keeps a cursor in a dialog or the status out of the input.
-    let end = (start + 1..footer).find(|&i| rows[i].trim().is_empty())?;
+        .rposition(|r| r.contains("? for shortcuts"))
+        .map(|row| row + start + 1);
+    let separator = rows.len().checked_sub(2)?;
+    let status_only = rows[separator].trim().is_empty()
+        && rows
+            .last()
+            .is_some_and(|row| row.starts_with("  ") && !row.trim().is_empty())
+        && screen.bracketed_paste();
+    let end = if let Some(footer) = footer {
+        (start + 1..footer).find(|&i| rows[i].trim().is_empty())?
+    } else if status_only {
+        // The penultimate row is the separator, not necessarily the first
+        // blank row: a multiline draft may end on an empty cursor row.
+        separator
+    } else {
+        return None;
+    };
     if !(start..end).contains(&cursor) {
         return None;
     }
@@ -16030,6 +16046,49 @@ fn with_title(label: String, title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn codex_without_tooltips_keeps_cursor_draft_and_history_guards() {
+        for (rows, cols) in [(21, 48), (85, 230)] {
+            let mut screen = crate::term::Parser::new(rows, cols, 100);
+            let start = rows - 2;
+            let draw = |input: &str, cursor: u16| {
+                format!(
+                    "\x1b[2J\x1b[H› old historical ? for shortcuts\x1b[{start};1H› {input}\r\n\r\n  fake default\x1b[{start};{cursor}H\x1b[?2004h"
+                )
+            };
+            screen.process(draw("\x1b[2mAsk Codex to do anything\x1b[0m", 3).as_bytes());
+            assert_eq!(super::codex_composer(&screen).as_deref(), Some(""));
+            // Even identical words are a draft when not dim, including
+            // when the user moved Home to the beginning of that draft.
+            for input in [
+                "Ask Codex to do anything",
+                "human draft",
+                "[Pasted Content 1142 chars]",
+            ] {
+                screen.process(draw(input, 3).as_bytes());
+                assert!(super::codex_composer(&screen).is_some_and(|s| !s.is_empty()));
+            }
+            screen.process(draw("\x1b[2mAsk Codex to do anything\x1b[0m", 4).as_bytes());
+            assert!(super::codex_composer(&screen).is_some_and(|s| !s.is_empty()));
+            // A history match or a dialog cursor outside the composer
+            // cannot turn this into an empty input line.
+            screen.process(b"\x1b[1;3H");
+            assert!(super::codex_composer(&screen).is_none());
+            // The live wide snapshot has a multiline non-dim draft and
+            // its cursor on a trailing empty input row, above the separate
+            // blank separator. Recognize that geometry without releasing it.
+            let first = rows - 6;
+            screen.process(format!(
+                "\x1b[2J\x1b[{first};1H› pending message\r\n  second line\r\n  third line\r\n  fourth line\r\n\r\n\r\n  fake default\x1b[{start};3H\x1b[?2004h"
+            ).as_bytes());
+            assert!(super::codex_composer(&screen).is_some_and(|s| s.contains("pending message")));
+            screen.process(
+                "\x1b[2J\x1b[HApproval required\r\n› 1. Yes\r\n  2. No\x1b[2;3H".as_bytes(),
+            );
+            assert!(super::codex_composer(&screen).is_none());
+        }
+    }
 
     fn codex_screen(input: &str, history: &str) -> crate::term::Parser {
         let mut screen = crate::term::Parser::new(24, 100, 100);

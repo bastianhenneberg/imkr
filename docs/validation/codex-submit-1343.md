@@ -3,6 +3,10 @@
 Tracking: #1339 is reopened; #1343 is its closed duplicate. Session, worktree
 and artifact names retain `1343` for traceability.
 
+Latest evidence: the footer-dependent false hold is now proven by real live
+ANSI snapshots; see the final section. Earlier statements about unreproduced
+production mail below describe the state before that evidence arrived.
+
 ## Result and limit
 
 Baseline `91fd2ca` reproducibly leaves a long **single-line `imkr send`** in
@@ -238,3 +242,105 @@ frontend assertions. Their remote evidence directories are
 `/tmp/imkr-submit-1343-04alfdp5/` and `/tmp/imkr-submit-1343-fs0wvs6_/`.
 Laptop's real frontend checks were already run directly as documented above;
 the combined two-destination command is provided for keeper reruns after review.
+
+## Live missing-footer false hold: bounded final finding
+
+The keeper supplied read-only private snapshots from codingmachine:
+`/tmp/imkr-mail-diagnostic-20261104-151541/`. Copies were examined locally in
+`/tmp/imkr-submit-1343/live-evidence/`; no originals were typed into or changed,
+and no production queue was resent. Private transcripts are not committed.
+
+Exact ANSI replay with imkr's own terminal parser establishes:
+
+| Snapshot | Size | Cursor (1-based) | Before | After |
+| --- | --- | --- | --- | --- |
+| monitor-runtime | 21x48 | 19;3 | unknown, therefore held | empty |
+| monitor-rollout | 21x48 | 19;3 | unknown, therefore held | empty |
+| ai-brain-monitor | 85x230 | 83;3 | unknown, therefore held | nonempty, still held |
+
+All three lack `? for shortcuts`. The two narrow captures have a DIM suggestion,
+a blank penultimate row and a last-row model status. Requiring the optional
+shortcut footer makes the otherwise recognizable empty composer unknown; this
+is a concrete second cause, separate from unbracketed single-line submission.
+
+The wide ANSI capture is newer than its plain-text screen capture. Its prompt
+starts at row 79; rows 79–82 contain non-DIM multiline input. The cursor is on
+an empty input row 83, row 84 is the separate blank separator and row 85 contains
+the model status. Treating the *first* blank row as the separator incorrectly
+excludes that cursor. The updated parser uses the actual penultimate separator
+for the footerless layout, recognizes the nonempty draft, and **keeps it held**.
+It must not release that wide queue just because an older text capture showed
+an empty suggestion.
+
+The bounded source change keeps the hint layout and also recognizes the
+footerless last-row-status layout, with bracketed paste enabled, a blank
+penultimate separator, the final composer marker and the cursor inside its
+input region. Only a DIM suggestion at column 3 is treated as empty; a non-DIM
+draft (even the exact suggestion words), collapsed paste, historical match,
+dialog, unknown suffix or misplaced cursor remains held. It sends no extra
+Enter, infers no Confirmed and changes no account/handoff code.
+
+Evidence: `live-composer-before.log` and `live-composer-after-final.log` under
+`/tmp/imkr-submit-1343/`. The temporary standalone parser probe source is retained
+there as `composer_snapshot.rs`, not added as a production binary. Its only
+output is geometry/state classification, not private transcript content.
+A sanitized unit regression covers both dimensions, placeholder/draft identity,
+collapsed paste, cursor movement, history, approvals and a multiline draft with
+a trailing blank input row.
+
+**Real TUI check scope:** native frontend 0.166 with a private managed 0.166 daemon
+passed exact body/ACK turns, worker -> keeper -> worker, busy/idle, human draft,
+real approval and pending mail across update, account-switch refusal, shell,
+zero fake-notifier calls and no false Confirmed on laptop AND codingmachine at
+21x48 and 85x230. These real TUI runs still displayed hints. They are regression
+checks, not an end-to-end reproduction of the footerless layout. Attempts to
+configure that layout did not remove the hint; explicit assertions rejected
+them as footerless evidence. No more rendering configuration attempts were made
+after the keeper asked to stop, and no normalized-stream E2E claim is made.
+The missing-footer evidence is the actual live-capture parser replay above.
+Live NO_COLOR was reported unset; no new NO_COLOR result is claimed.
+
+Laptop logs and evidence:
+
+- `footer-final-real-21x48.log`, `/tmp/imkr-submit-1343-alk5g738/`.
+- `footer-final-real-85x230.log`, `/tmp/imkr-submit-1343-0boz4_ys/`.
+
+Codingmachine logs are in `/tmp/imkr-submit-1343-acceptance.Mu41zI/`:
+
+- `footer-real-21x48.log`, `/tmp/imkr-submit-1343-9386dej1/`.
+- `footer-real-85x230.log`, `/tmp/imkr-submit-1343-6_1mk2nm/`.
+
+`IMKR_HOSTNAME=imkr1339-test cargo test --bin imkr`: 317 passed, 1 ignored.
+Clippy all targets passes. The guarded 21-message fake-agent regression remains
+a separate supporting test, never a replacement for these real frontend checks.
+The older `codex-submit-1339.tgz` package predates this footer fix and must not be
+mistaken for this new source state. Existing production queues may contain stale
+commands: release/reconciliation belongs to the keeper, not to this test suite.
+#1339 remains open pending keeper review; nothing was deployed.
+
+Final footer-fix artifact (native frontend 0.166 plus runtime 0.166):
+`/tmp/imkr-submit-1343/codex-submit-1339-footer.tgz`, SHA-256
+`ada956435b9655f8626f450fdfd2ccd51df9427972bad2dce734597d177eb972`.
+This is a new archive; the previous reviewed archive was not overwritten.
+Both the packaged runner and the SSH orchestrator now accept `--rows` and
+`--cols`. For example, after review:
+
+```sh
+python3 tests/run_codex_submit_hosts.py \
+  --bundle /tmp/imkr-submit-1343/codex-submit-1339-footer.tgz \
+  --host laptop --host codingmachine --rows 21 --cols 48 \
+  --output /tmp/imkr-1339-footer-review-results
+```
+
+A final native-0.166 managed run on laptop passed at 21x48 after the historical
+hint-text guard was added: `footer-final-last-local.log`, evidence
+`/tmp/imkr-submit-1343-770ykzs9/`. The exact final artifact then passed both
+no-daemon and managed at 21x48 through the SSH package runner on codingmachine:
+`footer-bundle-run.log` and `footer-bundle-codingmachine/summary.json`, exit 0.
+Remote extraction `/tmp/imkr-1339-review.HbI0W8`; evidence directories
+`/tmp/imkr-submit-1343-r0cgeigf/` and `/tmp/imkr-submit-1343-1zqahfum/`.
+The 85x230 real frontend checks above preceded only the additional guard that
+ignores historical shortcut text above the current composer; that guard is
+covered by the final sanitized unit regression. No footerless real-TUI E2E
+result is claimed. The existing guarded 21-message test also passed with zero
+extra Enter and zero notifier calls (`footer-mail-stall.log`).

@@ -15,6 +15,8 @@ import argparse, json, pathlib, subprocess, sys, time
 root = pathlib.Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--mode', choices=['all', 'no-daemon', 'managed'], default='all')
+parser.add_argument('--rows', type=int)
+parser.add_argument('--cols', type=int)
 args = parser.parse_args()
 manifest = json.loads((root / 'manifest.json').read_text())
 import hashlib
@@ -28,6 +30,10 @@ for mode in modes:
     log = root / ('run-' + mode + '-' + str(time.time_ns()) + '.log')
     cmd = [sys.executable, str(root / 'codex_submit.py'), '--binary', str(root / 'imkr'),
            '--codex', str(root / 'codex')]
+    if args.rows is not None or args.cols is not None:
+        if not args.rows or not args.cols:
+            raise SystemExit('--rows and --cols must be supplied together')
+        cmd += ['--rows', str(args.rows), '--cols', str(args.cols)]
     if mode == 'managed':
         cmd += ['--managed', '--daemon-runtime', str(root / manifest['runtime'])]
     print('START', mode, 'log:', log, flush=True)
@@ -82,9 +88,12 @@ failed bootstrap log too. Harness finally cleans its private servers/daemons;
 a forcibly killed harness may need cleanup of ONLY processes bearing that exact
 SUBMIT_TEST_ROOT. Never resend production queues or send a spare Enter to them.
 
-The known direct single-line send regression is fixed by explicit paste framing.
-Already-bracketed production msg stalls remain unreproduced: passing this suite
-does not establish that every production symptom of #1339 is resolved. Baseline
+The direct single-line send regression is fixed by explicit paste framing.
+Real live ANSI snapshots also prove a missing-tooltip-footer false hold; the
+parser now recognizes that structured composer without releasing actual drafts.
+Real isolated TUI turns still displayed hints: no footerless end-to-end claim
+is made. Passing this suite does not resolve all production symptoms or authorize
+releasing old queues. Baseline
 91fd2ca already had the history/composer fix; this suite does not disprove it.
 No production rollout is included or authorized by this package.
 '''

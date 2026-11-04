@@ -15,7 +15,11 @@ def main():
     parser.add_argument('--host', action='append', required=True,
                         help='SSH destination; repeat for laptop and codingmachine')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--rows', type=int)
+    parser.add_argument('--cols', type=int)
     args = parser.parse_args()
+    if (args.rows is None) != (args.cols is None):
+        parser.error('--rows and --cols must be supplied together')
     args.output.mkdir(parents=True, exist_ok=False)
     results = []
     for number, host in enumerate(args.host):
@@ -38,6 +42,8 @@ def main():
             # The only interpolated value is the validated mktemp path.
             command = (f'tar -xzf {root}/bundle.tgz -C {root} && '
                        f'python3 {root}/run.py')
+            if args.rows is not None:
+                command += f' --rows {args.rows} --cols {args.cols}'
             with log.open('w') as output:
                 run = subprocess.run(ssh + [command], stdout=output,
                     stderr=subprocess.STDOUT, timeout=420)

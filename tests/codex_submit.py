@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import socket
+import struct
 import subprocess
 import tempfile
 import threading
@@ -24,6 +26,9 @@ def main():
     parser.add_argument('--binary', default='target/debug/imkr')
     parser.add_argument('--codex', required=True)
     parser.add_argument('--managed', action='store_true')
+    parser.add_argument('--no-color', action='store_true')
+    parser.add_argument('--rows', type=int)
+    parser.add_argument('--cols', type=int)
     parser.add_argument('--daemon-runtime', help='seed this local release directory into private HOME')
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
@@ -55,6 +60,8 @@ def main():
                SHELL='/bin/bash', TERM='xterm-256color', SUBMIT_TEST_ROOT=str(root),
                PATH=str(root / 'bin') + ':' + os.environ['PATH'],
                DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent/imkr-submit-1343')
+    if args.no_color:
+        env['NO_COLOR'] = '1'
     requests = []
     received = collections.Counter()
     received_text = {}
@@ -165,6 +172,31 @@ trust_level = "trusted"
         until(lambda: idle(session), session + ' idle')
 
     sessions = ['submit-keeper', 'submit-worker', 'submit-approval']
+    taps = []
+
+    def resize_test_pane(session):
+        if args.rows is None and args.cols is None:
+            return
+        assert args.rows and args.cols, '--rows and --cols must be supplied together'
+        conn = socket.socket(socket.AF_UNIX)
+        conn.connect(str(root / 'runtime/imkr' / (session + '.sock')))
+        payload = json.dumps({'cmd': 'tap', 'pane': 0, 'watch': False,
+                              'size': [args.rows, args.cols]}).encode()
+        conn.sendall(bytes([4]) + struct.pack('>I', len(payload)) + payload)
+        taps.append(conn)
+
+        def collect():
+            with (root / (session + '-tap.ansi')).open('wb') as output:
+                reader = conn.makefile('rb')
+                while True:
+                    header = reader.read(5)
+                    if len(header) != 5:
+                        break
+                    data = reader.read(struct.unpack('>I', header[1:])[0])
+                    if header[0] == 1:
+                        output.write(data)
+                        output.flush()
+        threading.Thread(target=collect, daemon=True).start()
     try:
         for session in sessions:
             command = [codex]
@@ -174,8 +206,11 @@ trust_level = "trusted"
             command += (['-a', 'on-request'] if session == 'submit-approval' else
                         ['--dangerously-bypass-approvals-and-sandbox'])
             cli(session, 'new', '--start', '--window', '0', '--dir', str(root / 'work'), '--', *command)
-            until(lambda: '? for shortcuts' in screen(session), session + ' startup')
+            resize_test_pane(session)
+            until(lambda: 'Ask Codex to do anything' in screen(session), session + ' startup')
             until(lambda: idle(session), session + ' initial idle')
+            initial = screen(session)
+            (root / (session + '-initial.txt')).write_text(initial)
         if args.managed:
             daemon = json.loads((root / 'home/.codex/app-server-daemon/daemon.pid').read_text())
             executable = os.readlink(f'/proc/{daemon["pid"]}/exe')
@@ -266,6 +301,8 @@ trust_level = "trusted"
         for session in [*sessions, 'submit-shell']:
             subprocess.run([binary, '-s', session, 'kill-server'], env=env,
                            capture_output=True, timeout=15)
+        for conn in taps:
+            conn.close()
         server.shutdown()
         # Managed Codex can leave its own daemon/updater in our private HOME.
         # Match /proc environment before stopping only those isolated children.
