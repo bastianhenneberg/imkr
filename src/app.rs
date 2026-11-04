@@ -938,6 +938,52 @@ const ENTER_AGAIN: Duration = Duration::from_secs(2);
 /// only be empty lines nobody asked for.
 const ENTER_TRIES: u8 = 1;
 
+/// Codex redraws the submitted prompt in its conversation, often inside
+/// ENTER_LINES. Only the composer at the cursor can hold unsent input.
+/// Return None for an unfamiliar layout (including approval dialogs): it
+/// must keep the conservative hold, and must never cause an extra Enter.
+fn codex_composer(screen: &crate::term::Parser) -> Option<String> {
+    let (_, cols) = screen.size();
+    let rows: Vec<_> = screen.rows(0, cols).collect();
+    let (cursor, column) = screen.cursor_position();
+    let cursor = usize::from(cursor);
+    let footer = rows.iter().rposition(|r| r.contains("? for shortcuts"))?;
+    let start = rows[..footer]
+        .iter()
+        .rposition(|r| r == "›" || r.starts_with("› "))?;
+    // The composer ends at the first blank row before its status/footer.
+    // This also keeps a cursor in a dialog or the status out of the input.
+    let end = (start + 1..footer).find(|&i| rows[i].trim().is_empty())?;
+    if !(start..end).contains(&cursor) {
+        return None;
+    }
+    // Codex paints its empty-composer suggestion dim (verified from a
+    // read-only terminal snapshot). A real draft, including a collapsed
+    // paste, has non-dim content. Do not depend on the suggestion's words.
+    let placeholder = cursor == start
+        && column == 2
+        && (start..end).all(|row| {
+            (if row == start { 2 } else { 0 }..cols).all(|col| {
+                screen
+                    .cell(row as u16, col)
+                    .is_none_or(|cell| cell.contents().trim().is_empty() || cell.dim())
+            })
+        });
+    Some(if placeholder {
+        String::new()
+    } else {
+        rows[start..end].join("\n")
+    })
+}
+
+fn typed_still_shown(pane: &Pane, text: &str) -> bool {
+    if pane.program().as_deref() == Some("codex") {
+        let screen = pane.screen();
+        return codex_composer(&screen).is_none_or(|input| !input.is_empty());
+    }
+    pane.shows_tail(text, ENTER_LINES)
+}
+
 /// How many lines at the bottom of the screen count as the input line when
 /// looking for what was typed in (`Pane::shows_tail`).
 const ENTER_LINES: usize = 8;
@@ -3117,8 +3163,11 @@ impl App {
                         pane.reported,
                         Some(AgentState::Working | AgentState::Blocked)
                     ),
-                    pane.last_typed().is_some_and(|typed| typed > e.at),
-                    pane.shows_tail(&e.text, ENTER_LINES),
+                    // Codex has no submit hook. Never retry Enter from a
+                    // historical screen match or an unfamiliar dialog.
+                    pane.program().as_deref() == Some("codex")
+                        || pane.last_typed().is_some_and(|typed| typed > e.at),
+                    typed_still_shown(pane, &e.text),
                     self.took_input(pane, e),
                     pane.takes_mail,
                 ))
@@ -3408,10 +3457,15 @@ impl App {
         let Some(pane) = self.panes.get(&id) else {
             return false;
         };
+        // The composer itself protects Codex drafts and collapsed pastes,
+        // even after a server handover (Entered is not transferred).
+        if pane.program().as_deref() == Some("codex") {
+            return codex_composer(&pane.screen()).is_none_or(|input| !input.is_empty());
+        }
         self.entered
             .iter()
             .filter(|e| e.pane == id)
-            .any(|e| !self.took_input(pane, e) && pane.shows_tail(&e.text, ENTER_LINES))
+            .any(|e| !self.took_input(pane, e) && typed_still_shown(pane, &e.text))
     }
 
     /// Whether the agent in `pane` has taken what was typed in for
@@ -3435,14 +3489,20 @@ impl App {
     /// cannot, see `mail_hold`.
     fn mail_waits_for(&self, id: PaneId) -> Option<&'static str> {
         let pane = self.panes.get(&id)?;
-        let queues = pane
-            .program()
-            .is_some_and(|program| agent::queues_input(&program));
+        let program = pane.program();
+        let queues = program.as_deref().is_some_and(agent::queues_input);
+        // Codex has no hooks: a redraw can start a turn between ticks.
+        // Do not type into it based on the previous tick's cached Idle.
+        let state = if program.as_deref() == Some("codex") {
+            pane.agent_state()
+        } else {
+            self.agent_now(id)
+        };
         mail_hold(
             self.switching.contains_key(&id) || self.resumed.contains_key(&id),
             pane.drafting(),
             self.unsent_typed(id),
-            self.agent_now(id),
+            state,
             queues,
         )
     }
@@ -15732,6 +15792,63 @@ fn with_title(label: String, title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    fn codex_screen(input: &str, history: &str) -> crate::term::Parser {
+        let mut screen = crate::term::Parser::new(24, 100, 100);
+        screen.process(
+            format!(
+                "{history}\r\n\r\n› {input}\r\n\r\n  GPT-6 · test\r\n  ? for shortcuts\x1b[3;3H"
+            )
+            .as_bytes(),
+        );
+        // Position at the composer, including for multiline input.
+        let row = history.split("\r\n").count() + 2;
+        screen.process(format!("\x1b[{row};3H").as_bytes());
+        screen
+    }
+
+    #[test]
+    fn codex_history_is_not_its_composer_even_for_a_sub_tick_answer() {
+        let text = "message that was already answered";
+        let screen = codex_screen(
+            "\x1b[2mAsk Codex to do anything\x1b[0m",
+            &format!("› {text}"),
+        );
+        // This is precisely the false hold from #1339, with no Working
+        // sample between submission and the fast completed answer.
+        assert!(crate::pane::shows_text(
+            &crate::agent::tail(&screen, 8),
+            text
+        ));
+        let input = super::codex_composer(&screen).unwrap();
+        assert!(!crate::pane::shows_text(&input, text));
+    }
+
+    #[test]
+    fn codex_composer_preserves_stuck_input_and_wrapped_long_messages() {
+        let text = "long mail message ".repeat(45);
+        let screen = codex_screen(&text, "earlier answer");
+        let input = super::codex_composer(&screen).unwrap();
+        assert!(crate::pane::shows_text(&input, &text));
+        let pasted = codex_screen("[Pasted Content 17321 chars]", "earlier answer");
+        assert!(!super::codex_composer(&pasted).unwrap().is_empty());
+        let draft = codex_screen("a real draft", "earlier answer");
+        assert!(
+            super::codex_composer(&draft)
+                .unwrap()
+                .contains("a real draft")
+        );
+    }
+
+    #[test]
+    fn codex_dialog_or_unfamiliar_layout_is_not_an_empty_composer() {
+        let mut screen = codex_screen("old message", "earlier answer");
+        screen.process(b"\x1b[10;1HApproval required\r\n> Yes\x1b[11;3H");
+        assert!(super::codex_composer(&screen).is_none());
+        screen.process(b"\x1b[2J\x1b[Hnew shell after restart");
+        assert!(super::codex_composer(&screen).is_none());
+    }
+
     use crate::agent::AgentState;
 
     #[test]

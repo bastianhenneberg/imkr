@@ -684,6 +684,22 @@ Projekt-Slug: `imkr`
   begraben (gemessen: 2193 → 3574 → 4374 Zeichen in einem Prompt). Der Eintrag in `entered`
   bleibt deshalb liegen, auch wenn die Nachschick-Versuche verbraucht sind, bis der Agent sie
   nimmt oder der Text vom Schirm ist.
+- **Codex-Verlauf ist keine Eingabezeile** (#1339): `app::codex_composer` sucht den
+  Composer am Terminal-Cursor vor `? for shortcuts`; der leere Vorschlag ist dim
+  (am echten TUI lesend gemessen). `unsent_typed` prüft hier den Composer selbst,
+  auch ohne `entered` nach einem Server-Handover: echte Drafts und eingeklappte
+  Pastes halten weiter, unbekannte Layouts/Approval ebenso. Die bisherige Suche
+  nach den letzten 40 Zeichen in acht nichtleeren Bildschirmzeilen traf bereits
+  beantwortete Nachrichten im Verlauf; ohne Hooks wird `entered.began` nie gesetzt.
+  Den geratenen Working-Zustand als Beweis zu nehmen wäre ebenso falsch: bereits
+  das Echo einer noch ungesendeten Eingabe erzeugt Ausgabe. Für Codex keine
+  automatischen Enter-Wiederholungen und beim Zustellen den frischen Pane-Zustand
+  statt des vorherigen Idle-Ticks nehmen. Leerer Composer gibt die Queue frei,
+  ist aber **kein** `Confirmed`-Nachweis. Repro ohne Konto/Endpoint:
+  `cargo build && python tests/mail_stall.py`; Fake-Codex, eigener HOME/Socket/Config,
+  schnelle Antwort, Queue, Draft/Paste/Approval, Working→Idle, verschlucktes Enter,
+  Server-Handover und Prozess-Neustart. `IMKR_HOSTNAME=mail-regression-host cargo test`
+  vermeidet die bestehende Annahme eines anderen Tests, dass `laptop` fremd ist.
 - **Getippt ist nicht angekommen** (Bug #1307): `Pane::prompts` allein ist faelschbar — JEDER
   fremde Prompt treibt den Zähler hoch. Gemessener Fall: imkr tippte 12:18:33, 12:18:38 wurde
   der Agent von einem Kontowechsel **neu gestartet** (die Eingabezeile geht mit dem Prozess),
