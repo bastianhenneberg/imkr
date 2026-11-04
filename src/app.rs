@@ -491,7 +491,7 @@ struct RemoteAlert {
     host: String,
     title: String,
     body: String,
-    desktop: (String, String),
+    desktop: crate::desktop::Alert,
 }
 
 /// The sessions besides this one, here and on other machines, as the
@@ -1211,6 +1211,7 @@ impl Write for FrameSink {
 }
 
 pub struct App {
+    desktop: crate::desktop::Queue,
     panes: HashMap<PaneId, Pane>,
     /// The active workspace.
     ws: Workspace,
@@ -1488,6 +1489,7 @@ impl App {
         let body = screen_layout(DEFAULT_SCREEN, &config.bars, &config.spacing).body;
 
         let mut app = App {
+            desktop: Default::default(),
             panes: HashMap::new(),
             ws: Workspace::empty(),
             workspace: 1,
@@ -1618,6 +1620,9 @@ impl App {
             app.start_fresh()?;
         }
         app.event_loop(rx);
+        if app.config.notifications == Notifications::System {
+            crate::desktop::send_before_exit(app.desktop.finish(Instant::now()));
+        }
         for mut client in app.clients.drain(..) {
             let _ = client.send(&ServerMsg::Exited);
         }
@@ -2188,6 +2193,11 @@ impl App {
                 self.refresh_files();
                 self.follow_omarchy();
                 self.pass_on_alerts();
+                if self.config.notifications == Notifications::System {
+                    crate::desktop::send(self.desktop.drain(Instant::now()));
+                } else {
+                    self.desktop.discard_pending();
+                }
                 self.screen_use = crate::screen::grant();
                 if *self.watched_hosts.lock().unwrap() != self.config.hosts {
                     *self.watched_hosts.lock().unwrap() = self.config.hosts.clone();
@@ -4959,6 +4969,23 @@ impl App {
             };
             seen.insert(id, (state, since));
         }
+        if self.config.notifications == Notifications::System {
+            let live: HashSet<_> = self
+                .panes
+                .keys()
+                .map(|&pane| crate::desktop::Source {
+                    host: String::new(),
+                    session: protocol::session_name(),
+                    pane,
+                })
+                .collect();
+            self.desktop.retain_sources("", &live);
+            for source in live {
+                if !seen.contains_key(&source.pane) {
+                    self.desktop.observe(source, "absent", String::new());
+                }
+            }
+        }
         for (&id, &(state, _)) in &seen {
             let was = self.agents.get(&id).map(|(s, _)| *s);
             let kept = match state {
@@ -4985,6 +5012,39 @@ impl App {
             }
             // Nobody looks at anything while detached.
             let in_view = !self.clients.is_empty() && self.ws.contains(id) && self.ws.focus == id;
+            if self.config.notifications == Notifications::System {
+                let pane = &self.panes[&id];
+                let word = match state {
+                    AgentState::Blocked => "blocked",
+                    AgentState::Failed => "failed",
+                    AgentState::Working => "working",
+                    _ => "idle",
+                };
+                let fingerprint = match state {
+                    AgentState::Blocked => crate::desktop::question_identity(&agent::tail(
+                        pane.screen().screen(),
+                        INBOX_LINES,
+                    )),
+                    AgentState::Failed => pane.failure_reason().to_owned(),
+                    _ => String::new(),
+                };
+                let changed = self.desktop.observe(
+                    crate::desktop::Source {
+                        host: String::new(),
+                        session: protocol::session_name(),
+                        pane: id,
+                    },
+                    word,
+                    fingerprint,
+                );
+                if changed && state == AgentState::Blocked && !in_view {
+                    self.notify_desktop(id, "blocked", "needs you");
+                }
+                if changed && state == AgentState::Failed {
+                    let what = format!("stopped: {}", self.panes[&id].failure_reason());
+                    self.notify_desktop(id, "failed", &what);
+                }
+            }
             if state == AgentState::Idle
                 && matches!(was, Some(AgentState::Working | AgentState::Blocked))
                 && !in_view
@@ -5062,20 +5122,39 @@ impl App {
             _ => String::new(),
         };
         if self.config.notifications == Notifications::System {
-            let pane = &self.panes[&id];
-            let (title, body) = crate::desktop::event(
-                kind,
-                what,
-                pane.program().as_deref(),
-                pane.name.as_deref(),
-                self.window_name_of(id).as_deref(),
-                &protocol::session_name(),
-                id,
-            );
-            self.send_notification(&title, &body);
+            self.notify_desktop(id, kind, what);
         } else {
             self.send_notification(&format!("{who} {what}"), &place);
         }
+    }
+
+    fn notify_desktop(&mut self, id: PaneId, kind: &str, what: &str) {
+        let Some(pane) = self.panes.get(&id) else {
+            return;
+        };
+        let (title, body) = crate::desktop::event(
+            kind,
+            what,
+            pane.program().as_deref(),
+            pane.name.as_deref(),
+            self.window_name_of(id).as_deref(),
+            &protocol::session_name(),
+            id,
+        );
+        self.desktop.submit(
+            crate::desktop::Alert {
+                source: crate::desktop::Source {
+                    host: String::new(),
+                    session: protocol::session_name(),
+                    pane: id,
+                },
+                kind: kind.into(),
+                detail: what.into(),
+                title,
+                body,
+            },
+            Instant::now(),
+        );
     }
 
     /// An agent asks to see or drive this machine's screen, with
@@ -5702,6 +5781,68 @@ impl App {
     /// Tells about agents on other machines the way it tells about its own:
     /// the bar, a bell when one waits, and a notification.
     fn pass_on_alerts(&mut self) {
+        if self.config.notifications == Notifications::System {
+            let hosts = self.places.lock().unwrap().hosts.clone();
+            for (host, sessions) in &hosts {
+                if !crate::desktop::remote_owner(host) {
+                    continue;
+                }
+                if let Ok(sessions) = sessions {
+                    let live = sessions
+                        .iter()
+                        .flat_map(|session| {
+                            session
+                                .agent_panes
+                                .iter()
+                                .map(|agent| crate::desktop::Source {
+                                    host: host.clone(),
+                                    session: session.name.clone(),
+                                    pane: agent.pane,
+                                })
+                        })
+                        .collect();
+                    self.desktop.retain_sources(host, &live);
+                }
+                for session in sessions.iter().flatten() {
+                    for agent in &session.agent_panes {
+                        let fingerprint = if matches!(agent.state.as_str(), "blocked" | "failed") {
+                            crate::desktop::question_identity(&agent.tail)
+                        } else {
+                            String::new()
+                        };
+                        let source = crate::desktop::Source {
+                            host: host.clone(),
+                            session: session.name.clone(),
+                            pane: agent.pane,
+                        };
+                        let first = !self.desktop.knows(&source);
+                        let changed = self.desktop.observe(source, &agent.state, fingerprint);
+                        // A takeover must not lose a question/error the old owner
+                        // collected but died before sending. Reannounce active
+                        // incidents once; never replay old completions.
+                        if (first || changed)
+                            && matches!(agent.state.as_str(), "blocked" | "failed")
+                        {
+                            let what = if agent.state == "blocked" {
+                                "needs you"
+                            } else {
+                                "stopped with an error"
+                            };
+                            self.desktop.submit(
+                                crate::desktop::remote_alert(
+                                    host,
+                                    &session.name,
+                                    agent,
+                                    &agent.state,
+                                    what,
+                                ),
+                                Instant::now(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let alerts = std::mem::take(&mut self.places.lock().unwrap().alerts);
         for RemoteAlert {
             host,
@@ -5716,7 +5857,7 @@ impl App {
             self.flash = Some(format!("{title} · {body}"));
             if self.config.notifications == Notifications::System {
                 if crate::desktop::remote_owner(&host) {
-                    self.send_notification(&desktop.0, &desktop.1);
+                    self.desktop.submit(desktop, Instant::now());
                 }
             } else {
                 self.send_notification(&title, &body);
@@ -15451,20 +15592,12 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                                     "failed" => "failed",
                                     _ => "done",
                                 };
-                                let mut desktop = crate::desktop::event(
+                                let desktop = crate::desktop::remote_alert(
+                                    host,
+                                    &session.name,
+                                    agent,
                                     kind,
                                     what,
-                                    Some(&agent.program),
-                                    (!matches!(agent.program.as_str(), "claude" | "codex"))
-                                        .then_some(agent.program.as_str()),
-                                    Some(&agent.dir),
-                                    &session.name,
-                                    agent.pane,
-                                );
-                                desktop.1 = format!(
-                                    "{} · {}",
-                                    crate::desktop::label(host, "remote"),
-                                    desktop.1
                                 );
                                 alerts.push(RemoteAlert {
                                     host: host.clone(),

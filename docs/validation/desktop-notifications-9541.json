@@ -97,7 +97,108 @@
       ]
     ]
   },
-  "final_draft": {
+  "baseline_controls": {
+    "failover": null,
+    "off_count": 0,
+    "terminal": [
+      "imkr: claude needs you · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: claude stopped: API error · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: claude is done · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
+      "imkr: User literal · terminal literal"
+    ],
+    "binary": "/tmp/imkr-notify-9541/before",
+    "remote_counts": {
+      "blocked": 0,
+      "repeat": 0,
+      "failed": 0,
+      "done": 0
+    },
+    "remote_samples": {
+      "blocked": [],
+      "failed": [],
+      "done": []
+    },
+    "local": [
+      [
+        "working",
+        []
+      ],
+      [
+        "blocked",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review needs you",
+            "window 1 · /tmp/imkr-notify-9541/before-controls"
+          ]
+        ]
+      ],
+      [
+        "blocked",
+        []
+      ],
+      [
+        "failed",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review stopped: limit reached",
+            "window 1 · /tmp/imkr-notify-9541/before-controls"
+          ]
+        ]
+      ],
+      [
+        "working",
+        []
+      ],
+      [
+        "idle",
+        [
+          [
+            "--app-name=imkr",
+            "bee-review is done",
+            "window 1 · /tmp/imkr-notify-9541/before-controls"
+          ]
+        ]
+      ]
+    ],
+    "manual": [
+      [
+        "--app-name=imkr",
+        "User title <literal>",
+        "User CWD/JT $(touch USER_INJECTED)"
+      ]
+    ]
+  },
+  "transport_boundaries": {
+    "push": {
+      "byte_equal": true,
+      "sha256": "c69d23180ebc7e013bf61743646806d8954ebacdb5f4b8b1a31f3faa3ec961da"
+    },
+    "send_notification": {
+      "byte_equal": true,
+      "sha256": "2a9ccd663379bcd5b96118ba43649500049fa86686d1577aa43e3bced57a888d"
+    },
+    "src/push.rs": {
+      "byte_equal": true
+    },
+    "src/brain.rs": {
+      "byte_equal": true
+    },
+    "src/config.rs": {
+      "byte_equal": true
+    },
+    "src/term.rs": {
+      "byte_equal": true
+    },
+    "src/pane.rs": {
+      "byte_equal": true
+    },
+    "src/protocol.rs": {
+      "byte_equal": true
+    }
+  },
+  "initial_ownership_draft": {
     "failover": 15,
     "off_count": 0,
     "terminal": [
@@ -203,8 +304,98 @@
       ]
     ]
   },
-  "baseline_controls": {
-    "failover": null,
+  "final_burst_draft": {
+    "exit_failure": [
+      [
+        "--app-name=imkr",
+        "--urgency=critical",
+        "--",
+        "Codex · stopped with an error",
+        "exit-error · burst-accepted · exit-error / bee 0 · stopped: API error"
+      ]
+    ],
+    "pending_recovery": [
+      [
+        "--app-name=imkr",
+        "--urgency=critical",
+        "--",
+        "15 bees stopped with an error",
+        "synthetic-host · project-review\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 0\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 1\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 2\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 3\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 4\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 5\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 6\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 7\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 8\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 9\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 10\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 11\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 12\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 13\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 14"
+      ]
+    ],
+    "changed_question": [
+      [
+        "--app-name=imkr",
+        "--urgency=normal",
+        "--",
+        "Claude · is waiting for your answer",
+        "project-review · synthetic-host · imkr · project-review / bee 0"
+      ]
+    ],
+    "selection_repeat": [],
+    "mixed": [
+      [
+        "--app-name=imkr",
+        "--urgency=critical",
+        "--",
+        "5 bees stopped with an error",
+        "synthetic-host · project-review\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 2\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 5\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 8\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 11\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 14"
+      ],
+      [
+        "--app-name=imkr",
+        "--urgency=normal",
+        "--",
+        "5 bees need your attention",
+        "synthetic-host · project-review\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 1\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 4\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 7\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 10\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 13"
+      ],
+      [
+        "--app-name=imkr",
+        "--urgency=low",
+        "--",
+        "5 bees finished their turns",
+        "synthetic-host · project-review\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 0\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 3\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 6\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 9\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 12"
+      ]
+    ],
+    "session_boundaries": [
+      [
+        "--app-name=imkr",
+        "--urgency=normal",
+        "--",
+        "8 bees need your attention",
+        "synthetic-host · other-review\nCodex · is waiting for your answer: synthetic-host · imkr · other-review / bee 0\nClaude · is waiting for your answer: synthetic-host · imkr · other-review / bee 1\nCodex · is waiting for your answer: synthetic-host · imkr · other-review / bee 2\nClaude · is waiting for your answer: synthetic-host · imkr · other-review / bee 3\nCodex · is waiting for your answer: synthetic-host · imkr · other-review / bee 4\nClaude · is waiting for your answer: synthetic-host · imkr · other-review / bee 5\nCodex · is waiting for your answer: synthetic-host · imkr · other-review / bee 6\nClaude · is waiting for your answer: synthetic-host · imkr · other-review / bee 7"
+      ],
+      [
+        "--app-name=imkr",
+        "--urgency=normal",
+        "--",
+        "7 bees need your attention",
+        "synthetic-host · project-review\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 0\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 1\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 2\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 3\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 4\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 5\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 6"
+      ]
+    ],
+    "local_burst": [
+      [
+        "--app-name=imkr",
+        "--urgency=normal",
+        "--",
+        "5 bees need your attention",
+        "local-a\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-a / bee 1\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-a / bee 2\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-a / bee 3\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-a / bee 4\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-a / bee 5"
+      ],
+      [
+        "--app-name=imkr",
+        "--urgency=normal",
+        "--",
+        "5 bees need your attention",
+        "local-b\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-b / bee 1\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-b / bee 2\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-b / bee 3\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-b / bee 4\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-b / bee 5"
+      ],
+      [
+        "--app-name=imkr",
+        "--urgency=normal",
+        "--",
+        "5 bees need your attention",
+        "local-c\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-c / bee 1\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-c / bee 2\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-c / bee 3\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-c / bee 4\nCodex · is waiting for your answer: imkr--imkr-desktop-9541 · local-c / bee 5"
+      ]
+    ],
+    "failover": 1,
     "off_count": 0,
     "terminal": [
       "imkr: claude needs you · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
@@ -212,17 +403,41 @@
       "imkr: claude is done · window 2 · /home/bastian/Development/imkr--imkr-desktop-9541",
       "imkr: User literal · terminal literal"
     ],
-    "binary": "/tmp/imkr-notify-9541/before",
+    "binary": "/home/bastian/Development/imkr--imkr-desktop-9541/target/notification-evidence-binaries/burst-final",
     "remote_counts": {
-      "blocked": 0,
+      "blocked": 1,
       "repeat": 0,
-      "failed": 0,
-      "done": 0
+      "failed": 1,
+      "done": 1
     },
     "remote_samples": {
-      "blocked": [],
-      "failed": [],
-      "done": []
+      "blocked": [
+        [
+          "--app-name=imkr",
+          "--urgency=normal",
+          "--",
+          "15 bees need your attention",
+          "synthetic-host · project-review\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 0\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 1\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 2\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 3\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 4\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 5\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 6\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 7\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 8\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 9\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 10\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 11\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 12\nCodex · is waiting for your answer: synthetic-host · imkr · project-review / bee 13\nClaude · is waiting for your answer: synthetic-host · imkr · project-review / bee 14"
+        ]
+      ],
+      "failed": [
+        [
+          "--app-name=imkr",
+          "--urgency=critical",
+          "--",
+          "15 bees stopped with an error",
+          "synthetic-host · project-review\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 0\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 1\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 2\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 3\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 4\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 5\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 6\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 7\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 8\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 9\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 10\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 11\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 12\nCodex · stopped with an error: synthetic-host · imkr · project-review / bee 13\nClaude · stopped with an error: synthetic-host · imkr · project-review / bee 14"
+        ]
+      ],
+      "done": [
+        [
+          "--app-name=imkr",
+          "--urgency=low",
+          "--",
+          "15 bees finished their turns",
+          "synthetic-host · project-review\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 0\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 1\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 2\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 3\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 4\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 5\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 6\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 7\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 8\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 9\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 10\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 11\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 12\nCodex · finished its turn: synthetic-host · imkr · project-review / bee 13\nClaude · finished its turn: synthetic-host · imkr · project-review / bee 14"
+        ]
+      ]
     },
     "local": [
       [
@@ -234,8 +449,10 @@
         [
           [
             "--app-name=imkr",
-            "bee-review needs you",
-            "window 1 · /tmp/imkr-notify-9541/before-controls"
+            "--urgency=normal",
+            "--",
+            "Codex · is waiting for your answer",
+            "local · imkr · bee-review"
           ]
         ]
       ],
@@ -248,8 +465,10 @@
         [
           [
             "--app-name=imkr",
-            "bee-review stopped: limit reached",
-            "window 1 · /tmp/imkr-notify-9541/before-controls"
+            "--urgency=critical",
+            "--",
+            "Codex · stopped with an error",
+            "local · imkr · bee-review · stopped: limit reached"
           ]
         ]
       ],
@@ -262,8 +481,10 @@
         [
           [
             "--app-name=imkr",
-            "bee-review is done",
-            "window 1 · /tmp/imkr-notify-9541/before-controls"
+            "--urgency=low",
+            "--",
+            "Codex · finished its turn",
+            "local · imkr · bee-review"
           ]
         ]
       ]
@@ -274,34 +495,54 @@
         "User title <literal>",
         "User CWD/JT $(touch USER_INJECTED)"
       ]
-    ]
-  },
-  "transport_boundaries": {
-    "push": {
-      "byte_equal": true,
-      "sha256": "c69d23180ebc7e013bf61743646806d8954ebacdb5f4b8b1a31f3faa3ec961da"
-    },
-    "send_notification": {
-      "byte_equal": true,
-      "sha256": "2a9ccd663379bcd5b96118ba43649500049fa86686d1577aa43e3bced57a888d"
-    },
-    "src/push.rs": {
-      "byte_equal": true
-    },
-    "src/brain.rs": {
-      "byte_equal": true
-    },
-    "src/config.rs": {
-      "byte_equal": true
-    },
-    "src/term.rs": {
-      "byte_equal": true
-    },
-    "src/pane.rs": {
-      "byte_equal": true
-    },
-    "src/protocol.rs": {
-      "byte_equal": true
-    }
+    ],
+    "remote_receipt_delays": [
+      {
+        "title": "15 bees need your attention",
+        "seconds": 1.4736
+      },
+      {
+        "title": "Claude · is waiting for your answer",
+        "seconds": 1.4468
+      },
+      {
+        "title": "15 bees stopped with an error",
+        "seconds": 1.4039
+      },
+      {
+        "title": "15 bees finished their turns",
+        "seconds": 1.36
+      },
+      {
+        "title": "5 bees stopped with an error",
+        "seconds": 1.2877
+      },
+      {
+        "title": "5 bees need your attention",
+        "seconds": 1.3053
+      },
+      {
+        "title": "5 bees finished their turns",
+        "seconds": 1.3226
+      },
+      {
+        "title": "8 bees need your attention",
+        "seconds": 1.2421
+      },
+      {
+        "title": "7 bees need your attention",
+        "seconds": 1.2606
+      },
+      {
+        "title": "15 bees need your attention",
+        "seconds": 1.137
+      },
+      {
+        "title": "15 bees stopped with an error",
+        "seconds": 2.0669
+      }
+    ],
+    "artifact_directory": "/tmp/imkr-n9541-9b91ncsb/burst-accepted",
+    "binary_sha256": "da399ba4fc416cf6496999e81be8c97cd0591510a9872917002ebf741a7c4c25"
   }
 }
