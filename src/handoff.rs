@@ -242,12 +242,20 @@ pub fn save(state: &Path, source: &Source, tool: &str, context: &Value) -> Resul
                 continue;
             }
             // Bound on characters avoids slicing UTF-8 in the middle of a codepoint.
+            let continuation = tool == "claude"
+                && body
+                    .trim_start()
+                    .starts_with("This session is being continued");
             let body: String = body.chars().take(12000).collect();
             let entry = format!("### {role}\n\n{body}\n");
-            if first.is_none() && role == "user" {
+            if first.is_none() && role == "user" && !continuation {
                 first = Some(entry.clone());
             }
-            if kind == "compacted" || kind == "summary" || v["isCompactSummary"] == true {
+            if kind == "compacted"
+                || kind == "summary"
+                || v["isCompactSummary"] == true
+                || continuation
+            {
                 summaries.push_back(entry.clone());
                 if summaries.len() > 3 {
                     summaries.pop_front();
@@ -350,6 +358,11 @@ mod tests {
                 serde_json::json!({"type":"system","sessionId":"exact-id"})
             };
             writeln!(f, "{meta}").unwrap();
+            if tool == "claude" {
+                writeln!(f, "{}", serde_json::json!({
+                    "type":"user", "message":{"content":[{"type":"text", "text":"This session is being continued from a previous conversation. COMPACTION WITHOUT FLAG"}]}
+                })).unwrap();
+            }
             for (kind, body) in [
                 ("user", "LITERAL TASK: repair the bee"),
                 ("summary", "DECISION: keep the keeper"),
@@ -383,6 +396,13 @@ mod tests {
                 "untrusted",
             ] {
                 assert!(md.contains(expected), "{tool}: {expected}");
+            }
+            if tool == "claude" {
+                let summaries = md
+                    .split("## Recent compaction / summaries (bounded)")
+                    .nth(1)
+                    .unwrap();
+                assert!(summaries.contains("COMPACTION WITHOUT FLAG"));
             }
             assert_eq!(
                 fs::metadata(&result).unwrap().permissions().mode() & 0o777,

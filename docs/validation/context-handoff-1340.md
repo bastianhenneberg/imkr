@@ -42,7 +42,8 @@ literal task, decision and work markers. Checks cover:
   raw task snapshot before exiting. All package files 0600, package directory 0700.
 
 Rust tests additionally exercise both adapters against 3000-record histories,
-retain compaction summaries and original task plus complete raw bytes, reject
+retain compaction summaries (including Claude continuation text without a summary
+flag) and original task plus complete raw bytes, reject
 mismatched identities and duplicate session metadata, and prove a live source
 process's descriptor wins over a newer neighbor transcript in the same CWD held
 open in another process. The source process's `CODEX_HOME` wins over an incorrect
