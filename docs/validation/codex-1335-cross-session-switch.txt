@@ -1,0 +1,40 @@
+╭ 0 codex ◆ blocked ──────────────────────────────────────────────────────── ┃  ━  ⤢  × ─╮╭ ⬢ imkr ────────────────────╮
+│                                                                                        ││Windows                     │
+│  >_ OpenAI Codex (v0.163.0)                                                            ││▸ 1 work                 ◆ 1│
+│     /tmp/imkr-1335/cross/work                                                          ││                            │
+│                                                                                        ││Sessions                    │
+│                                                                                        ││  observer                  │
+│› test                                                                                  ││▸ waiting                 ❶ │
+│                                                                                        ││                            │
+│                                                                                        ││Agents                      │
+│• Running true                                                                          ││◆ 1 work › codex          6s│
+│                                                                                        ││  Action Required | ⠇ | work│
+│                                                                                        ││                            │
+│                                                                                        ││Files work                  │
+│                                                                                        ││  empty                     │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│  Would you like to run the following command?                                          ││                            │
+│                                                                                        ││                            │
+│  Environment: local                                                                    ││                            │
+│                                                                                        ││                            │
+│  Reason: May I run this harmless isolated test command?                                ││                            │
+│                                                                                        ││                            │
+│  $ true                                                                                ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│› 1. Yes, proceed (y)                                                                   ││                            │
+│  2. Yes, and don't ask again for commands that start with `true` (p)                   ││                            │
+│  3. No, and tell Codex what to do differently (esc)                                    ││                            │
+│                                                                                        ││                            │
+│  Press enter to confirm or esc to cancel                                               ││                            │
+╰────────────────────────────────────────────────────────────────────────────────────────╯╰ + window  ⧉ float  ⚙ ──────╯
+ ⬢ waiting   1  + │ ◆ pane 0 needs you · ^B a                                    ▸ /tmp/imkr-1335/cross/work · ⌂ laptop

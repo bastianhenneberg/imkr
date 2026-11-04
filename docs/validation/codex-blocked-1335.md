@@ -122,3 +122,65 @@ blocked state alone does not prove it blue. The keeper and the worker assigned
 visual bug #1338 were sent the exact evidence and source locations
 (`theme::HONEY.danger`, `sidebar::state_style`). That color requirement remains
 pending their visual integration check. The status fix does not change colors.
+
+## Cross-session inbox and session switch
+
+The follow-up requirement was exercised end-to-end with two separate isolated
+servers, not just `agent::state` or the waiting session's own inbox:
+
+1. Session `waiting` ran the real Codex 0.163.0 against a local fake Responses
+   server on port 18736, with an actual `exec_command` approval and
+   `-a on-request`. Session `observer` ran only a shell.
+2. Injected an old `working` hook report into `waiting` while the real dialog
+   remained on screen. Its `SessionInfo` still contained `agents.blocked: 1`
+   and `agent_panes[0].state: blocked`.
+3. Opened `Ctrl+B i` in **observer**. Its actual rendered inbox listed
+   `waiting` / `codex` and showed the approval question. The observer sidebar
+   simultaneously showed the waiting session and blocked Codex agent.
+4. Pressed Enter with an empty inbox answer. The attached client switched to
+   **waiting**, showing the actual command approval. It did not submit the
+   approval: subsequent `explain` still had `answered: false`,
+   `reported: working`, `quiet_ms: 83`, `state: blocked`.
+
+Result: PASS. Driver `/tmp/imkr-1335/cross.py`, log
+`/tmp/imkr-1335/cross-result.log`, evidence directory
+`/tmp/imkr-1335/cross/`: `sessions.json`, `waiting.json`, `inbox.txt`,
+`switched.txt`, `after-switch.json`. Textual UI captures are also checked in
+beside this report. Both servers and the fake endpoint were stopped.
+
+The reviewed path is `Pane::agent_state` → `App::update_agents` /
+`shown_state` → `App::list` → `client::local_sessions` (`Request::List`,
+constructs `SessionInfo.agents` and `agent_panes`) → observer's `places.local`
+→ `other_agents` → `agent_entries` → `inbox_agents` (filters blocked/done/failed)
+→ `inbox_items`. Empty-answer Enter calls `go_to_other_agent`, which switches
+the client to the selected session and pane. The state fix reaches this whole
+path; no separate inbox filtering/selection patch was needed. Another machine
+and mixed-version client/server propagation were not tested.
+
+## Real Claude control without bypass
+
+Used installed Claude Code 2.1.304 with an empty isolated HOME, dummy API key,
+local fake Anthropic Messages endpoint on port 18737, `--permission-mode
+default`, and an explicit `permissions.ask = ["Bash"]` rule. No real account
+or subscription was used. The real TUI displayed `echo imkr-control` and
+`Do you want to proceed?`; the command was never approved or run.
+
+With isolated UserPromptSubmit→working and PermissionRequest→blocked hooks
+(the normal imkr integration), the same two-session inbox/Enter-switch test
+passed. Before switching: `reported: blocked`, `quiet_ms: 240`, `state:
+blocked`. After switching: `answered: false`, `reported: blocked`,
+`quiet_ms: 235`, `state: blocked`. Evidence:
+`/tmp/imkr-1335/claude-cross/{waiting-read.json,waiting.json,sessions.json,inbox.txt,switched.txt,after-switch.json}`,
+log `/tmp/imkr-1335/claude-cross-result.log`, drivers
+`/tmp/imkr-1335/claude-cross.py` and `/tmp/imkr-1335/anthropic.py`. All test
+processes stopped.
+
+A separate `--bare` run without hooks demonstrated an existing limitation:
+while a recognizable question remained on screen, output 469 ms ago kept
+Claude working and the observer inbox empty. Captures:
+`/tmp/imkr-1335/claude-no-hooks-working.json` and
+`/tmp/imkr-1335/claude-no-hooks-inbox.txt`. This is not covered by the
+Codex-specific live-control precedence fix; the supported hook control above
+works. The initial Claude attempt stopped at its dummy API-key confirmation;
+only the later run with that dummy key preconfigured and the literal Bash
+approval is counted as the tool-approval control. No dialog was answered.

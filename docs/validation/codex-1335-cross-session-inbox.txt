@@ -1,0 +1,40 @@
+╭ 0 bash ─────────────────────────────────────────────────────────────────── ┃  ━  ⤢  × ─╮╭ ⬢ imkr ────────────────────╮
+│/bin/bash --noprofile --norc[bastian@laptop work]$ /bin/bash --noprofile --norc         ││Windows                     │
+│bash-5.3$                                                                               ││▸ 1 work                    │
+│                                                                                        ││                            │
+│                                                                                        ││Sessions                    │
+│                                                                                        ││▸ observer                  │
+│                                                                                        ││  waiting                 ❶ │
+│                                                                                        ││                            │
+│                                                                                        ││Agents                      │
+│    ╭ ⬢ Inbox ────────────────────────────────────────────────────────────────────╮     ││    waiting                 │
+│    │       ◆ 1 work › codex · Action Required | ⠇ | work  waiting · 3s           │     ││    ◆ 1 work › codex      3s│
+│    │                                                                             │     ││      Action Required | ⠇ |…│
+│    │  ↑↓ select   digit choose that option   text Enter answer   Enter go there  │     ││                            │
+│    │  ✉ Enter x accept, decline a contact's message   Esc cancel                 │     ││Files work                  │
+│    ╰─────────────────────────────────────────────────────────────────────────────╯     ││  empty                     │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│                                                                                        ││                            │
+│ ╭ ◆ 1 work › codex · Action Required | ⠇ | work ─────────────────────────────────────╮ ││                            │
+│ │ • Running true                                                                     │ ││                            │
+│ │   Would you like to run the following command?                                     │ ││                            │
+│ │   Environment: local                                                               │ ││                            │
+│ │   Reason: May I run this harmless isolated                                         │ ││                            │
+│ │   test command?                                                                    │ ││                            │
+│ │   $ true                                                                           │ ││                            │
+│ │ › 1. Yes, proceed (y)                                                              │ ││                            │
+│ │   2. Yes, and don't ask again for commands that                                    │ ││                            │
+│ │      start with `true` (p)                                                         │ ││                            │
+│ │   3. No, and tell Codex what to do differently                                     │ ││                            │
+│ │      (esc)                                                                         │ ││                            │
+│ │   Press enter to confirm or esc to cancel                                          │ ││                            │
+│ │ › type the answer, or a digit for that option                                      │ ││                            │
+│ ╰────────────────────────────────────────────────────────────────────────────────────╯ ││                            │
+╰────────────────────────────────────────────────────────────────────────────────────────╯╰ + window  ⧉ float  ⚙ ──────╯
+ ⬢ observer   1  + │  INBOX   ↑↓ choose · digit option · type + Enter answer · Enter go there · Esc cancel
