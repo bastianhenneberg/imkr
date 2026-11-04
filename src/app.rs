@@ -3127,7 +3127,7 @@ impl App {
         let bracketed = p.screen().screen().bracketed_paste();
         let mut bytes = Vec::new();
         // A single-line burst can leave Codex's [Pasted Content ...] unsent
-        // despite our Enter 20 ms later (#1343, real frontend regression).
+        // despite our Enter 20 ms later (#1339, duplicate #1343; real TUI test).
         // Give it an explicit paste boundary before our one Enter instead
         // of relying on a timing gap. Keep shell single-line input as keys.
         if bracketed && (text.contains('\n') || p.program().as_deref() == Some("codex")) {

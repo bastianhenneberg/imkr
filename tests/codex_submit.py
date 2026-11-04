@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Codex #1343 regression, stdlib only, local dummy Responses provider.
+"""Real Codex #1339 regression (duplicate #1343), local dummy Responses provider.
 Usage: python3 tests/codex_submit.py --codex /absolute/path/to/codex
 Add --managed for default daemon mode; the default uses --no-daemon.
 Evidence is retained in a fresh temp directory, printed at startup.
@@ -251,6 +251,12 @@ trust_level = "trusted"
         print('PASS: shell single-line command still executes normally', flush=True)
         time.sleep(3)
         assert all(count == 1 for count in received.values()), received
+        for session in sessions:
+            mail = cli(session, 'mail', '--json')
+            (root / (session + '-mail.json')).write_text(mail)
+            # The dummy provider proves acceptance to this test, not to imkr.
+            # Codex has no submit hook: never invent Confirmed from its screen.
+            assert not any(n['what'] == 'confirmed' for n in json.loads(mail)['notes']), mail
         assert (root / 'notify.log').read_text() == '', 'notification attempted'
         (root / 'result.json').write_text(json.dumps({'received': received, 'mode':
             'managed' if args.managed else 'no-daemon', 'notification_calls': 0}, indent=2))

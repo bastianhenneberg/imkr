@@ -24,8 +24,9 @@ The reported production `msg` failure did not reproduce in these isolated runs;
 no change to `deliver_mail` is justified by this evidence. Keep #1339 open until
 the keeper has reviewed this scope and obtained evidence for the remaining mail
 report. No production server, account, pending message, or deployment was changed.
-All real frontend runs below were on laptop. The required codingmachine
-handshake has not been performed, so the two-host acceptance remains pending.
+Real frontend checks have now also passed on codingmachine in private test
+sessions (details below). The unreproduced production mail failure still blocks
+full acceptance of #1339.
 
 ## Reproduction
 
@@ -131,3 +132,36 @@ unreproduced already-bracketed mail stall. It never calls a typed message
 - `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`,
   `git diff --check`: passed. Clippy log:
   `/tmp/imkr-submit-1343/clippy.log`.
+
+## Codingmachine follow-up under #1339
+
+The SSH account is `codingmachine`, not `bastian`. Test copies of the review
+binary, real Codex 0.163 frontend, harness and executable-only 0.166 runtime
+package were placed in `/tmp/imkr-submit-1343-acceptance.Mu41zI/`. These are
+isolated test artifacts, not an installation/update of any production server.
+The same notification shields precede every test PTY.
+
+- `no-daemon.log`, evidence `/tmp/imkr-submit-1343-vwqnn5m2/`: all checks pass,
+  including exact single-line/multiline bodies, two-session completion/follow-up,
+  busy-to-idle, drafts/approvals/handover, account-switch refusal and shell input.
+- `managed.log`, evidence `/tmp/imkr-submit-1343-pdseft7u/`: an initial managed
+  attempt using only the copied CLI exited back to bash before initial idle,
+  with zero provider turns. This failed bootstrap is not a submission result;
+  its underlying bootstrap error was not diagnosed here.
+- `managed-166.log`, evidence `/tmp/imkr-submit-1343-jbl72osi/`: the complete
+  private runtime package supplied via `--daemon-runtime` passes all checks.
+  Its `runtime.json` records the actual private 0.166 executable, separately
+  from the 0.163 frontend. No assumption about codingmachine's installed CLI
+  version is used.
+
+The final harness also saves each session's complete mail log and explicitly
+rejects any `confirmed` event: the test provider can prove acceptance to the
+harness, while imkr must not infer it from Codex's screen. Additional logs for
+that assertion are `e2e-1339-no-false-ack.log` on laptop and
+`no-false-ack-166.log` in the codingmachine acceptance folder.
+
+Both explicit no-false-confirmation runs passed: laptop evidence
+`/tmp/imkr-submit-1343-yaggoywv/` and codingmachine evidence
+`/tmp/imkr-submit-1343-lqm_6jkf/`. The codingmachine runtime identity, full mail
+logs, results and run logs are also collected on laptop in
+`/tmp/imkr-submit-1343/codingmachine/review-evidence.tgz`.
