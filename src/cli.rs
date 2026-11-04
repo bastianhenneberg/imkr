@@ -3079,7 +3079,7 @@ pub fn hive(args: &[String]) -> Result<()> {
 pub fn account(args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: imkr account [ls [--json]] | add claude|codex NAME [--url URL] [--model M] \
                          [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
-                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] \
+                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] [--json] \
                          | default [NAME] | usage [--json]";
     // How much each account used of its plan; `--wait` keeps it on screen
     // in the popup of Ctrl+B s u.
@@ -3127,6 +3127,8 @@ pub fn account(args: &[String]) -> Result<()> {
         }
     };
     let mut rest: Vec<String> = args.to_vec();
+    let switch_json =
+        rest.first().is_some_and(|arg| arg == "switch") && take_flag(&mut rest, "--json");
     let pane = take_pane(&mut rest)?;
     let token_stdin = take_flag(&mut rest, "--token-stdin");
     let url = take_value(&mut rest, "--url")?;
@@ -3379,7 +3381,11 @@ pub fn account(args: &[String]) -> Result<()> {
                 name: account.name.clone(),
                 pane: if now { pane } else { None },
             })?;
-            if now {
+            if now && switch_json {
+                println!("{}", serde_json::to_string(&reply)?);
+            } else if now && reply["handoff"].is_string() {
+                println!("Handoff saved, starting {} …", account.tool);
+            } else if now {
                 // It restarts the agent — the environment of a running
                 // process cannot be changed. Saying “goes on” read as
                 // harmless and cost a session (#1305).

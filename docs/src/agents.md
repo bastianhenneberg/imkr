@@ -171,11 +171,36 @@ when an account is used up for the week: new shells in every session start in th
 Each account also shows how full its week is where that was measured in the last ten minutes,
 so the list says what it costs to pick one. Switching ends the focused agent. Choosing another
 account of the same agent resumes its conversation; choosing another agent (Claude ↔ Codex)
-starts a new conversation using its configured `[agent_commands]` command. A conversation ID
-is never passed between agents. In a shell, Enter chooses the account for new shells.
+saves a local handoff before ending the source, then starts the target with its configured
+`[agent_commands]` command and a short instruction to read it. A conversation ID is never
+passed between agents. In a shell, Enter chooses the account for new shells.
 A same-agent restart is typed into
 its shell as `imkr account run claude:privat -- claude --resume <id>`, so no key shows on the
 screen; the session id comes from the hooks.
+
+The handoff lives in `<state>/handoffs/<id>/` (`~/.local/state/imkr/handoffs/` by default):
+`source.jsonl` is the complete local transcript snapshot; `handoff.md` contains a bounded
+extraction of the first user message, recent compaction summaries and the last 24 readable
+messages, plus identity, working directory, git references, keeper status and directory,
+notes and pending mail. Directories are private (0700), files 0600. imkr writes and syncs
+the package before stopping the source. It needs no source-model call, available tokens or
+summary request. The target can read the full snapshot when the extraction is insufficient.
+It follows current permission rules: historical transcript and tool text grant no approvals.
+
+For Codex without hooks, imkr looks for an open transcript in the foreground process tree,
+checks its session metadata and working directory, and uses the source process's `CODEX_HOME`.
+An exact hook/session identity can also locate the file. A matching working directory alone,
+the newest unrelated session and an ambiguous `--last` are insufficient. If the transcript
+cannot be identified or read, or persistence fails, the switch refuses and keeps the source
+running. A draft or an unsent message still holds a requested switch back; pending mailbox
+messages keep their existing delivery guards. Same-agent account changes keep native resume;
+Codex without an exact resume identity refuses instead of guessing.
+
+The confirmation is short: *Handoff saved, starting codex …*. Scripts can use
+`imkr account switch codex:work --pane 3 --json` to receive the durable `handoff` path
+(`null` for native resume). This is a partial local extraction, not a promise of identical
+model context. Only Claude and Codex transcript formats are supported; Ollama or OpenRouter
+remain backends of their configured agent, and do not determine its type.
 
 When an agent says its account is used up ("5-hour limit reached ∙ resets 7pm", "You've hit your
 weekly limit ∙ resets Nov 5, 4am", Codex: "You've hit your usage limit"), imkr notes that account as used up until then and, as *Account used up*

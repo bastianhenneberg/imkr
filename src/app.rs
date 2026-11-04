@@ -5940,7 +5940,7 @@ impl App {
     }
 
     /// Starts the chosen agent in pane `id` in `account`. The same agent
-    /// resumes its conversation; another starts a new one. Once its shell is back in front
+    /// resumes its conversation; another reads a durable local handoff. Once its shell is back in front
     /// (`finish_switches`), `imkr account run` starts it with that
     /// account's environment, so no key shows on the screen.
     ///
@@ -6008,13 +6008,73 @@ impl App {
                 name = account.name
             ));
         }
-        let line = account_switch_line(
-            &imkr_path(),
-            &self.config,
-            account,
-            same_tool,
-            pane.session.as_deref(),
-        );
+        // Cross-agent context must be durable before stop_foreground. Resolve
+        // Codex's native resume identity here too: never resume an unrelated --last.
+        let source_tool = current_tool.as_deref().expect("checked above");
+        let mut source = None;
+        if !same_tool || source_tool == "codex" {
+            let cwd = pane.cwd().ok_or("source working directory unavailable")?;
+            let source_account = pane
+                .accounts
+                .get(source_tool)
+                .map(String::as_str)
+                .unwrap_or(crate::account::STANDARD);
+            let root = store
+                .find(source_tool, source_account)
+                .and_then(|a| store.dir_of(&a))
+                .unwrap_or_else(|| store.usual_dir(source_tool));
+            source = Some(
+                crate::handoff::locate(
+                    source_tool,
+                    pane.transcript.as_deref(),
+                    pane.session.as_deref(),
+                    &root,
+                    &cwd,
+                    pane.foreground_pid().ok_or("source PID unavailable")?,
+                )
+                .map_err(|e| format!("cannot preserve context: {e}"))?,
+            );
+        }
+        let handoff = if !same_tool {
+            let source = source.as_ref().expect("resolved above");
+            let context = serde_json::json!({
+                "machine": protocol::machine_name(), "session": protocol::session_name(),
+                "pane": id, "pane_name": pane.name, "cwd": pane.cwd(),
+                "work_state": pane.cwd().map(|cwd| crate::handoff::work_state(&cwd)),
+                "keeper": self.keeper, "started_by": self.by,
+                "source_tool": source_tool, "source_accounts": pane.accounts,
+                "target_tool": account.tool, "target_account": account.name,
+                "keeper_directory": crate::keeper::dir(&protocol::session_name()).ok(),
+                "pending_mail": self.mailbox.iter().filter(|m| m.pane == id).collect::<Vec<_>>(),
+                "handed_mail": pane.handed, "notes": pane.notes,
+            });
+            Some(
+                crate::handoff::save(
+                    &persist::state_dir().map_err(|e| e.to_string())?,
+                    source,
+                    source_tool,
+                    &context,
+                )
+                .map_err(|e| format!("handoff not saved; source kept running: {e}"))?,
+            )
+        } else {
+            None
+        };
+        let resume_session = pane
+            .session
+            .as_deref()
+            .or_else(|| source.as_ref().map(|s| s.session.as_str()));
+        let line = if let Some(path) = handoff.as_deref() {
+            handoff_switch_line(&imkr_path(), &self.config, account, path)
+        } else {
+            account_switch_line(
+                &imkr_path(),
+                &self.config,
+                account,
+                same_tool,
+                resume_session,
+            )
+        };
         if !pane.stop_foreground() {
             return Err(format!("could not end the agent in pane {id}"));
         }
@@ -6029,12 +6089,15 @@ impl App {
                 Instant::now(),
             ),
         );
+        if handoff.is_some() {
+            self.flash = Some(format!("Handoff saved, starting {} …", account.tool));
+        }
         // The agent is gone: whatever its hook fetched and it had not acted
         // on was in no context and in no mailbox. Back it goes (#1313).
         self.give_back_mail(id, "its agent was restarted in another account first");
         Ok(
             serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name,
-            "conversation": if same_tool { "same" } else { "new" } }),
+            "conversation": if same_tool { "same" } else { "handoff" }, "handoff": handoff }),
         )
     }
 
@@ -15382,6 +15445,40 @@ fn account_switch_line(
         .map(|w| crate::client::sh_quote(w))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Pass the short instruction as one positional argument, never shell source.
+/// Configured agent flags are retained; the adapter supports Claude and Codex.
+fn handoff_switch_line(
+    imkr: &str,
+    config: &Config,
+    account: &crate::account::Account,
+    path: &std::path::Path,
+) -> String {
+    let script = format!(
+        "exec {} --add-dir \"$1\" -- \"$2\"",
+        config.agent_command(&account.tool)
+    );
+    [
+        imkr.to_owned(),
+        "account".into(),
+        "run".into(),
+        format!("{}:{}", account.tool, account.name),
+        "--".into(),
+        "sh".into(),
+        "-c".into(),
+        script,
+        "imkr-handoff".into(),
+        path.parent()
+            .expect("handoff directory")
+            .to_string_lossy()
+            .into_owned(),
+        crate::handoff::prompt(path),
+    ]
+    .iter()
+    .map(|w| crate::client::sh_quote(w))
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 /// How long `check_resumed` lets a restarted agent start before it looks:

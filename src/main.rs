@@ -13,6 +13,7 @@ mod contacts;
 mod fdpass;
 mod filetree;
 mod graphics;
+mod handoff;
 mod keeper;
 mod keys;
 mod layout;
@@ -87,7 +88,7 @@ Commands:
                 what the plugin catalogs offer (`plugin_catalogs`)
   account [ls [--json]] | add claude|codex NAME [--url URL --model M --token-stdin]
           | login NAME | rm NAME | sync | env NAME | run NAME -- CMD
-          | use NAME (new shells here) | switch NAME [--pane N] (agent now)
+          | use NAME (new shells here) | switch NAME [--pane N] [--json] (agent now)
           | default [NAME] (new shells everywhere here start in it)
           | usage [--json] (each account's limits and the tokens used)
                 several Claude Code and Codex accounts on this machine,

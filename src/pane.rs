@@ -713,7 +713,7 @@ impl Pane {
 
     /// The process in the foreground of this pane, e.g. the shell, or nvim
     /// started from it.
-    fn foreground_pid(&self) -> Option<u32> {
+    pub(crate) fn foreground_pid(&self) -> Option<u32> {
         self.master
             .process_group_leader()
             .map(|pid| pid as u32)
