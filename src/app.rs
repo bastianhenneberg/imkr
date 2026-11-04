@@ -2897,14 +2897,15 @@ impl App {
                         self.accounts.insert(tool.clone(), name.clone());
                         Ok(serde_json::json!({ "tool": tool, "account": name }))
                     }
-                    Some(id) => self.switch_account(id, &account, Throw::Never, None),
+                    Some(id) => self.switch_account(id, &account, Throw::Never, None, None),
                 }
             }
-            Request::UseAccountWithBrief {
+            Request::SwitchAccount {
                 tool,
                 name,
                 pane,
                 brief,
+                dir,
             } => {
                 let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
                 let account = store
@@ -2915,7 +2916,13 @@ impl App {
                         "{tool} account {name} is not logged in: `imkr account login {tool}:{name}`"
                     ));
                 }
-                self.switch_account(pane, &account, Throw::Never, Some(&brief))
+                self.switch_account(
+                    pane,
+                    &account,
+                    Throw::Never,
+                    brief.as_deref(),
+                    dir.as_deref(),
+                )
             }
             Request::ReloadConfig => {
                 self.reload_config();
@@ -5972,6 +5979,7 @@ impl App {
         account: &crate::account::Account,
         keep: Throw,
         brief: Option<&std::path::Path>,
+        dir: Option<&std::path::Path>,
     ) -> Reply {
         if self.switching.contains_key(&id) || self.resumed.contains_key(&id) {
             return Err(format!(
@@ -6034,8 +6042,9 @@ impl App {
         let cwd = pane
             .cwd()
             .ok_or("source working directory unavailable; source kept running")?;
-        crate::handoff::check_cwd(&cwd).map_err(|e| {
-            format!("source working directory unavailable; source kept running: {e}")
+        let target_cwd = dir.unwrap_or(&cwd);
+        crate::handoff::check_cwd(target_cwd).map_err(|e| {
+            format!("selected working directory unavailable; source kept running: {e}")
         })?;
         let mut source = None;
         if !same_tool || brief.is_some() || source_tool == "codex" {
@@ -6064,8 +6073,8 @@ impl App {
             let source = source.as_ref().expect("resolved above");
             let context = serde_json::json!({
                 "machine": protocol::machine_name(), "session": protocol::session_name(),
-                "pane": id, "pane_name": pane.name, "cwd": cwd,
-                "work_state": crate::handoff::work_state(&cwd),
+                "pane": id, "pane_name": pane.name, "cwd": cwd, "target_cwd": target_cwd,
+                "work_state": crate::handoff::work_state(target_cwd),
                 "keeper": self.keeper, "started_by": self.by,
                 "source_tool": source_tool, "source_accounts": pane.accounts,
                 "target_tool": account.tool, "target_account": account.name,
@@ -6110,7 +6119,7 @@ impl App {
                 resume_session,
             )
         };
-        let line = switch_in_cwd(&line, &cwd);
+        let line = switch_in_cwd(&line, target_cwd);
         if !pane.stop_foreground() {
             return Err(format!("could not end the agent in pane {id}"));
         }
@@ -6134,6 +6143,7 @@ impl App {
         Ok(
             serde_json::json!({ "pane": id, "tool": account.tool, "account": account.name,
             "conversation": if same_tool { "same" } else { "handoff" }, "handoff": handoff,
+            "cwd": target_cwd,
             "brief": handoff.as_ref().filter(|_| brief.is_some()).map(|path| path.parent().expect("package directory").join("brief.md")) }),
         )
     }
@@ -6412,7 +6422,7 @@ impl App {
             // the pane this is about is named in front of the message.
             return format!("{lead}: Ctrl+B s C restarts it there in {there}{free}");
         }
-        match self.switch_account(*id, &next, choice.throw, None) {
+        match self.switch_account(*id, &next, choice.throw, None, None) {
             Ok(_) => format!("{lead}: restarts {tool} in {there}{free}, same conversation"),
             Err(e) => format!("{lead}, not switched: {e}"),
         }
@@ -15452,6 +15462,17 @@ fn switch_waits_for(unsent: Option<Unsent>, waited: Duration) -> Wait {
 /// hardly take it — the wait is mostly for a line a human just began.
 const UNSENT_WAIT: Duration = Duration::from_secs(60);
 
+/// Codex resume can restore a session's old workspace. Make the selected
+/// process directory explicit to Codex too, while retaining configured policy.
+fn account_start_command(config: &Config, tool: &str) -> String {
+    let command = config.agent_command(tool);
+    if tool == "codex" {
+        format!("{command} --cd \"$PWD\"")
+    } else {
+        command
+    }
+}
+
 /// A conversation belongs to its tool. Only an account change within
 /// that tool may resume it; changing tools uses the configured fresh start.
 fn account_switch_line(
@@ -15474,7 +15495,10 @@ fn account_switch_line(
         command.extend([
             "sh".to_owned(),
             "-c".to_owned(),
-            format!("exec {} \"$@\"", config.agent_command(&account.tool)),
+            format!(
+                "exec {} \"$@\"",
+                account_start_command(config, &account.tool)
+            ),
             "imkr-resume".to_owned(),
         ]);
         command.extend(
@@ -15486,7 +15510,7 @@ fn account_switch_line(
         command.extend([
             "sh".to_owned(),
             "-c".to_owned(),
-            config.agent_command(&account.tool),
+            account_start_command(config, &account.tool),
         ]);
     }
     command
@@ -15496,11 +15520,11 @@ fn account_switch_line(
         .join(" ")
 }
 
-/// A waiting shell retains its own CWD. Pass the captured source CWD as data
+/// A waiting shell retains its own CWD. Pass the selected target CWD as data
 /// and refuse to launch if it disappeared between persistence and startup.
 fn switch_in_cwd(line: &str, cwd: &std::path::Path) -> String {
     let script = format!(
-        "cd -- \"$1\" || {{ printf '%s\\n' 'imkr: source working directory unavailable; target not started' >&2; exit 1; }}; exec {line}"
+        "cd -- \"$1\" || {{ printf '%s\\n' 'imkr: selected working directory unavailable; target not started' >&2; exit 1; }}; exec {line}"
     );
     [
         "sh".to_owned(),
@@ -15538,7 +15562,7 @@ fn handoff_switch_line(
     };
     let script = format!(
         "exec {} {resume} --add-dir \"$1\" -- \"$2\"",
-        config.agent_command(&account.tool)
+        account_start_command(config, &account.tool)
     );
     [
         imkr.to_owned(),

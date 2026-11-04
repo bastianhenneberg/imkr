@@ -3079,7 +3079,7 @@ pub fn hive(args: &[String]) -> Result<()> {
 pub fn account(args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: imkr account [ls [--json]] | add claude|codex NAME [--url URL] [--model M] \
                          [--token-stdin | --token KEY] | login NAME | rm NAME | sync | env NAME \
-                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] [--json] [--brief FILE] \
+                         | run NAME -- COMMAND… | use NAME | switch NAME [--pane N] [--json] [--brief FILE] [--dir DIR] \
                          | default [NAME] | usage [--json]";
     // How much each account used of its plan; `--wait` keeps it on screen
     // in the popup of Ctrl+B s u.
@@ -3130,18 +3130,20 @@ pub fn account(args: &[String]) -> Result<()> {
     let switch_json =
         rest.first().is_some_and(|arg| arg == "switch") && take_flag(&mut rest, "--json");
     let pane = take_pane(&mut rest)?;
+    let absolute = |path: String| -> std::io::Result<std::path::PathBuf> {
+        let path = std::path::PathBuf::from(path);
+        if path.is_absolute() {
+            Ok(path)
+        } else {
+            std::env::current_dir().map(|cwd| cwd.join(path))
+        }
+    };
     let brief = take_value(&mut rest, "--brief")?
-        .map(|path| {
-            let path = std::path::PathBuf::from(path);
-            if path.is_absolute() {
-                Ok(path)
-            } else {
-                std::env::current_dir().map(|cwd| cwd.join(path))
-            }
-        })
+        .map(absolute)
         .transpose()?;
-    if brief.is_some() && !rest.first().is_some_and(|arg| arg == "switch") {
-        bail!("--brief is only for account switch");
+    let dir = take_value(&mut rest, "--dir")?.map(absolute).transpose()?;
+    if (brief.is_some() || dir.is_some()) && !rest.first().is_some_and(|arg| arg == "switch") {
+        bail!("--brief and --dir are only for account switch");
     }
     let token_stdin = take_flag(&mut rest, "--token-stdin");
     let url = take_value(&mut rest, "--url")?;
@@ -3389,13 +3391,14 @@ pub fn account(args: &[String]) -> Result<()> {
             if now && pane.is_none() {
                 bail!("which pane? `--pane N`, or run it in the pane");
             }
-            let has_brief = brief.is_some();
-            let request = if let Some(brief) = brief {
-                Request::UseAccountWithBrief {
+            let explicit = brief.is_some() || dir.is_some();
+            let request = if explicit {
+                Request::SwitchAccount {
                     tool: account.tool.clone(),
                     name: account.name.clone(),
                     pane: pane.expect("switch requires a pane"),
                     brief,
+                    dir,
                 }
             } else {
                 Request::UseAccount {
@@ -3404,10 +3407,8 @@ pub fn account(args: &[String]) -> Result<()> {
                     pane: if now { pane } else { None },
                 }
             };
-            let reply = if has_brief {
-                client::request(request).context(
-                    "briefed switch failed (server must support --brief; no unbriefed fallback)",
-                )?
+            let reply = if explicit {
+                client::request(request).context("explicit switch failed (server must support --brief/--dir; no fallback that drops these options)")?
             } else {
                 client::request(request)?
             };

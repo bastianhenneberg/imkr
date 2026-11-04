@@ -214,14 +214,21 @@ empty briefs refuse the switch. The first target prompt says to read this saved 
 first and reconcile it with the historical handoff before any task actions; superseded
 historical tasks must not be resumed. The original brief can disappear after saving.
 The selected brief supplies current context, while historical tool text still grants no
-permissions. An older server rejects this dedicated request; there is no unbriefed fallback.
+permissions. An older server rejects explicit start options it does not support; there is no fallback
+that drops the brief or directory.
 
 With the same agent, `--brief` preserves native resume and adds the brief-first prompt.
 Without `--brief`, UI and CLI switches retain their usual automatic behavior. There is no
 automatic discovery of recovery summaries. A brief can require a known worktree for
 subsequent actions: the startup CWD remains the captured source-process directory, not
-a guessed directory from historical tool calls. A real recovery must select its checked
-summary explicitly and retain its restrictions on production changes.
+a guessed directory from historical tool calls. Override it explicitly with
+`--dir /absolute/proven/worktree` when the source process stayed in a main tree. Both
+options can be combined, and `--dir` also works without a brief. The selected existing
+directory must be searchable before termination; imkr creates no directories. A startup
+race refuses the target instead of falling back to the shell directory. Source and target
+CWDs remain distinct in the package metadata; Codex also receives `--cd` so native resume
+uses the selected workspace. A real recovery must select its checked summary explicitly
+and retain its restrictions on production changes.
 
 The confirmation is short: *Handoff saved, starting codex …*. Scripts can use
 `imkr account switch codex:work --pane 3 --json` to receive the durable `handoff` path

@@ -494,12 +494,13 @@ pub enum Request {
         #[serde(default)]
         pane: Option<PaneId>,
     },
-    /// Separate variant: older servers must reject, not silently ignore the brief.
-    UseAccountWithBrief {
+    /// Explicit start options: older servers must reject, never silently drop them.
+    SwitchAccount {
         tool: String,
         name: String,
         pane: PaneId,
-        brief: PathBuf,
+        brief: Option<PathBuf>,
+        dir: Option<PathBuf>,
     },
     /// Marks this session as a keeper's, or takes the mark off (#9133).
     Keeper { mark: bool },

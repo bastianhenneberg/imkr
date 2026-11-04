@@ -118,3 +118,28 @@ python3 tests/handoff.py target/debug/imkr /tmp/imkr-review-dc544f5-target/debug
 
 The eighteen regular PTY scenarios become nineteen with this old-server refusal
 check. No original session or reviewed recovery summary is changed by these tests.
+
+## Explicit target directory
+
+`account switch --dir DIR [--brief FILE]` resolves the selected path on the CLI host
+and sends explicit start options in a dedicated wire request. Older servers reject
+the entire request rather than silently losing either option. Without `--dir`, source
+process CWD stays the default. With it, transcript identity is still checked against
+source CWD while the selected target CWD is validated (existing directory and search
+permission) before SIGTERM. No directory is created. The existing checked `cd`/`exec`
+wrapper handles a deletion/rename race at startup; Codex also gets `--cd "$PWD"`,
+including on native resume, to select its workspace explicitly.
+
+Twelve extra PTY cases cover both extras together, directory alone and native resume
+in both agents; missing directories, regular files used as directories and target
+removal during the source SIGTERM handler refuse safely. The target path is distinct
+from both waiting-shell and source CWD and contains spaces, apostrophes and command
+substitution characters. Existing nonexistent paths remain nonexistent after refusal.
+Access-denied target directories are also checked with the unprivileged test user
+(uid 1000): source remains alive. Together with prior cases: 32 regular scenarios,
+35 with old-server rejection checks for brief, directory and both options.
+
+`/tmp/imkr-handoff-1340/real-start-contract.json` was read as input only. The three
+real targets require the exact contract CWD and `<package>/SUMMARY.md` as `--dir` and
+`--brief`, respectively. No real start, account selection, production-tree mutation
+or recovery-package edit was performed by this implementation.

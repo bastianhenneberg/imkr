@@ -37,6 +37,7 @@ else:
         snapshots=[{'path':str(p),'raw_contains_task':'LITERAL TASK repair the orchard' in (p.parent/'source.jsonl').read_text()} for p in (root/'imkr/handoffs').glob('*/handoff.md')]
         (root/'stopped').write_text(json.dumps(snapshots))
         if os.environ.get('DELETE_BRIEF_ON_STOP'): Path(os.environ['DELETE_BRIEF_ON_STOP']).unlink()
+        if os.environ.get('REMOVE_TARGET_CWD_ON_STOP'): Path(os.environ['REMOVE_TARGET_CWD_ON_STOP']).rename(root/'removed-target-worktree')
         if os.environ.get('REMOVE_CWD_ON_STOP'): Path.cwd().rename(root/'removed-worktree')
         sys.exit(0)
     signal.signal(signal.SIGTERM,stop)
@@ -47,11 +48,13 @@ else:
 while True: time.sleep(.1)
 '''
 
-def scenario(binary, source_tool, failure=None, provider=False, resume=False, brief=False, server_binary=None):
+def scenario(binary, source_tool, failure=None, provider=False, resume=False, brief=False, server_binary=None, explicit_dir=False):
     with tempfile.TemporaryDirectory(prefix='imkr-handoff-') as folder:
         # Deliberately hostile shell metacharacters in the persistent path.
         root=Path(folder)/"space ' $(touch INJECTED)";root.mkdir()
         workdir=root/"actual worktree ' $(touch CWD_INJECTED)";workdir.mkdir()
+        targetdir=root/"explicit action worktree ' $(touch DIR_INJECTED)" if explicit_dir else workdir
+        if explicit_dir:targetdir.mkdir()
         for tool in ('claude','codex'):
             p=root/tool;p.write_text(FAKE);p.chmod(0o755)
         policy={'claude':'--dangerously-skip-permissions','codex':'--yolo'}
@@ -74,6 +77,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
             env['DELETE_BRIEF_ON_STOP']=str(selected)
         if failure=='brief-missing':selected.unlink()
         if failure=='cwd-race':env['REMOVE_CWD_ON_STOP']='1'
+        if failure=='dir-race':env['REMOVE_TARGET_CWD_ON_STOP']=str(targetdir)
         tap=None;legacy=None
         try:
             if server_binary:
@@ -99,6 +103,9 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
             if failure=='write':
                 base=root/'imkr/handoffs';base.parent.mkdir(parents=True,exist_ok=True);base.write_text('blocked')
             if failure=='cwd-missing':workdir.rmdir()
+            if failure=='dir-missing':targetdir.rmdir()
+            if failure=='dir-notdirectory':targetdir.rmdir();targetdir.write_text('not a directory')
+            if failure=='dir-unsearchable':targetdir.chmod(0o600)
             if failure=='draft':
                 tap=subprocess.Popen([binary,'tap',pane],env=env,cwd=root,text=True,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 tap.stdin.write(json.dumps({'text':'KEEP THIS DRAFT'})+'\n');tap.stdin.flush();time.sleep(.5)
@@ -106,10 +113,10 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
                 cli('status','blocked','--pane',pane,input='{}')
                 sent=cli('msg',pane,'PENDING MAIL preserve orchard decision')
                 assert sent.returncode==0,sent.stderr
-            r=cli('account','switch',target_account,'--pane',pane,'--json',*(['--brief',selected.name] if brief else []))
-            if failure=='cwd-race':
+            r=cli('account','switch',target_account,'--pane',pane,'--json',*(['--brief',selected.name] if brief else []),*(['--dir',targetdir.name] if explicit_dir else []))
+            if failure in ('cwd-race','dir-race'):
                 assert r.returncode==0,(r.stdout,r.stderr)
-                until(lambda:'source working directory unavailable; target not started' in cli('read','--pane',pane).stdout,'runtime CWD refusal')
+                until(lambda:'selected working directory unavailable; target not started' in cli('read','--pane',pane).stdout,'runtime CWD refusal')
                 assert len((root/'launches.jsonl').read_text().splitlines())==1
                 assert not (root/'received.json').exists()
                 print('PASS',source_tool,'missing CWD at startup refuses target instead of falling back to shell CWD',flush=True)
@@ -117,6 +124,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
             if failure:
                 assert r.returncode!=0,(failure,r.stdout,r.stderr)
                 assert not (root/'stopped').exists(),failure
+                if failure=='dir-missing':assert not targetdir.exists(),'switch must not create directories'
                 os.kill(int((root/'source-ready').read_text()),0)
                 print('PASS',source_tool,failure,'refuses with source alive',flush=True)
                 return
@@ -126,8 +134,8 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
                 assert reply['conversation']=='same' and reply['handoff'] is None,reply
                 until(lambda:len((root/'launches.jsonl').read_text().splitlines())==2,'native resume launch')
                 launches=[json.loads(line) for line in (root/'launches.jsonl').read_text().splitlines()]
-                assert launches[-1]['argv'][1:]==['--model','custom model',policy[source_tool]]+(['resume','source-exact'] if source_tool=='codex' else ['--resume','source-exact']),launches
-                assert launches[-1]['cwd']==str(workdir),launches
+                assert launches[-1]['argv'][1:]==['--model','custom model',policy[source_tool]]+(['--cd',str(targetdir),'resume','source-exact'] if source_tool=='codex' else ['--resume','source-exact']),launches
+                assert launches[-1]['cwd']==str(targetdir),launches
                 assert not (root/'imkr/handoffs').exists()
                 print('PASS',source_tool,'same agent uses exact native resume without handoff',flush=True)
                 return
@@ -151,7 +159,10 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
                 assert marker in got['raw'],marker
             assert '"keeper": true' in got['md']
             if not resume:assert 'PENDING MAIL preserve orchard decision' in got['md']
-            assert got['cwd']==str(workdir),('TARGET CWD WRONG',got['cwd'],str(workdir))
+            assert got['cwd']==str(targetdir),('TARGET CWD WRONG',got['cwd'],str(targetdir))
+            assert reply['cwd']==str(targetdir)
+            assert not (root/'DIR_INJECTED').exists()
+            if target=='codex':assert got['argv'][got['argv'].index('--cd')+1]==str(targetdir)
             assert not (root/'CWD_INJECTED').exists()
             assert got['tool']==target
             assert got['argv'][1:4]==['--model','custom model',policy[target]],got['argv']
@@ -166,6 +177,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
             if tap:tap.terminate();tap.wait(timeout=5)
             cli('kill-server')
             if legacy:legacy.wait(timeout=5)
+            if failure=='dir-unsearchable':targetdir.chmod(0o700)
 
 if __name__=='__main__':
     binary=str(Path(sys.argv[1] if len(sys.argv)>1 else 'target/debug/imkr').resolve())
@@ -185,4 +197,17 @@ if __name__=='__main__':
         scenario(binary,tool,'brief-missing',brief=True)
         scenario(binary,tool,resume=True,brief=True)
 
-    if len(sys.argv)>2:scenario(binary,'claude','legacy-brief',brief=True,server_binary=str(Path(sys.argv[2]).resolve()))
+    if len(sys.argv)>2:
+        old=str(Path(sys.argv[2]).resolve())
+        scenario(binary,'claude','legacy-brief',brief=True,server_binary=old)
+        scenario(binary,'claude','legacy-dir',explicit_dir=True,server_binary=old)
+        scenario(binary,'claude','legacy-both',brief=True,explicit_dir=True,server_binary=old)
+
+    for tool in ('claude','codex'):
+        scenario(binary,tool,explicit_dir=True,brief=True)
+        scenario(binary,tool,explicit_dir=True)
+        scenario(binary,tool,resume=True,explicit_dir=True)
+        for fail in ('dir-missing','dir-notdirectory','dir-race'):scenario(binary,tool,fail,brief=True,explicit_dir=True)
+
+    if os.geteuid()!=0:
+        for tool in ('claude','codex'):scenario(binary,tool,'dir-unsearchable',brief=True,explicit_dir=True)
