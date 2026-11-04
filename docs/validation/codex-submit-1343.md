@@ -1,4 +1,7 @@
-# Codex initial submission (#1343)
+# Codex initial submission (#1339; duplicate #1343)
+
+Tracking: #1339 is reopened; #1343 is its closed duplicate. Session, worktree
+and artifact names retain `1343` for traceability.
 
 ## Result and limit
 
@@ -18,9 +21,11 @@ against a program that merely records terminal bytes.
 **This is a demonstrated fix for the direct `send` path, not proof that every
 reported `msg` stall has been fixed.** Mail already brackets single-line input.
 The reported production `msg` failure did not reproduce in these isolated runs;
-no change to `deliver_mail` is justified by this evidence. Keep #1343 open until
+no change to `deliver_mail` is justified by this evidence. Keep #1339 open until
 the keeper has reviewed this scope and obtained evidence for the remaining mail
 report. No production server, account, pending message, or deployment was changed.
+All real frontend runs below were on laptop. The required codingmachine
+handshake has not been performed, so the two-host acceptance remains pending.
 
 ## Reproduction
 
