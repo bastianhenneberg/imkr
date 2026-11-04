@@ -163,8 +163,8 @@ The last case checks the actionable error. A further native resume case uses the
 explicit UUID and the chosen target directory. Rust tests also check explicit
 identity against an externally held rollout in a distinct live process tree.
 An independently rebuilt exact `1f054a2` server (separate target directory, not a mutable
-review build path) is used for compatibility checks. An additional old-server scenario verifies that the dedicated source-identity request
-cannot be silently ignored. Totals: 40 normal PTY scenarios, 44 with all old-server
+review build path) is used for compatibility checks. An additional old-server scenario verifies that an explicit source identity cannot
+be silently ignored by a server without the final switch request. Totals: 40 normal PTY scenarios, 44 with all old-server
 checks. These are isolated fake-source process tests, not a claim of a paid-model
 Work-managed 0.166 round trip. Real local `/status` and 0.166 saved-rollout FD probes
 remain separately scoped evidence; original sessions were never touched.
@@ -209,3 +209,20 @@ Evidence: `/tmp/imkr-handoff-1340/impl-notification-guard-smoke.log` and
 `impl-notification-guard-evidence.json`. No product source or original session was
 changed for this correction. Historical full-suite counts above are not claims of a
 new full guarded run.
+
+## Final protocol simplification
+
+Only public `91fd2ca` is the upgrade baseline; no intermediate #1340 prototype was
+deployed. There is one new `SwitchAccount` variant carrying optional `brief`, `dir`
+and `source_session`, with one server handler. All CLI `account switch` calls use
+that variant, including calls without extras. Public old servers reject the unknown
+variant entirely; no legacy fallback drops handoff guarantees. `account use` retains
+its existing request. No compatibility branches for unreleased prototypes are kept.
+After the desktop guard correction, this simplification is verified only through
+protected regression (notifications off, PATH shim and isolated DBus/runtime): six
+cases cover default switch, all options, native resume, wrong source ID and old-server
+rejection with/without options. All pass with zero app notification dispatches; log
+`/tmp/imkr-handoff-1340/impl-single-switch-wire-smoke.log`. Source inspection of exact
+public `91fd2ca:src/protocol.rs` confirms it has `UseAccount` and no `SwitchAccount`.
+The separate old no-variant runtime test binary is a test fixture, not a compatibility
+promise for any unpublished prototype.

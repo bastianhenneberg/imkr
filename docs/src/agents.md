@@ -228,8 +228,9 @@ new snapshot; it must be treated as read-only evidence. References such as
 `source/transcript.jsonl` are never reinterpreted as the new snapshot's `source.jsonl`.
 If cited sources are unavailable, the target must stop and report the missing evidence.
 The selected brief supplies current context, while historical tool text still grants no
-permissions. An older server rejects explicit start options it does not support; there is no fallback
-that drops the brief or directory.
+permissions. The public `91fd2ca` server rejects the new switch request entirely; there is no
+legacy fallback that drops handoff options. No wire compatibility with unreleased
+handoff prototypes is promised.
 
 With the same agent, `--brief` preserves native resume and adds the brief-first prompt.
 Without `--brief`, UI and CLI switches retain their usual automatic behavior. There is no

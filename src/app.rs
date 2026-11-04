@@ -2906,31 +2906,6 @@ impl App {
                 pane,
                 brief,
                 dir,
-            } => {
-                let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
-                let account = store
-                    .find(&tool, &name)
-                    .ok_or(format!("no {tool} account {name}, see `imkr account`"))?;
-                if !store.logged_in(&account) {
-                    return Err(format!(
-                        "{tool} account {name} is not logged in: `imkr account login {tool}:{name}`"
-                    ));
-                }
-                self.switch_account(
-                    pane,
-                    &account,
-                    Throw::Never,
-                    brief.as_deref(),
-                    dir.as_deref(),
-                    None,
-                )
-            }
-            Request::SwitchAccountFromSession {
-                tool,
-                name,
-                pane,
-                brief,
-                dir,
                 source_session,
             } => {
                 let store = crate::account::Store::here().map_err(|e| format!("{e:#}"))?;
@@ -2948,7 +2923,7 @@ impl App {
                     Throw::Never,
                     brief.as_deref(),
                     dir.as_deref(),
-                    Some(&source_session),
+                    source_session.as_deref(),
                 )
             }
             Request::ReloadConfig => {

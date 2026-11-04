@@ -494,22 +494,14 @@ pub enum Request {
         #[serde(default)]
         pane: Option<PaneId>,
     },
-    /// Explicit start options: older servers must reject, never silently drop them.
+    /// Final switch request; public 91fd2ca rejects this unknown variant entirely.
     SwitchAccount {
         tool: String,
         name: String,
         pane: PaneId,
         brief: Option<PathBuf>,
         dir: Option<PathBuf>,
-    },
-    /// Explicit source identity must never be silently ignored by an older server.
-    SwitchAccountFromSession {
-        tool: String,
-        name: String,
-        pane: PaneId,
-        brief: Option<PathBuf>,
-        dir: Option<PathBuf>,
-        source_session: String,
+        source_session: Option<String>,
     },
     /// Marks this session as a keeper's, or takes the mark off (#9133).
     Keeper { mark: bool },

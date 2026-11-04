@@ -3394,9 +3394,8 @@ pub fn account(args: &[String]) -> Result<()> {
             if now && pane.is_none() {
                 bail!("which pane? `--pane N`, or run it in the pane");
             }
-            let explicit = brief.is_some() || dir.is_some() || source_session.is_some();
-            let request = if let Some(source_session) = source_session {
-                Request::SwitchAccountFromSession {
+            let request = if now {
+                Request::SwitchAccount {
                     tool: account.tool.clone(),
                     name: account.name.clone(),
                     pane: pane.expect("switch requires a pane"),
@@ -3404,23 +3403,15 @@ pub fn account(args: &[String]) -> Result<()> {
                     dir,
                     source_session,
                 }
-            } else if explicit {
-                Request::SwitchAccount {
-                    tool: account.tool.clone(),
-                    name: account.name.clone(),
-                    pane: pane.expect("switch requires a pane"),
-                    brief,
-                    dir,
-                }
             } else {
                 Request::UseAccount {
                     tool: account.tool.clone(),
                     name: account.name.clone(),
-                    pane: if now { pane } else { None },
+                    pane: None,
                 }
             };
-            let reply = if explicit {
-                client::request(request).context("explicit switch failed (server must support the selected switch options; no fallback that drops these options)")?
+            let reply = if now {
+                client::request(request).context("account switch requires an updated server supporting durable handoffs; no legacy fallback")?
             } else {
                 client::request(request)?
             };
