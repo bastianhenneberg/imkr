@@ -32,7 +32,10 @@ literal task, decision and work markers. Checks cover:
 - Keeper identity and queued mail in the target-readable snapshot; pending mail
   remains queued behind the existing blocked/restart/composer guards.
 - Both agents' native same-agent resume uses `source-exact`, no handoff and no
-  ambiguous Codex `--last`.
+  ambiguous Codex `--last`. Configured model and policy flags (`--yolo` / Claude
+  `--dangerously-skip-permissions`) reach both native resume and cross-agent targets.
+  Before this review fix, same-agent resume discarded `agent_commands` flags; the
+  resume builder now retains them. No existing session is restarted for policy alone.
 - Missing Claude and Codex transcripts, a handoff path blocked by a regular file,
   and a real input draft sent through `imkr tap`: request fails, source PID remains
   alive, SIGTERM handler was never called.
@@ -67,7 +70,11 @@ remain available in the raw file. Worktree path/branch/HEAD/status references an
 briefing directory references allow the target to inspect current work. Unreadable
 or unidentifiable conversations refuse before SIGTERM. Codex mapping currently
 requires a hook/session identity or a live open rollout in the foreground tree;
-versions that keep no rollout open and supply no identity safely refuse.
+versions that keep no rollout open and supply no identity safely refuse. This includes
+Work-managed/shared-daemon layouts where the only rollout FD is outside the source
+foreground tree: a simulated external holder test proves refusal even with matching
+CWD and local transcript files. Real Work/shared-daemon Codex 0.166 has not been
+validated and is not claimed supported by the local 0.163 CLI/PTYS evidence.
 
 The end-to-end reading agents are fakes; a paid live model was not used to claim
 that it followed the handoff. Real CLI help establishes the argument boundary;

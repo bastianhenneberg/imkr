@@ -44,7 +44,8 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
         root=Path(folder)/"space ' $(touch INJECTED)";root.mkdir()
         for tool in ('claude','codex'):
             p=root/tool;p.write_text(FAKE);p.chmod(0o755)
-        (root/'config.toml').write_text('[agent_commands]\n'+''.join(tool+' = '+json.dumps(tool+" --model 'custom model'")+'\n' for tool in ('claude','codex')))
+        policy={'claude':'--dangerously-skip-permissions','codex':'--yolo'}
+        (root/'config.toml').write_text('[agent_commands]\n'+''.join(tool+' = '+json.dumps(tool+" --model 'custom model' "+policy[tool])+'\n' for tool in ('claude','codex')))
         env={k:v for k,v in os.environ.items() if not k.startswith(('IMKR','CODEX','CLAUDE','ANTHROPIC'))}
         env.update(HOME=str(root),XDG_STATE_HOME=str(root),XDG_CONFIG_HOME=str(root),
                    IMKR_CONFIG=str(root/'config.toml'),IMKR_SOCKET=str(Path(folder)/'s.sock'),
@@ -95,7 +96,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
                 assert reply['conversation']=='same' and reply['handoff'] is None,reply
                 until(lambda:len((root/'launches.jsonl').read_text().splitlines())==2,'native resume launch')
                 launches=[json.loads(line) for line in (root/'launches.jsonl').read_text().splitlines()]
-                assert launches[-1]['argv'][1:]==(['resume','source-exact'] if source_tool=='codex' else ['--resume','source-exact']),launches
+                assert launches[-1]['argv'][1:]==['--model','custom model',policy[source_tool]]+(['resume','source-exact'] if source_tool=='codex' else ['--resume','source-exact']),launches
                 assert not (root/'imkr/handoffs').exists()
                 print('PASS',source_tool,'same agent uses exact native resume without handoff',flush=True)
                 return
@@ -109,7 +110,7 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False):
             assert '"keeper": true' in got['md']
             assert 'PENDING MAIL preserve orchard decision' in got['md']
             assert got['tool']==target
-            assert got['argv'][1:3]==['--model','custom model'],got['argv']
+            assert got['argv'][1:4]==['--model','custom model',policy[target]],got['argv']
             if provider:assert got['provider']=='http://127.0.0.1:9'
             path=Path(got['path'])
             for p in path.parent.iterdir():assert p.stat().st_mode & 0o777==0o600

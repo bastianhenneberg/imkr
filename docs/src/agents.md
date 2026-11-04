@@ -194,7 +194,14 @@ the newest unrelated session and an ambiguous `--last` are insufficient. If the 
 cannot be identified or read, or persistence fails, the switch refuses and keeps the source
 running. A draft or an unsent message still holds a requested switch back; pending mailbox
 messages keep their existing delivery guards. Same-agent account changes keep native resume;
-Codex without an exact resume identity refuses instead of guessing.
+Codex without an exact resume identity refuses instead of guessing. Both native resume
+and cross-agent starts retain the configured `[agent_commands]` flags, including policy
+flags such as Codex `--yolo` or Claude `--dangerously-skip-permissions`; changing the
+configuration alone does not restart running agents.
+
+Work-managed/shared-daemon Codex can hold its rollout outside the foreground process tree.
+Without an exact hook/session identity this case is deliberately blocked. Local Codex 0.163
+CLI tests do not establish support for the Work/shared-daemon 0.166 layout.
 
 The confirmation is short: *Handoff saved, starting codex …*. Scripts can use
 `imkr account switch codex:work --pane 3 --json` to receive the durable `handoff` path

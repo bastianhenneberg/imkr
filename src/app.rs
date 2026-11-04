@@ -15432,7 +15432,19 @@ fn account_switch_line(
         "--".to_owned(),
     ];
     if same_tool {
-        command.extend(crate::account::resume_command(&account.tool, session));
+        // Preserve configured policy/model flags on native resume too. The
+        // session is positional data, never interpolated into shell source.
+        command.extend([
+            "sh".to_owned(),
+            "-c".to_owned(),
+            format!("exec {} \"$@\"", config.agent_command(&account.tool)),
+            "imkr-resume".to_owned(),
+        ]);
+        command.extend(
+            crate::account::resume_command(&account.tool, session)
+                .into_iter()
+                .skip(1),
+        );
     } else {
         command.extend([
             "sh".to_owned(),
@@ -15965,6 +15977,7 @@ mod tests {
             };
             let resumed = run(true, Some("saved-session"));
             assert!(resumed.contains("saved-session"));
+            assert!(resumed.contains("custom model"));
             assert!(resumed.contains(if tool == "codex" {
                 "resume"
             } else {

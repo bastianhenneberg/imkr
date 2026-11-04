@@ -463,6 +463,29 @@ mod tests {
         child.kill().unwrap();
         child.wait().unwrap();
         assert_eq!(found.unwrap().session, "exact");
+        // Model a shared daemon that holds the rollout outside the source
+        // foreground tree: even the exact same CWD must not select its file.
+        let _daemon_rollout = File::open(&exact).unwrap();
+        let mut frontend = Command::new("python3")
+            .args([
+                "-c",
+                "import time; print('ready',flush=True); time.sleep(30)",
+            ])
+            .env("CODEX_HOME", &root)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = String::new();
+        BufReader::new(frontend.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        let unavailable = locate("codex", None, None, &root, &root, frontend.id());
+        frontend.kill().unwrap();
+        frontend.wait().unwrap();
+        assert!(
+            unavailable.is_err(),
+            "must refuse rather than guess shared-daemon identity"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
