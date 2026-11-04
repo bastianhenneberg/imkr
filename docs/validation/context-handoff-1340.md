@@ -56,12 +56,14 @@ types from accounts, never inferred from model/provider names. Extend
 `handoff::metadata` and the extraction branches in `handoff::save` for another
 persisted format, with fixtures and exact identity tests; extend the command
 adapter only when its positional prompt boundary is checked locally. No daemon,
-source API, plugin registry or periodic summary service is introduced.
+source API, plugin registry or periodic summary service is introduced. Normal switches
+create no repository/history bundle or automatic Git commit; Git reference reads
+use `--no-optional-locks`. Separate one-off recovery backups remain separate.
 
 The package contains a complete bounded-in-time file snapshot, not the source
 model's hidden context. The extraction is partial (first user message, up to three
 recent summaries and 24 recent messages; 12000 characters each). Tool payloads
-remain available in the raw file. Worktree status/log/diff statistics and keeper
+remain available in the raw file. Worktree path/branch/HEAD/status references and keeper
 briefing directory references allow the target to inspect current work. Unreadable
 or unidentifiable conversations refuse before SIGTERM. Codex mapping currently
 requires a hook/session identity or a live open rollout in the foreground tree;

@@ -341,7 +341,7 @@ screen; the session id comes from the hooks.</p>
 <p>The handoff lives in <code>&lt;state&gt;/handoffs/&lt;id&gt;/</code> (<code>~/.local/state/imkr/handoffs/</code> by default):
 <code>source.jsonl</code> is the complete local transcript snapshot; <code>handoff.md</code> contains a bounded
 extraction of the first user message, recent compaction summaries and the last 24 readable
-messages, plus identity, working directory, git references, keeper status and directory,
+messages, plus identity, working directory, branch/HEAD/status references, keeper status and directory,
 notes and pending mail. Directories are private (0700), files 0600. imkr writes and syncs
 the package before stopping the source. It needs no source-model call, available tokens or
 summary request. The target can read the full snapshot when the extraction is insufficient.
