@@ -205,3 +205,24 @@ imkr ls              # ◌ deckbox   stopped 21:57, 2 panes in 2 windows
 imkr revive deckbox  # back, without attaching
 imkr forget deckbox  # its saved layout is deleted
 ```
+
+On a machine nobody sits at, a server say, nobody runs that first `imkr`. There, turn on
+*Restart sessions at boot, without a client* (`revive_at_boot = true`; it stays on that machine,
+`settings sync` does not carry it). imkr then keeps a systemd user unit,
+`~/.config/systemd/user/imkr-revive.service`, which runs `imkr boot run` when the user's systemd
+starts: the sessions that ran when the machine went down come back with their windows, splits,
+history and shells. Closed ones stay closed, and no agent starts on its own, whatever *Resume
+agents after a restart* says — nobody is there to watch it; the panes keep their agent's session,
+and `Ctrl+B S` shows the sessions as running. Turning the setting off removes the unit.
+
+The user's systemd starts at boot only with linger; without it, at the first login. imkr says
+what is missing, in the settings row (`on · no linger`), when the setting changes, and in
+`imkr boot`:
+
+```bash
+imkr boot                    # setting, unit, what is missing, which sessions ran last
+loginctl enable-linger       # systemd starts the user's units at boot, before any login
+```
+
+Only Linux with systemd so far; on macOS nothing starts the sessions at boot yet, and
+`imkr boot` says so.

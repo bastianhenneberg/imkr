@@ -1519,6 +1519,7 @@ impl App {
             pushed: HashMap::new(),
         };
         app.apply_theme();
+        app.sync_boot();
         app.load_plugins();
         crate::plugin::watch_statuses(Arc::clone(&app.plugins), Arc::clone(&app.plugin_status));
         *app.watched_hosts.lock().unwrap() = app.config.hosts.clone();
@@ -1659,7 +1660,10 @@ impl App {
                 match spawned {
                     Ok(mut pane) => {
                         pane.notes = spec.notes.clone();
+                        // Brought back at boot, nobody is there to watch an
+                        // agent start: shells only (#9619).
                         let resume = match self.config.resume {
+                            _ if crate::boot::at_boot() => None,
                             config::Resume::Off => None,
                             _ => spec.resume_command(&resume_commands),
                         };
@@ -6865,6 +6869,7 @@ impl App {
                     Ok(path) => format!("saved to {}", tilde(&path)),
                     Err(e) => format!("not saved: {e:#}"),
                 });
+                self.sync_boot();
             }
             _ => {}
         }
@@ -11810,6 +11815,20 @@ impl App {
         theme::set(theme::load(&self.config.theme));
     }
 
+    /// Writes or removes the unit that brings the sessions back at boot,
+    /// as `revive_at_boot` says (`boot::sync`), and flashes what changed
+    /// or what this machine lacks for it. Never in a test world: its unit
+    /// would land in the real `~/.config/systemd`.
+    fn sync_boot(&mut self) {
+        if cfg!(test) || crate::protocol::test_socket().is_some() {
+            return;
+        }
+        let on = self.config.revive_at_boot;
+        if let Some(told) = crate::boot::told(on, &crate::boot::sync(on)) {
+            self.flash = Some(told);
+        }
+    }
+
     /// Picks up a theme switch on the desktop when following Omarchy.
     fn follow_omarchy(&mut self) {
         if self.config.theme == theme::FOLLOW && theme::omarchy_stamp() != self.followed {
@@ -13301,6 +13320,7 @@ impl App {
         let (config, error) = Config::load();
         self.config = config;
         self.apply_theme();
+        self.sync_boot();
         self.load_plugins();
         self.flash = Some(match (error, self.config.hook_problems()) {
             (Some(e), _) => format!("config has an error, using defaults: {e}"),
@@ -15981,7 +16001,7 @@ fn pane_inner(rect: Rect) -> Rect {
 }
 
 /// `path` with the home directory written as `~`.
-fn tilde(path: &std::path::Path) -> String {
+pub(crate) fn tilde(path: &std::path::Path) -> String {
     match std::env::var_os("HOME") {
         Some(home) => match path.strip_prefix(&home) {
             Ok(rest) => format!("~/{}", rest.display()),

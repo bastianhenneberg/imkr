@@ -22,6 +22,7 @@ pub const LOCAL_KEYS: &[&str] = &[
     "web_listen",
     "computer_use",
     "computer_use_monitor",
+    "revive_at_boot",
 ];
 
 /// The config, as an item's path, whatever the file is called here.
@@ -514,6 +515,35 @@ mod tests {
         // And the other way round: what we hold does not land there.
         let theirs = merge_config(&there.text, &here.text).unwrap();
         assert!(theirs.contains("computer_use = \"on\""), "{theirs}");
+    }
+
+    /// Bringing sessions back at boot is for the machine nobody sits at:
+    /// turned on on codingmachine, it must not install a unit on every
+    /// laptop the settings sync reaches (#9619).
+    #[test]
+    fn revive_at_boot_stays_on_its_machine() {
+        let item = |text: &str, modified| Item {
+            path: CONFIG.into(),
+            modified,
+            text: text.into(),
+        };
+        let here = item("revive_at_boot = false\n", 1);
+        let there = item("revive_at_boot = true\n", 9);
+        let merged = merge_config(&here.text, &there.text).unwrap();
+        assert!(merged.contains("revive_at_boot = false"), "{merged}");
+        let (steps, _) = plan(
+            std::slice::from_ref(&here),
+            std::slice::from_ref(&there),
+            None,
+        );
+        assert!(
+            steps.iter().all(|s| !s
+                .text
+                .as_deref()
+                .unwrap_or_default()
+                .contains("revive_at_boot")),
+            "{steps:?}"
+        );
     }
 
     /// Account lists are joined: differing, they go both ways, and the

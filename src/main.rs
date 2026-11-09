@@ -2,6 +2,7 @@ mod account;
 mod agent;
 mod app;
 mod bindings;
+mod boot;
 mod brain;
 mod checkpoint;
 mod cli;
@@ -96,6 +97,10 @@ Commands:
   revive NAME   bring back a session that stopped (reboot, crash) or was
                 closed, without attaching; `ls` lists them with ◌
   forget NAME   forget such a session: its saved layout is deleted
+  boot [status] whether the sessions come back at boot without a client
+                (setting revive_at_boot: a systemd user unit), what is missing
+  boot run      what that unit runs: the sessions that stopped with the
+                machine back, layout and shells
   template ls   list the session templates (~/.config/imkr/templates/*.toml)
   template save NAME
                 save this session's windows, splits and agents as template NAME
@@ -467,6 +472,7 @@ fn main() -> Result<()> {
         ["outbox", ..] => cli::outbox(&args[1..]),
         ["template", ..] => cli::template(&args[1..]),
         ["revive", name] => cli::revive(name),
+        ["boot", ..] => boot::main(&args[1..]),
         ["forget", name] => cli::forget(name),
         ["read", ..] => cli::read(&args[1..]),
         ["wait", ..] => cli::wait(&args[1..]),

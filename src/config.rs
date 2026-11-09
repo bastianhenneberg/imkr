@@ -284,6 +284,10 @@ pub struct Config {
     /// After the machine restarted, `imkr` starts again every session that
     /// ran when it went down, not just the one it goes to.
     pub revive_sessions: bool,
+    /// The same at boot, without anybody attaching: a systemd user unit
+    /// runs `imkr boot run` (`boot::sync`). Each machine's own
+    /// (`settings::LOCAL_KEYS`), for servers nobody sits at.
+    pub revive_at_boot: bool,
     /// After each agent turn, its repository's state as a commit on
     /// `refs/imkr/checkpoints/…`, to go back to; branch, index and files
     /// stay as they are.
@@ -641,6 +645,7 @@ impl Default for Config {
             shared_borders: false,
             own_window_per_client: true,
             revive_sessions: true,
+            revive_at_boot: false,
             checkpoints: false,
             sessions_on_start: false,
             session_banner: true,
@@ -842,6 +847,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Restart all sessions after a reboot",
         value: |c| if c.revive_sessions { "on" } else { "off" }.to_owned(),
         step: |c, _| c.revive_sessions = !c.revive_sessions,
+    },
+    Setting {
+        name: "Restart sessions at boot, without a client",
+        value: |c| crate::boot::shown(c.revive_at_boot),
+        step: |c, _| c.revive_at_boot = !c.revive_at_boot,
     },
     Setting {
         name: "Own window per attached terminal",

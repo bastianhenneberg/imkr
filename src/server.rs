@@ -43,6 +43,7 @@ pub fn run() -> Result<()> {
     let path = socket_path()?;
     // After `imkr update` the socket is open already.
     let handover = upgrade::take();
+    crate::boot::take_env();
     let listener = match &handover {
         Some(handover) => {
             upgrade::set_cloexec(handover.listener, true)?;

@@ -135,6 +135,8 @@ Processes cannot survive a reboot, but the layout can: imkr saves it while it ru
 `imkr` builds the windows again, starts shells in their old directories, puts each pane's
 history above them and resumes the agents by their session ids. Ending a session on purpose
 deletes the file and keeps the layout in the hive `last`.
+With *Restart sessions at boot* on, a systemd user unit (`imkr boot run`) does the same without
+a client, layout and shells only; see [Sessions](sessions.html).
 
 ## Hives
 

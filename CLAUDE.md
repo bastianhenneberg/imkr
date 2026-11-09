@@ -499,6 +499,21 @@ Projekt-Slug: `imkr`
   Liste, die jetzt stopped sind (beim Herunterfahren enden die Server nacheinander, der letzte
   ließe sonst die früheren fallen). Bewusst beendete fallen raus: State gelöscht bzw. closed.
   Sidebar zeigt keine ruhenden Sessions (`session_rows` → `retain`), nur `Ctrl+B S` (`o`).
+  Ohne Client nach dem Boot (#9619): `src/boot.rs`, Einstellung `revive_at_boot` (in
+  `settings::LOCAL_KEYS`, SETTINGS „Restart sessions at boot, without a client“, Wert
+  `boot::shown`). Der Server spiegelt sie in eine systemd-User-Unit (`App::sync_boot` beim Start,
+  nach jeder Settings-Änderung, `reload_config` → `boot::sync`: `imkr-revive.service` in
+  `$XDG_CONFIG_HOME/systemd/user` + Link in `default.target.wants`, nur eigene mit `MARK`
+  anfassen, kein `systemctl`), nie in Tests/Testwelt mit `IMKR_SOCKET`. Unit: `oneshot`,
+  `RemainAfterExit`, `KillMode=process` (gemessen: per setsid gestartete Kinder überleben Ende
+  und Stop der Unit), `ExecStart=… boot run` → `client::revive_stopped` (liefert jetzt je Session
+  eine Zeile fürs Journal). `boot run` setzt `boot::ENV` (`IMKR_AT_BOOT`), der Server nimmt es
+  in `server::run` heraus (`take_env`, Panes erben es nicht) und `restore` tippt dann **keinen**
+  Resume-Befehl — `imkr revive` und der Client-Weg tun das bei `resume = auto` sehr wohl.
+  `boot::gaps` (kein systemd: `/run/systemd/system`; kein Linger: `/var/lib/systemd/linger/$USER`;
+  macOS benannt) → Flash `boot::told`, `imkr boot [status]`. E2E: Testwelt **ohne**
+  `IMKR_SOCKET` mit eigenem `XDG_CONFIG_HOME` (sonst schriebe der Server die echte Unit),
+  Server per PID mit `kill -9`, `imkr boot run`.
 - Tab-Vervollständigung: `src/completions.rs` (`COMMANDS`: Befehl, Optionen, Unterbefehle und welche
   Namen dort passen, `Words`), `imkr completions zsh|bash` erzeugt das Skript daraus, Namen fragt es
   beim Tab per `imkr complete KIND` ab. Neuer Befehl → Eintrag in `COMMANDS` (Test

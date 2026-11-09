@@ -613,7 +613,7 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
     let mut remote = remote;
     let mut flash = None;
     if start && crate::config::Config::load().0.revive_sessions {
-        revive_stopped();
+        let _ = revive_stopped();
     }
     if last && let Some((last_host, last_name)) = last_place() {
         match last_host {
@@ -1442,16 +1442,18 @@ pub fn switch_hive(
 
 /// Starts again the sessions of this machine that ran when it went down
 /// (`persist::were_running`) and stopped with it, each from its saved
-/// layout and history, as going there would.
-fn revive_stopped() {
+/// layout and history, as going there would. Says per session what
+/// happened; closed ones and running ones are left out silently.
+pub fn revive_stopped() -> Vec<String> {
     if crate::protocol::test_socket().is_some() {
-        return;
+        return Vec::new();
     }
     let names = crate::persist::were_running();
     if names.is_empty() {
-        return;
+        return Vec::new();
     }
     let stopped = crate::persist::dormant_sessions(&[]);
+    let mut report = Vec::new();
     for name in names {
         let Some(dormant) = stopped.iter().find(|d| d.name == name && !d.closed) else {
             continue;
@@ -1460,9 +1462,13 @@ fn revive_stopped() {
             continue;
         };
         if UnixStream::connect(&socket).is_err() {
-            let _ = start_server(&socket, Some(&dormant.name));
+            report.push(match start_server(&socket, Some(&dormant.name)) {
+                Ok(_) => format!("{name} is back"),
+                Err(e) => format!("{name} did not come back: {e:#}"),
+            });
         }
     }
+    report
 }
 
 // --- The outbox: messages for machines this one cannot reach ---

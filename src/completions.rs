@@ -151,6 +151,12 @@ const COMMANDS: &[Command] = &[
         &[],
         Sessions,
     ),
+    with_subs(
+        "boot",
+        "sessions back at boot without a client",
+        &[],
+        &[sub("status", Nothing), sub("run", Nothing)],
+    ),
     cmd(
         "forget",
         "forget a stopped or closed session",
