@@ -877,7 +877,9 @@ Projekt-Slug: `imkr`
   immer sichtbar wie in der Sidebar, egal wie lange ihre Agents ruhen, #7921).
   Falle: `remote_sessions` meldet für einen Rechner ohne Session eine erfundene `default`
   (`SessionInfo::is_stand_in`: 0 Panes) – die Sidebar zeigt dafür „no session yet“, `Ctrl+B S`
-  einen Eintrag, der sie startet, nie als alt ausgeblendet. Damit die Zeit Updates und
+  statt des Namens `NEW_SESSION_ENTRY` („+ new session…“, #1362), Enter fragt per
+  `ask_session_name(host)` nach dem Namen, statt eine `default` zu starten; nie als alt
+  ausgeblendet. Damit die Zeit Updates und
   Neustarts übersteht: `SavedPane::idle_since` → `App::carried` (gilt bis zum ersten Idle, höchstens
   `CARRIED_FOR`), übernommene Panes setzen `last_output` 60 s zurück (sonst kurz „working“), und
   `Handover::unseen` hält ✦ done über ein Update.

@@ -51,6 +51,9 @@ const REPEAT_TIME: Duration = Duration::from_millis(600);
 const TICK: Duration = Duration::from_millis(500);
 /// How long the session's name shows after a switch, see `draw_banner`.
 const BANNER_FOR: Duration = Duration::from_millis(1200);
+/// What `Ctrl+B S` shows for a machine that runs no session yet, in place
+/// of the stand-in's name (#1362).
+const NEW_SESSION_ENTRY: &str = "+ new session…";
 /// The shortest time between two frames drawn for program output alone.
 const FRAME: Duration = Duration::from_millis(8);
 /// How often agents, hooks, git and files are looked at while busy.
@@ -8078,7 +8081,7 @@ impl App {
                 let mut hint = format!("⇄ {host}");
                 if session.is_stand_in() {
                     empty.push(place.clone());
-                    hint.push_str(" · no session yet, Enter starts one");
+                    hint.push_str(" · nothing runs there yet");
                 }
                 entries.push((
                     place,
@@ -8294,6 +8297,14 @@ impl App {
                     } else {
                         arrow.to_owned()
                     };
+                    // A machine that runs nothing has no session to name: the
+                    // entry is the way to start one there, not a "default"
+                    // that looks as if it had been made already (#1362).
+                    let shown = if empty.contains(&place) {
+                        NEW_SESSION_ENTRY.to_owned()
+                    } else {
+                        place.name.clone()
+                    };
                     let item = menu::MenuItem {
                         key: if i < 9 {
                             char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
@@ -8302,13 +8313,9 @@ impl App {
                         },
                         title: match urgent {
                             Some(state) => {
-                                format!(
-                                    "{} {under}{arrow}{}{elsewhere}",
-                                    state.symbol(),
-                                    place.name
-                                )
+                                format!("{} {under}{arrow}{shown}{elsewhere}", state.symbol())
                             }
-                            None => format!("  {under}{arrow}{}{elsewhere}", place.name),
+                            None => format!("  {under}{arrow}{shown}{elsewhere}"),
                         },
                         hint,
                         danger: false,
@@ -10436,6 +10443,14 @@ impl App {
         match places.get(pick) {
             Some(place) if in_archive && place.host.is_some() => self.revive_elsewhere(place),
             Some(place) if place.host.is_none() && place.name == protocol::session_name() => {}
+            // Nothing runs there: ask for a name, as `n` does, instead of
+            // starting the stand-in's "default" (#1362).
+            Some(place)
+                if place.host.is_some()
+                    && self.session_info(place).is_some_and(|s| s.is_stand_in()) =>
+            {
+                self.ask_session_name(place.host.clone());
+            }
             Some(place) => self.go_to(place),
             None if pick == places.len() => {
                 self.new_session();
