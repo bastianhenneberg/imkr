@@ -856,6 +856,15 @@ fn handed_done(reported: Option<AgentState>) -> bool {
     reported.is_some()
 }
 
+/// Whether a pane that once fetched its mail by hook (`takes_mail`) still
+/// does, with `front` the command line of what runs in front (#1358).
+/// Back at the shell, the agent is gone; a Codex that quits sends no
+/// `SessionEnd` that would say so, and its messages would wait for a hook
+/// that never comes.
+fn fetches_mail(takes_mail: bool, front: &[String]) -> bool {
+    takes_mail && !agent::is_shell(front)
+}
+
 /// Whether a message waits for the agent's own hook rather than being
 /// typed into its input line (#9379, #1307).
 ///
@@ -3623,17 +3632,17 @@ impl App {
     /// Why a message for pane `id` waits: it cannot be typed in
     /// (`mail_hold`), or its agent's own hook comes for it (#9379).
     fn mail_why(&self, id: PaneId) -> Option<&'static str> {
-        self.mail_waits_for(id).or_else(|| {
-            self.panes
-                .get(&id)
-                .is_some_and(|p| p.takes_mail)
-                .then_some("its own hook fetches it")
-        })
+        self.mail_waits_for(id)
+            .or_else(|| self.fetches_mail(id).then_some("its own hook fetches it"))
     }
 
     /// Whether pane `id` holds its messages for its own hook (`take_mail`).
+    /// Not with the shell back in front: the agent that fetched them is
+    /// gone, and Codex sends no `SessionEnd` to say so (#1358).
     fn fetches_mail(&self, id: PaneId) -> bool {
-        self.panes.get(&id).is_some_and(|p| p.takes_mail)
+        self.panes
+            .get(&id)
+            .is_some_and(|p| fetches_mail(p.takes_mail, &p.foreground_argv()))
     }
 
     /// Whether something imkr typed into pane `id` is still standing in its
@@ -3660,8 +3669,7 @@ impl App {
     fn took_input(&self, pane: &Pane, entered: &Entered) -> bool {
         // Where the agent hands over what it took, that decides: the count
         // alone said "taken" for a continuation the agent wrote itself
-        // (#1307). Codex does that through its hooks too, while its mail
-        // is still typed (#9532).
+        // (#1307). Codex does that through its hooks too (#9532).
         if pane.says_prompts() {
             return prompt_took(&pane.submitted, entered.prompts, &entered.text);
         }
@@ -3676,9 +3684,11 @@ impl App {
     fn mail_waits_for(&self, id: PaneId) -> Option<&'static str> {
         let pane = self.panes.get(&id)?;
         let program = pane.program();
-        let queues = program.as_deref().is_some_and(agent::queues_input);
-        // Codex has no hooks: a redraw can start a turn between ticks.
-        // Do not type into it based on the previous tick's cached Idle.
+        // An agent whose hook fetches its mail gets it at the end of its
+        // turn: working is no reason to hold it (#1358).
+        let queues = program.as_deref().is_some_and(agent::queues_input) || self.fetches_mail(id);
+        // Codex may run without hooks: a redraw can start a turn between
+        // ticks. Do not type into it based on the previous tick's cached Idle.
         let state = if program.as_deref() == Some("codex") {
             pane.agent_state()
         } else {
@@ -16561,7 +16571,8 @@ mod tests {
         assert!(hook(true, true, false, old));
         // Fresh: the `Stop` of a turn that has just ended is on its way.
         assert!(hook(true, false, false, 0));
-        // No hook of its own — codex, pi, a plain shell: always typed to,
+        // No hook of its own — a Codex with untrusted hooks, pi, a plain
+        // shell: always typed to,
         // whatever else is true. Taking that away would mean they never
         // heard of a message again.
         for busy in [false, true] {
@@ -16571,6 +16582,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A pane whose agent fetched its mail by hook stops counting as one
+    /// once the shell is back in front: Codex sends no `SessionEnd`, and
+    /// messages would wait for a hook that never comes (#1358).
+    #[test]
+    fn a_quit_agent_no_longer_fetches_its_mail() {
+        let argv = |line: &str| line.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        let fetches = super::fetches_mail;
+        assert!(fetches(true, &argv("codex --yolo")));
+        assert!(fetches(true, &argv("node /usr/bin/claude")));
+        assert!(!fetches(true, &argv("-zsh")));
+        assert!(!fetches(true, &argv("/bin/bash")));
+        // Never fetched: typed to, whatever runs.
+        assert!(!fetches(false, &argv("codex")));
+    }
+
+    /// A Codex whose hook fetches its mail is not held while it works: the
+    /// `Stop` at the end of its turn takes the message (#1358). Measured at
+    /// Codex 0.163 — before, four messages waited "(working)" at a Codex
+    /// that was hardly ever idle.
+    #[test]
+    fn a_working_agent_that_fetches_its_mail_is_not_held() {
+        let hold = super::mail_hold;
+        let working = Some(AgentState::Working);
+        // queues = fetches its mail: nothing holds it, the hook takes it.
+        assert_eq!(hold(false, false, false, working, true), None);
+        // Without hooks it still waits for idle, as before.
+        assert_eq!(hold(false, false, false, working, false), Some("working"));
+        // A draft or a question holds it either way.
+        assert_eq!(
+            hold(false, true, false, working, true),
+            Some("you are typing")
+        );
+        assert!(hold(false, false, false, Some(AgentState::Blocked), true).is_some());
     }
 
     /// The point of `MAIL_OVERDUE` is that it sits above a *healthy* wait:

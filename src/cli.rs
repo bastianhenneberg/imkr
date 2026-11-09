@@ -61,10 +61,9 @@ pub fn status(args: &[String]) -> Result<()> {
     });
     // The same call fetches the messages waiting for this pane and puts
     // them in front of the agent itself, so nothing is typed into the line
-    // the user writes in (#9379). Only for Claude Code, where that was
-    // measured: Codex's hooks tell its session and prompts (#9532), its
-    // mail is still typed, as verified for #1339.
-    if from.as_deref().is_none_or(|agent| agent == "claude")
+    // the user writes in (#9379). Measured for Claude Code and Codex 0.163
+    // (#1358); pi's extension sends no `hook_event_name`.
+    if hook_takes_mail(from.as_deref())
         && let Some(hook) = &hook
         && let Some(json) = mail_for_hook(hook, pane)
     {
@@ -77,10 +76,26 @@ pub fn status(args: &[String]) -> Result<()> {
 /// agent without typing (#9379). `Stop` blocks the end of the turn, which
 /// sends the agent straight back into its loop with the messages as the
 /// reason; `UserPromptSubmit` puts them beside what the user just sent.
-/// Both measured against Claude Code 2.1.238. pi sends no
-/// `hook_event_name`; Codex does, but its hooks call `--agent codex` and
-/// keep the typed delivery (`status`).
+/// Both measured against Claude Code 2.1.238 and Codex 0.163 (#1358).
+/// pi sends no `hook_event_name`.
 const MAIL_EVENTS: &[&str] = &["Stop", "UserPromptSubmit"];
+
+/// The agents whose hooks fetch their mail (`--agent`; none = Claude Code).
+///
+/// Codex measured at 0.163 with its real frontend (#1358): `Stop` with
+/// `decision: block` keeps it in the same turn (same `turn_id`, the next
+/// `Stop` says `stop_hook_active`) and hands the model `reason` as a
+/// `<hook_prompt>` user message; `UserPromptSubmit`'s `additionalContext`
+/// reaches the model as a developer message right after the prompt. A
+/// Codex whose hooks were never trusted runs none of them, never takes
+/// mail and keeps the typed delivery.
+const HOOK_MAIL_AGENTS: &[&str] = &["claude", "codex"];
+
+/// Whether the hook of `agent` (`--agent`, none = Claude Code) fetches
+/// the messages waiting for its pane.
+fn hook_takes_mail(agent: Option<&str>) -> bool {
+    agent.is_none_or(|agent| HOOK_MAIL_AGENTS.contains(&agent))
+}
 
 /// What a hook has to print so its agent sees the messages waiting for
 /// `pane`, or `None` for an event that does not carry them or no mail.
@@ -2790,7 +2805,8 @@ fn install_hooks() -> Result<()> {
         println!(
             "Codex hooks installed: {} (backup: hooks.json.bak-imkr). Codex asks once to \
              trust them (\"Hooks need review\": t trusts all); from then on it tells imkr its \
-             session, so a restart picks up the same conversation.",
+             session, so a restart picks up the same conversation, and fetches its messages \
+             at the end of a turn instead of having them typed in.",
             path.display()
         );
     }
@@ -2865,7 +2881,7 @@ fn install_codex_hooks(codex: &Path) -> Result<Option<PathBuf>> {
 }
 
 /// The command each Codex hook event runs: the script with the state and
-/// `--agent codex`, which keeps its mail typed (`status`).
+/// `--agent codex`, which `status` reads as the agent it reports for.
 fn codex_hook_commands(script: &Path) -> Vec<(&'static str, String)> {
     CODEX_HOOKS
         .iter()
@@ -5241,6 +5257,17 @@ mod tests {
         assert_eq!(hook_mail_json("PreToolUse", &one), None);
         assert_eq!(hook_mail_json("SessionStart", &one), None);
         assert_eq!(hook_mail_json("", &one), None);
+    }
+
+    /// Codex's hooks fetch its mail like Claude Code's (#1358, measured at
+    /// Codex 0.163); pi's extension sends no `hook_event_name`, its mail
+    /// stays typed.
+    #[test]
+    fn codex_hooks_fetch_their_mail() {
+        assert!(hook_takes_mail(None));
+        assert!(hook_takes_mail(Some("claude")));
+        assert!(hook_takes_mail(Some("codex")));
+        assert!(!hook_takes_mail(Some("pi")));
     }
 
     /// The message pane shows every note once, and says anew what waits

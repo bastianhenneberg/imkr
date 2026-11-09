@@ -165,8 +165,18 @@ Projekt-Slug: `imkr`
   der Pane-Umgebung (`IMKR_PANE`), JSON wie Claude (`session_id`, `transcript_path`, `prompt`),
   SessionStart erst mit dem ersten Prompt; die TUI selbst hält keine Rollout-Datei offen (der
   geteilte `codex app-server` schreibt). Aufruf `imkr status S --agent codex`: Session, Zustand,
-  Prompt-Nachweis (`took_input` nimmt `prompt_took`, sobald `says_prompts`), aber **kein**
-  `mail_for_hook` — Codex-Post bleibt getippt (#1339 verifiziert). Resume mit Optionen:
+  Prompt-Nachweis (`took_input` nimmt `prompt_took`, sobald `says_prompts`) und seit #1358 auch
+  `mail_for_hook` (`HOOK_MAIL_AGENTS`, `hook_takes_mail`): gemessen am echten Codex 0.163
+  (Dummy-Provider), `Stop` mit `decision:block` bleibt im selben Turn (gleiche `turn_id`, danach
+  `stop_hook_active`), `reason` kommt als `<hook_prompt>`-User-Nachricht, `additionalContext`
+  als Developer-Nachricht hinter dem Prompt; Codex zeigt „Blocked by hook". Damit hält
+  `mail_waits_for` einen Codex mit `takes_mail` nicht mehr als „working" (`queues` ||
+  `fetches_mail`). Codex hat in `CODEX_HOOKS` kein `SessionEnd`: `App::fetches_mail` →
+  freie Funktion `app::fetches_mail` gilt nicht mehr, sobald wieder eine Shell vorn steht.
+  Ohne freigegebene Hooks (Option 3 bei „Hooks need review") läuft keiner, `takes_mail` bleibt
+  aus, Post wird wie bisher bei idle getippt. E2E: `python3 tests/codex_hook_mail.py --codex
+  <pfad>` (zwei CODEX_HOMEs, weil Codex das Vertrauen in config.toml ablegt; Tasten per
+  `imkr tap` roh, `send` würde sie als Paste rahmen); gegen 8ad0f8b fällt er mit „held: working". Resume mit Optionen:
   `Config::resume_commands` setzt `agent_commands` vorn ein (`codex --yolo resume {session}`);
   `switch_account` lehnt Codex ohne Session ab statt `--last`. pi: Erweiterung
   `integrations/pi/imkr-agent-state.ts` (`PI_EXTENSION`, `install_pi_extension` nach
@@ -697,8 +707,8 @@ Projekt-Slug: `imkr`
   (im Handover, gelöscht bei `Status { state: None }` = SessionEnd); `deliver_mail` tippt dann
   nicht mehr, solange der Agent `Working` ist (das `Stop` kommt sicher) — nur ein *idle* Agent
   feuert keinen Hook, der bekommt es nach `HOOK_WITHIN` (10 s) getippt. Exakt einmal, weil der
-  `mailbox` die einzige Quelle ist. Andere Agents (codex, pi) schicken kein `hook_event_name`
-  und bleiben beim getippten Weg.
+  `mailbox` die einzige Quelle ist. Codex holt seit #1358 genauso ab (siehe Claude-Hooks); pi
+  schickt kein `hook_event_name` und bleibt beim getippten Weg.
 - Enter-Kontrolle (#9379): `App::watch_enter` (aus `type_into` UND `deliver_mail`) merkt das
   Pane in `App::entered`; `check_entered` (je Tick) schickt Enter **einmal** nach, wenn der
   Agent die Eingabezeile nicht genommen hat (`App::took_input`), der Mensch das Pane nicht
@@ -805,7 +815,7 @@ Projekt-Slug: `imkr`
   getippt und der Rest per Hook verdrehte die Reihenfolge (gemessen: die späteren zwei kamen im
   `Stop`-Hook, während die erste noch in der Eingabezeile stand). Zwei Wege gleichzeitig können
   keine Reihenfolge halten. Der getippte Rückfall bleibt **nur** für das Pane ohne eigenen Hook
-  (codex, pi, Shell, claude direkt nach SessionEnd) und für den einzelnen, wirklich geparkten
+  (codex ohne freigegebene Hooks, pi, Shell, claude direkt nach SessionEnd) und für den einzelnen, wirklich geparkten
   Agenten — ihn ganz wegzunehmen hieße, dass ein codex nie wieder Post bekommt.
 - Getippter Rückfall erst bei echter Ruhe (#9379, v0.21.93): `QUIET_BEFORE_TYPING` (5 s ohne
   Ausgabe) zusätzlich zu `HOOK_WITHIN`. Gemeldetes idle allein genügt nicht — zwischen zwei

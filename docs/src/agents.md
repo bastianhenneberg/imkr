@@ -36,7 +36,10 @@ Codex's `hooks.json`, after the ones already there (backed up as `hooks.json.bak
 asks once to trust them („Hooks need review“, `t` trusts all). From then on Codex tells imkr its
 state, its session — so a restart or an account switch picks up exactly this conversation, not
 the newest one — and the prompts it took, so a message typed into it is confirmed, not only
-typed. Messages for Codex are still typed in; only Claude Code fetches them through its hooks.
+typed. Its hooks also fetch the messages waiting for it, as Claude Code's do (see [How a message
+reaches an agent](#how-a-message-reaches-an-agent)), so a Codex that is hardly ever idle still gets
+them at the end of its turn. A Codex whose hooks were not trusted runs none of them and gets its
+messages typed in once it is idle.
 Codex starts its session with the first prompt, so a Codex that was never asked anything has
 none to resume.
 
@@ -382,10 +385,12 @@ own. `imkr read server:api/3` shows another agent's screen, on any machine.
 
 ### How a message reaches an agent
 
-**Claude Code with imkr's hooks gets it without anything being typed.** The hooks `imkr hooks
---install` puts in fetch the waiting messages: at the end of a turn (`Stop`) they go to the
-agent as the reason not to stop yet, so it works on them straight away, and with every prompt
-you send (`UserPromptSubmit`) they ride along beside it. Its input line stays yours — you can
+**Claude Code and Codex with imkr's hooks get it without anything being typed.** The hooks
+`imkr hooks --install` puts in fetch the waiting messages: at the end of a turn (`Stop`) they go
+to the agent as the reason not to stop yet, so it works on them straight away, in the same turn,
+and with every prompt you send (`UserPromptSubmit`) they ride along beside it. Several messages
+go together, in the order they were sent. Codex shows it as „Blocked by hook“ with the messages
+below; that is the hand-over, not an error. Its input line stays yours — you can
 write there in peace while messages come in. Nothing is typed twice: what a hook has fetched is
 out of the mailbox.
 
