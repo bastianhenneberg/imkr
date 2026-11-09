@@ -794,6 +794,20 @@ struct Entered {
 ///
 /// `shown`: the end of what was typed is still on the screen at all. Gone
 /// from there, nothing can be stuck in an input line.
+/// What to say about the agents a restart could not pick up again (#1357),
+/// each as "codex in pane 3", or nothing when there were none. Says how to
+/// do it by hand, because the shell they ran in is all that came back.
+fn not_resumed(lost: &[String]) -> Option<String> {
+    if lost.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "not picked up again, no session id known: {} (`codex resume` or `claude --resume` \
+         there lets you choose)",
+        lost.join(", ")
+    ))
+}
+
 fn enter_again(took: bool, typed_since: bool, shown: bool) -> bool {
     !took && !typed_since && shown
 }
@@ -1298,6 +1312,12 @@ pub struct App {
     /// Agents that finished while the user was not looking, shown as done
     /// until their pane is focused.
     unseen: HashSet<PaneId>,
+    /// Agents brought back at boot as their shell only, with the line that
+    /// picks each up again: typed when the first client comes (#1357).
+    resume_later: BTreeMap<PaneId, (String, String)>,
+    /// Which agents a restart at boot could not pick up again, said when
+    /// the first client comes.
+    resume_note: Option<String>,
     /// Where the sidebar is drawn, if it is shown.
     sidebar: Option<Rect>,
     /// Focus mode: no bars, no sidebar, no borders, only the focused pane.
@@ -1500,6 +1520,8 @@ impl App {
             first_shell: None,
             agents: HashMap::new(),
             unseen: HashSet::new(),
+            resume_later: BTreeMap::new(),
+            resume_note: None,
             sidebar: None,
             focus_mode: false,
             listener,
@@ -1672,6 +1694,7 @@ impl App {
             (logged_in > 1).then(|| tool.to_owned())
         };
         let mut asking: BTreeMap<String, Vec<(PaneId, String)>> = BTreeMap::new();
+        let mut lost: Vec<String> = Vec::new();
         let mut workspaces = saved.workspaces;
         for ws in workspaces.values_mut() {
             for (id, rect) in ws.rects(self.body) {
@@ -1701,12 +1724,31 @@ impl App {
                 match spawned {
                     Ok(mut pane) => {
                         pane.notes = spec.notes.clone();
-                        // Brought back at boot, nobody is there to watch an
-                        // agent start: shells only (#9619).
                         let resume = match self.config.resume {
-                            _ if crate::boot::at_boot() => None,
                             config::Resume::Off => None,
                             _ => spec.resume_command(&resume_commands),
+                        };
+                        // An agent that cannot be picked up again is said,
+                        // not dropped without a word (#1357): Codex had no
+                        // session id before its hooks, and came back as a
+                        // bare shell every time.
+                        if resume.is_none()
+                            && self.config.resume != config::Resume::Off
+                            && let Some(agent) = &spec.agent
+                        {
+                            lost.push(format!("{agent} in pane {id}"));
+                        }
+                        // Brought back at boot, nobody is there to watch an
+                        // agent start: shells only (#9619), and the agents
+                        // when the first client comes (#1357). Dropped here,
+                        // the next save knew only the shell and they were
+                        // gone for good.
+                        let resume = match (resume, &spec.agent) {
+                            (Some(line), Some(agent)) if crate::boot::at_boot() => {
+                                self.resume_later.insert(id, (agent.clone(), line));
+                                None
+                            }
+                            (resume, _) => resume,
                         };
                         // A template's command always starts; a resume only
                         // with the user's Enter when they asked for that.
@@ -1752,10 +1794,52 @@ impl App {
         }
         let count = self.panes.len();
         let panes = if count == 1 { "pane" } else { "panes" };
-        self.flash = Some(match template {
+        let mut flash = match template {
             Some(template) => format!("started {count} {panes} from template {template}"),
             None => format!("restored {count} {panes} from before the restart"),
+        };
+        if let Some(note) = not_resumed(&lost) {
+            eprintln!("{note}");
+            flash = format!("{flash} — {note}");
+            if crate::boot::at_boot() {
+                self.resume_note = Some(note);
+            }
+        }
+        self.flash = Some(flash);
+    }
+
+    /// Starts the agents that came back at boot without them (#1357), now
+    /// that someone is there to see them: only into panes whose shell
+    /// still stands in front, and with the user's Enter where `resume` is
+    /// `ask`.
+    fn resume_left_over(&mut self) {
+        let waiting = std::mem::take(&mut self.resume_later);
+        let mut started = 0;
+        for (id, (_, line)) in waiting {
+            let Some(pane) = self.panes.get_mut(&id) else {
+                continue;
+            };
+            if !pane.shell_in_front() {
+                continue;
+            }
+            let line = if self.config.resume == config::Resume::Auto {
+                format!("{line}\r")
+            } else {
+                line
+            };
+            if pane.write(line.as_bytes()).is_ok() {
+                started += 1;
+            }
+        }
+        let note = self.resume_note.take();
+        let started = (started > 0).then(|| {
+            let agents = if started == 1 { "agent" } else { "agents" };
+            format!("{started} {agents} from before the restart picked up again")
         });
+        let said: Vec<String> = started.into_iter().chain(note).collect();
+        if !said.is_empty() {
+            self.flash = Some(said.join(" — "));
+        }
     }
 
     /// Shows `active` of `workspaces`, or the first if it is gone, and
@@ -1807,6 +1891,8 @@ impl App {
         self.screen = Rect::new(0, 0, handover.screen.0, handover.screen.1);
         self.focus_mode = handover.focus_mode;
         self.unseen.extend(handover.unseen.iter().copied());
+        self.resume_later.extend(handover.resume_later.clone());
+        self.resume_note = handover.resume_note.clone();
         self.mail_log.extend(handover.mail_log.iter().cloned());
         self.mailbox.extend(handover.mail.iter().cloned());
         self.mail_seq = self
@@ -1957,6 +2043,8 @@ impl App {
             popup_full: self.popup_full,
             focus_mode: self.focus_mode,
             unseen: self.unseen.iter().copied().collect(),
+            resume_later: self.resume_later.clone(),
+            resume_note: self.resume_note.clone(),
             mailbox: self
                 .mailbox
                 .iter()
@@ -1985,7 +2073,9 @@ impl App {
                 let argv = pane.foreground_argv();
                 let saved = SavedPane {
                     cwd: pane.cwd(),
-                    agent: agent::agent_name(&argv),
+                    // One waiting to be picked up again is still there.
+                    agent: agent::agent_name(&argv)
+                        .or_else(|| self.resume_later.get(&id).map(|(a, _)| a.clone())),
                     session: pane.session.clone(),
                     name: pane.name.clone(),
                     command: hosted_command(&argv),
@@ -2468,6 +2558,10 @@ impl App {
             workspace: self.workspace,
         });
         self.run_hooks("attach", Vec::new());
+        if self.clients.len() == 1 && (!self.resume_later.is_empty() || self.resume_note.is_some())
+        {
+            self.resume_left_over();
+        }
         // Back after a while: what the agents did meanwhile.
         if self.clients.len() == 1
             && let Some(since) = self.away_since.take()
@@ -3260,7 +3354,7 @@ impl App {
                         || pane.last_typed().is_some_and(|typed| typed > e.at),
                     typed_still_shown(pane, &e.text),
                     self.took_input(pane, e),
-                    pane.takes_mail,
+                    pane.takes_mail || pane.says_prompts(),
                 ))
             })
             .collect();
@@ -3564,13 +3658,14 @@ impl App {
     /// one; an agent without hooks can only be taken at its word that it
     /// started working.
     fn took_input(&self, pane: &Pane, entered: &Entered) -> bool {
+        // Where the agent hands over what it took, that decides: the count
+        // alone said "taken" for a continuation the agent wrote itself
+        // (#1307). Codex does that through its hooks too, while its mail
+        // is still typed (#9532).
+        if pane.says_prompts() {
+            return prompt_took(&pane.submitted, entered.prompts, &entered.text);
+        }
         if pane.takes_mail {
-            // Where the agent hands over what it took, that decides: the
-            // count alone said "taken" for a continuation the agent wrote
-            // itself (#1307).
-            if pane.says_prompts() {
-                return prompt_took(&pane.submitted, entered.prompts, &entered.text);
-            }
             return pane.prompts > entered.prompts;
         }
         entered.began
@@ -6120,6 +6215,17 @@ impl App {
         let source_session =
             crate::handoff::source_session(source_tool, source_session, pane.session.as_deref())
                 .map_err(|e| format!("cannot preserve context; source kept running: {e}"))?;
+        // `codex resume --last` takes the newest conversation of all, which
+        // with two Codex at work is another one's (#9532). Without its own
+        // id there is nothing to restart into.
+        if same_tool && source_tool == "codex" && source_session.is_none() {
+            return Err(format!(
+                "codex in pane {id} has not told its session id yet, so a switch could not \
+                 pick up its conversation. Its hooks tell it (`imkr hooks --install`, then \
+                 trust them once in Codex) after its next turn; or pass the id from Codex's \
+                 /status with --source-session."
+            ));
+        }
         // Preserve the actual original reference base even for a selected symlink.
         let selected_brief = brief
             .map(std::fs::canonicalize)

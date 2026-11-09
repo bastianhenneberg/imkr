@@ -31,6 +31,15 @@ Where pi is set up (`~/.pi/agent`), `--install` also puts an extension into its 
 reports pi's state the same way: working while it runs, done after its turn, waiting when an
 error stays after pi's own retries.
 
+Where Codex is set up (`$CODEX_HOME`, else `~/.codex`), `--install` also puts its hooks into
+Codex's `hooks.json`, after the ones already there (backed up as `hooks.json.bak-imkr`). Codex
+asks once to trust them („Hooks need review“, `t` trusts all). From then on Codex tells imkr its
+state, its session — so a restart or an account switch picks up exactly this conversation, not
+the newest one — and the prompts it took, so a message typed into it is confirmed, not only
+typed. Messages for Codex are still typed in; only Claude Code fetches them through its hooks.
+Codex starts its session with the first prompt, so a Codex that was never asked anything has
+none to resume.
+
 Codex command/MCP approval dialogs and structured questions (`request_user_input`, including notes)
 count as blocked while their live confirmation or submission controls are visible. This
 also applies while Codex redraws a spinner, after navigating the dialog, or when an older

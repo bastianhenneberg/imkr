@@ -401,7 +401,10 @@ pub const DEFAULT_RESUME: &[(&str, &str)] = &[
 
 impl Config {
     /// The resume command of every agent: the defaults with the user's own
-    /// over them, empty ones left out.
+    /// over them, empty ones left out. One that starts with the agent's
+    /// name starts it the way `agent_commands` does instead (#9532): a
+    /// `codex --yolo` came back as plain `codex resume …` after a restart
+    /// and asked for every command again.
     pub fn resume_commands(&self) -> BTreeMap<String, String> {
         let mut all: BTreeMap<String, String> = DEFAULT_RESUME
             .iter()
@@ -409,6 +412,13 @@ impl Config {
             .collect();
         all.extend(self.resume_commands.clone());
         all.retain(|_, command| !command.trim().is_empty());
+        for (agent, command) in &mut all {
+            let start = self.agent_command(agent);
+            if start != *agent && command.split_whitespace().next() == Some(agent.as_str()) {
+                let rest = command.trim_start()[agent.len()..].to_owned();
+                *command = format!("{start}{rest}");
+            }
+        }
         all
     }
 
@@ -1007,6 +1017,30 @@ pub const SETTINGS: &[Setting] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resuming_keeps_the_options_agents_start_with() {
+        let config = Config::parse(
+            "[agent_commands]\ncodex = \"codex --yolo\"\n\
+             claude = \"claude --dangerously-skip-permissions\"\n\
+             [resume_commands]\naider = \"aider --restore-chat-history\"\n\
+             goose = \"my-goose --resume\"\n",
+        )
+        .unwrap();
+        let resume = config.resume_commands();
+        assert_eq!(resume["codex"], "codex --yolo resume {session}");
+        assert_eq!(
+            resume["claude"],
+            "claude --dangerously-skip-permissions --resume {session}"
+        );
+        // Without options of its own, or by another program: as it is.
+        assert_eq!(resume["aider"], "aider --restore-chat-history");
+        assert_eq!(resume["goose"], "my-goose --resume");
+        assert_eq!(
+            Config::default().resume_commands()["codex"],
+            "codex resume {session}"
+        );
+    }
 
     #[test]
     fn agent_placeholders_are_filled_in() {

@@ -65,6 +65,12 @@ pub struct Handover {
     /// Who messaged whom, for the orchestration view.
     #[serde(default)]
     pub mail_log: Vec<crate::protocol::MailNote>,
+    /// Agents brought back at boot as their shell only, waiting for the
+    /// first client to be picked up again (#1357): agent and line by pane.
+    #[serde(default)]
+    pub resume_later: BTreeMap<PaneId, (String, String)>,
+    #[serde(default)]
+    pub resume_note: Option<String>,
     pub saved: Saved,
     pub panes: BTreeMap<PaneId, HandoverPane>,
 }

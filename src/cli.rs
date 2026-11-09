@@ -21,8 +21,9 @@ use crate::protocol::{self, RenameTarget, Request};
 pub fn status(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?;
+    let from = take_value(&mut rest, "--agent")?;
     let [state] = rest.as_slice() else {
-        bail!("usage: imkr status <working|blocked|idle|failed|clear> [--pane N]");
+        bail!("usage: imkr status <working|blocked|idle|failed|clear> [--pane N] [--agent NAME]");
     };
     let state = match state.as_str() {
         "working" => Some(AgentState::Working),
@@ -60,8 +61,11 @@ pub fn status(args: &[String]) -> Result<()> {
     });
     // The same call fetches the messages waiting for this pane and puts
     // them in front of the agent itself, so nothing is typed into the line
-    // the user writes in (#9379).
-    if let Some(hook) = &hook
+    // the user writes in (#9379). Only for Claude Code, where that was
+    // measured: Codex's hooks tell its session and prompts (#9532), its
+    // mail is still typed, as verified for #1339.
+    if from.as_deref().is_none_or(|agent| agent == "claude")
+        && let Some(hook) = &hook
         && let Some(json) = mail_for_hook(hook, pane)
     {
         println!("{json}");
@@ -73,8 +77,9 @@ pub fn status(args: &[String]) -> Result<()> {
 /// agent without typing (#9379). `Stop` blocks the end of the turn, which
 /// sends the agent straight back into its loop with the messages as the
 /// reason; `UserPromptSubmit` puts them beside what the user just sent.
-/// Both measured against Claude Code 2.1.238. Other agents (pi, codex) do
-/// not send `hook_event_name` and keep the typed delivery.
+/// Both measured against Claude Code 2.1.238. pi sends no
+/// `hook_event_name`; Codex does, but its hooks call `--agent codex` and
+/// keep the typed delivery (`status`).
 const MAIL_EVENTS: &[&str] = &["Stop", "UserPromptSubmit"];
 
 /// What a hook has to print so its agent sees the messages waiting for
@@ -2616,6 +2621,20 @@ const HOOKS: &[(&str, &str, &str)] = &[
     ("SessionEnd", "*", "clear"),
 ];
 
+/// The Codex events that report its state, as `HOOKS` for Claude Code
+/// (#9532). Measured against Codex 0.163: its hooks run in the pane's
+/// environment and pass the same JSON as Claude Code's (`session_id`,
+/// `transcript_path`, `hook_event_name`, `prompt`), so imkr learns the
+/// session `codex resume` needs. `SessionStart` comes with the first
+/// prompt, not when Codex opens.
+const CODEX_HOOKS: &[(&str, &str)] = &[
+    ("SessionStart", "idle"),
+    ("UserPromptSubmit", "working"),
+    ("PreToolUse", "working"),
+    ("PermissionRequest", "blocked"),
+    ("Stop", "idle"),
+];
+
 /// The first Claude Code that knows `StopFailure`; older ones reject the
 /// whole settings.json over the unknown key (#8751).
 const STOP_FAILURE_SINCE: (u32, u32, u32) = (2, 1, 78);
@@ -2651,14 +2670,14 @@ fn claude_versions() -> Vec<((u32, u32, u32), PathBuf)> {
 /// The script the hooks run: finds imkr even where `~/.cargo/bin` is only
 /// on the PATH of interactive shells, and does nothing outside imkr.
 const HOOK_SCRIPT: &str = r#"#!/bin/sh
-# imkr: reports Claude Code's state (working, blocked, idle) to the imkr
+# imkr: reports the agent's state (working, blocked, idle) to the imkr
 # pane it runs in. Installed by `imkr hooks --install`. Does nothing outside imkr.
 
 [ -n "${IMKR_PANE:-}" ] || exit 0
 bin="$(command -v imkr 2>/dev/null || echo "$HOME/.cargo/bin/imkr")"
 [ -x "$bin" ] || bin="$HOME/.local/bin/imkr"
 [ -x "$bin" ] || exit 0
-exec "$bin" status "${1:-}"
+exec "$bin" status "$@"
 "#;
 
 /// The extension that makes pi report its state, as the hooks do for
@@ -2726,27 +2745,7 @@ fn install_hooks() -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
         Err(e) => return Err(e.into()),
     };
-    let hooks = settings
-        .as_object_mut()
-        .context("settings.json is no JSON object")?
-        .entry("hooks")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .context("\"hooks\" in settings.json is no object")?;
-    let ours =
-        |command: &str| command.contains("imkr-agent-state") || command.starts_with("imkr status");
-    // Out with imkr's hooks from before, whatever they looked like.
-    for groups in hooks.values_mut() {
-        if let Some(groups) = groups.as_array_mut() {
-            for group in groups.iter_mut() {
-                if let Some(list) = group["hooks"].as_array_mut() {
-                    list.retain(|h| !h["command"].as_str().is_some_and(ours));
-                }
-            }
-            groups.retain(|g| g["hooks"].as_array().is_none_or(|list| !list.is_empty()));
-        }
-    }
-    hooks.retain(|_, groups| groups.as_array().is_none_or(|g| !g.is_empty()));
+    let hooks = without_our_hooks(&mut settings, "settings.json")?;
     let old = claude_versions()
         .into_iter()
         .find(|(version, _)| *version < STOP_FAILURE_SINCE);
@@ -2784,7 +2783,99 @@ fn install_hooks() -> Result<()> {
             extension.display()
         );
     }
+    let codex = std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"));
+    if let Some(path) = install_codex_hooks(&codex)? {
+        println!(
+            "Codex hooks installed: {} (backup: hooks.json.bak-imkr). Codex asks once to \
+             trust them (\"Hooks need review\": t trusts all); from then on it tells imkr its \
+             session, so a restart picks up the same conversation.",
+            path.display()
+        );
+    }
     Ok(())
+}
+
+/// The `hooks` object of a hook config (Claude Code's settings.json,
+/// Codex's hooks.json) without imkr's own hooks from before, whatever they
+/// looked like. Every other hook stays where it is: Codex trusts its hooks
+/// by position, and moving a foreign one would ask for it again.
+fn without_our_hooks<'a>(
+    config: &'a mut serde_json::Value,
+    file: &str,
+) -> Result<&'a mut serde_json::Map<String, serde_json::Value>> {
+    let hooks = config
+        .as_object_mut()
+        .with_context(|| format!("{file} is no JSON object"))?
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .with_context(|| format!("\"hooks\" in {file} is no object"))?;
+    let ours =
+        |command: &str| command.contains("imkr-agent-state") || command.starts_with("imkr status");
+    for groups in hooks.values_mut() {
+        if let Some(groups) = groups.as_array_mut() {
+            for group in groups.iter_mut() {
+                if let Some(list) = group["hooks"].as_array_mut() {
+                    list.retain(|h| !h["command"].as_str().is_some_and(ours));
+                }
+            }
+            groups.retain(|g| g["hooks"].as_array().is_none_or(|list| !list.is_empty()));
+        }
+    }
+    hooks.retain(|_, groups| groups.as_array().is_none_or(|g| !g.is_empty()));
+    Ok(hooks)
+}
+
+/// Puts `CODEX_HOOKS` into `hooks.json` in `codex`, Codex's directory
+/// (`$CODEX_HOME`, else `~/.codex`), when Codex is set up here, with the
+/// hook script beside it. Where they went, `None` without Codex.
+fn install_codex_hooks(codex: &Path) -> Result<Option<PathBuf>> {
+    use std::os::unix::fs::PermissionsExt;
+    if !codex.is_dir() {
+        return Ok(None);
+    }
+    let script = codex.join("imkr-agent-state.sh");
+    std::fs::write(&script, HOOK_SCRIPT)?;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+    let path = codex.join("hooks.json");
+    let mut config: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            std::fs::write(codex.join("hooks.json.bak-imkr"), &text)?;
+            serde_json::from_str(&text)
+                .with_context(|| format!("cannot read {}", path.display()))?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(e.into()),
+    };
+    let hooks = without_our_hooks(&mut config, "hooks.json")?;
+    for (event, line) in codex_hook_commands(&script) {
+        let entry = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
+        if let Some(groups) = entry.as_array_mut() {
+            groups.push(serde_json::json!({ "hooks": [{
+                "type": "command",
+                "command": line,
+                "timeout": 10,
+            }]}));
+        }
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&config)? + "\n")?;
+    Ok(Some(path))
+}
+
+/// The command each Codex hook event runs: the script with the state and
+/// `--agent codex`, which keeps its mail typed (`status`).
+fn codex_hook_commands(script: &Path) -> Vec<(&'static str, String)> {
+    CODEX_HOOKS
+        .iter()
+        .map(|&(event, state)| {
+            (
+                event,
+                format!("sh '{}' {state} --agent codex", script.display()),
+            )
+        })
+        .collect()
 }
 
 /// Removes `--pane N` from `args`, falling back to `$IMKR_PANE`, the pane
@@ -5070,6 +5161,45 @@ fn screen_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Codex's hooks go in beside the ones already there (herdr's here),
+    /// which keep their place: Codex trusts hooks by position (#9532).
+    #[test]
+    fn codex_hooks_join_the_ones_there() {
+        let dir = std::env::temp_dir().join(format!("imkr-codex-hooks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            install_codex_hooks(&dir).unwrap().is_none(),
+            "no Codex, nothing"
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        let herdr = serde_json::json!({ "hooks": { "Stop": [{ "hooks": [{
+            "type": "command", "command": "bash herdr-agent-state.sh idle", "timeout": 10,
+        }]}]}});
+        std::fs::write(dir.join("hooks.json"), herdr.to_string()).unwrap();
+        // Twice: the second one replaces imkr's own instead of adding them again.
+        install_codex_hooks(&dir).unwrap();
+        let path = install_codex_hooks(&dir).unwrap().unwrap();
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let stop = config["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 2, "{stop:?}");
+        assert_eq!(
+            stop[0]["hooks"][0]["command"],
+            "bash herdr-agent-state.sh idle"
+        );
+        let ours = stop[1]["hooks"][0]["command"].as_str().unwrap();
+        assert!(
+            ours.ends_with("imkr-agent-state.sh' idle --agent codex"),
+            "{ours}"
+        );
+        for (event, _) in CODEX_HOOKS {
+            assert!(config["hooks"][event].is_array(), "{event}");
+        }
+        assert!(dir.join("imkr-agent-state.sh").is_file());
+        assert!(dir.join("hooks.json.bak-imkr").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// What the hooks print so an agent gets its messages without anything
     /// being typed into its input line (#9379). Measured against Claude

@@ -158,7 +158,17 @@ Projekt-Slug: `imkr`
 - Claude-Hooks: `cli::HOOKS` (Ereignis, Matcher, Zustand) für `imkr hooks` und `--install`
   (Skript + Merge in settings.json, alte imkr-Hooks raus, Backup; StopFailure nur, wenn kein
   `claude` im PATH älter als `STOP_FAILURE_SINCE` 2.1.78 ist, sonst verwirft Claude Code die ganze
-  settings.json, #8751). pi: Erweiterung
+  settings.json, #8751). Codex (#9532, #1357): `CODEX_HOOKS` → `install_codex_hooks` mischt sie
+  in `$CODEX_HOME|~/.codex/hooks.json` **hinter** fremde (herdr): Codex vertraut Hooks je
+  Position (`hooks.state` in config.toml), neue müssen einmal freigegeben werden („Hooks need
+  review“, `t`) — nie selbst `trusted_hash` schreiben. Gemessen an Codex 0.163: Hooks laufen in
+  der Pane-Umgebung (`IMKR_PANE`), JSON wie Claude (`session_id`, `transcript_path`, `prompt`),
+  SessionStart erst mit dem ersten Prompt; die TUI selbst hält keine Rollout-Datei offen (der
+  geteilte `codex app-server` schreibt). Aufruf `imkr status S --agent codex`: Session, Zustand,
+  Prompt-Nachweis (`took_input` nimmt `prompt_took`, sobald `says_prompts`), aber **kein**
+  `mail_for_hook` — Codex-Post bleibt getippt (#1339 verifiziert). Resume mit Optionen:
+  `Config::resume_commands` setzt `agent_commands` vorn ein (`codex --yolo resume {session}`);
+  `switch_account` lehnt Codex ohne Session ab statt `--last`. pi: Erweiterung
   `integrations/pi/imkr-agent-state.ts` (`PI_EXTENSION`, `install_pi_extension` nach
   `~/.pi/agent/extensions/` wenn `~/.pi/agent` da), ruft `imkr status` mit `session_id` auf stdin;
   Resume `pi --session {session}`. Test ohne API: Node-Skript lädt die .ts (Type-Stripping) und
@@ -515,7 +525,12 @@ Projekt-Slug: `imkr`
   und Stop der Unit), `ExecStart=… boot run` → `client::revive_stopped` (liefert jetzt je Session
   eine Zeile fürs Journal). `boot run` setzt `boot::ENV` (`IMKR_AT_BOOT`), der Server nimmt es
   in `server::run` heraus (`take_env`, Panes erben es nicht) und `restore` tippt dann **keinen**
-  Resume-Befehl — `imkr revive` und der Client-Weg tun das bei `resume = auto` sehr wohl.
+  Resume-Befehl, sondern legt ihn in `App::resume_later` (#1357; `saved()` speichert daraus den
+  Agenten weiter, sonst kannte das nächste Speichern nur die Shell und der Agent war für immer
+  weg; im Handover). `attach` des ersten Clients → `resume_left_over` tippt ihn, nur wo
+  `Pane::shell_in_front`. `imkr revive` und der Client-Weg tippen sofort. Ohne bekannte Session
+  (`SavedPane::resume_command` = None, aber `agent`) sagt `restore` es (`not_resumed`, Flash +
+  stderr, beim Boot über `resume_note` beim ersten Attach) — nie still.
   `boot::gaps` (kein systemd: `/run/systemd/system`; kein Linger: `/var/lib/systemd/linger/$USER`;
   macOS benannt) → Flash `boot::told`, `imkr boot [status]`. E2E: Testwelt **ohne**
   `IMKR_SOCKET` mit eigenem `XDG_CONFIG_HOME` (sonst schriebe der Server die echte Unit),

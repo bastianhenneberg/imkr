@@ -165,8 +165,12 @@ imkr saves the layout to `~/.local/state/imkr/session.json` while it runs: windo
 splits, floating panes and each pane's directory. If the server dies with the machine, the next
 `imkr` brings the layout back, shells start in their old directories, and agents are resumed:
 Claude Code, Codex and pi by the session id their hooks report (`claude --resume <id>`,
-`pi --session <id>`), opencode,
-aider, goose and cursor-agent with their last conversation in that directory. *Resume agents
+`codex resume <id>`, `pi --session <id>`), opencode,
+aider, goose and cursor-agent with their last conversation in that directory. They start with
+the options from `[agent_commands]`: with `codex = "codex --yolo"` that is
+`codex --yolo resume <id>`. An agent whose session imkr does not know — Codex without its hooks
+(`imkr hooks --install`), or one that was never asked anything — is not guessed at: imkr says
+which pane it was in, and `codex resume` there lets you choose. *Resume agents
 after a restart* in the settings starts them, only types the command for you to start with
 Enter, or leaves them off; `[resume_commands]` in the config sets the command per agent
 (`{session}` for the id, `""` turns one off), e.g. `gemini = "gemini --resume latest"`. Each pane's history
@@ -211,9 +215,11 @@ On a machine nobody sits at, a server say, nobody runs that first `imkr`. There,
 `settings sync` does not carry it). imkr then keeps a systemd user unit,
 `~/.config/systemd/user/imkr-revive.service`, which runs `imkr boot run` when the user's systemd
 starts: the sessions that ran when the machine went down come back with their windows, splits,
-history and shells. Closed ones stay closed, and no agent starts on its own, whatever *Resume
-agents after a restart* says — nobody is there to watch it; the panes keep their agent's session,
-and `Ctrl+B S` shows the sessions as running. Turning the setting off removes the unit.
+history and shells. Closed ones stay closed, and no agent starts at boot, whatever *Resume
+agents after a restart* says — nobody is there to watch it. The panes keep their agent and its
+session, and the agents are picked up again when the first client attaches (where the shell
+is still in front), as *Resume agents after a restart* says. `Ctrl+B S` shows the sessions as
+running. Turning the setting off removes the unit.
 
 The user's systemd starts at boot only with linger; without it, at the first login. imkr says
 what is missing, in the settings row (`on · no linger`), when the setting changes, and in

@@ -720,6 +720,11 @@ impl Pane {
             .or_else(|| self.child.process_id())
     }
 
+    /// Whether the pane's own shell is in front, nothing started from it.
+    pub fn shell_in_front(&self) -> bool {
+        self.child.process_id().is_some() && self.foreground_pid() == self.child.process_id()
+    }
+
     /// Ends what runs in front of the shell (SIGTERM to its process
     /// group), e.g. an agent to start again in another account. False when
     /// the shell itself is in front.

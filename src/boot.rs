@@ -5,8 +5,8 @@
 //! systemd starts — at boot only with linger, otherwise at the first login.
 //! What it brings back is what `revive_sessions` brings back: the sessions
 //! that ran when the machine went down and stopped with it, layout and
-//! shells, never closed ones, and at boot never agents (`ENV`): the resume
-//! command is not even typed.
+//! shells, never closed ones, and at boot never agents (`ENV`): their
+//! resume command waits for the first client (`App::resume_later`, #1357).
 //!
 //! The unit is the setting's mirror: written while it is on, removed (only
 //! ours, recognised by `MARK`) while it is off, by the server whenever it
@@ -27,7 +27,8 @@ pub const UNIT: &str = "imkr-revive.service";
 
 /// Set for a server `imkr boot run` starts: it brings back the layout and
 /// the shells, but types no agent's resume command, whatever `resume`
-/// says — nobody is there to see an agent start (#9619).
+/// says — nobody is there to see an agent start (#9619). It waits for the
+/// first client instead (#1357).
 pub const ENV: &str = "IMKR_AT_BOOT";
 
 static AT_BOOT: AtomicBool = AtomicBool::new(false);
