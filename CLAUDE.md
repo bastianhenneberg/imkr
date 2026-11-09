@@ -418,8 +418,14 @@ Projekt-Slug: `imkr`
   `Places::polled` trennt „noch nicht gefragt“ von „läuft nicht“), `App::by_place` (Maschine
   **wie geschrieben**, `cli::address_parts` ohne das Wegfiltern des eigenen Namens),
   `App::by_label`, `App::boss_map` (einmal je Adresse, nicht je Zeile je Frame), freie Funktion
-  `tree_order` (Kinder direkt hinter dem Eltern-Eintrag, nur innerhalb **eines** Rechners: die
-  Listen gruppieren nach Rechner und eine Gruppe muss zusammenhängen; Zyklen bleiben Wurzeln).
+  `tree_order` (Kinder direkt hinter dem Eltern-Eintrag, Zyklen bleiben Wurzeln). Seit #9621 auch
+  **über Rechner**: `by_place_from` liest die Adresse aus Sicht des Schreibers (ohne Rechner =
+  dessen Rechner, unser Name → `None`, sonst der Host), die Biene wandert unter ihren Keeper.
+  Weil die Listen nach Rechner gruppieren und eine Gruppe zusammenhängen muss, kommt jede Zeile
+  in die Gruppe ihrer **Wurzel** (`root_hosts`): Sidebar setzt `SessionRow::machine` darauf und
+  `SessionRow::elsewhere` = eigener Rechner (`App::machine_word`, „· codingmachine“ hinter dem
+  Namen), `Ctrl+B S` hängt ihn an den Titel und nimmt das eigene Rechner-Label aus dem Hinweis.
+  Ziel (`host`) bleibt das der Biene. Auftraggeber nicht in der Liste → Wurzel in eigener Gruppe.
   Sidebar `SessionRow::by`/`depth` (`↳`, Unterzeile `by …`), `Ctrl+B S` über `SessionEntry`
   (6. Feld), `Ctrl+B O` über `App::commissioned`/`crew_session` (Baum **über** Rechner, Gruppe
   je Auftraggeber, auch wenn er keine Nachricht geschickt hat). Verwaist = nur Marke, nie Ende.

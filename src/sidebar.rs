@@ -66,8 +66,11 @@ pub struct SessionRow {
     /// session is not right above it in the list (#9087).
     pub by: Option<String>,
     /// How far under its orchestrator it sits: 0 for a session of its
-    /// own, 1 and more for one started for another on the same machine.
+    /// own, 1 and more for one started for another.
     pub depth: usize,
+    /// Its own machine, when that is not the one of the group it sits in:
+    /// a worker under an orchestrator on another machine (#9621).
+    pub elsewhere: Option<String>,
     /// A keeper's session (#9133): ⚑ in front of its name.
     pub keeper: bool,
 }
@@ -344,16 +347,27 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             } else {
                 String::new()
             };
-            let name = fit(
-                &session.name,
-                width.saturating_sub(
-                    right.chars().count() + 1 + lead.chars().count() + mark.chars().count(),
-                ),
+            // A worker from another machine names it after its own name,
+            // the name first when the width runs out (#9621).
+            let room = width.saturating_sub(
+                right.chars().count() + 1 + lead.chars().count() + mark.chars().count(),
             );
+            let name = fit(&session.name, room);
+            let place = session
+                .elsewhere
+                .as_ref()
+                .map(|m| {
+                    fit(
+                        &format!(" · {m}"),
+                        room.saturating_sub(name.chars().count()),
+                    )
+                })
+                .unwrap_or_default();
             let pad = width.saturating_sub(
                 lead.chars().count()
                     + mark.chars().count()
                     + name.chars().count()
+                    + place.chars().count()
                     + right.chars().count(),
             );
             let style = if session.offline || session.dormant {
@@ -367,6 +381,7 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
                 Span::styled(lead, style),
                 Span::styled(mark, style.fg(t.accent)),
                 Span::styled(name, style),
+                Span::styled(place, dim),
                 Span::raw(" ".repeat(pad)),
             ];
             for (style, part) in parts {
@@ -1037,6 +1052,7 @@ mod tests {
             dormant: false,
             by: None,
             depth: 0,
+            elsewhere: None,
             keeper: false,
         };
         let mut data = data();
@@ -1101,6 +1117,7 @@ mod tests {
                 dormant: false,
                 by: None,
                 depth: 0,
+                elsewhere: None,
                 keeper: true,
             },
             SessionRow {
@@ -1114,6 +1131,7 @@ mod tests {
                 dormant: false,
                 by: None,
                 depth: 1,
+                elsewhere: None,
                 keeper: false,
             },
             SessionRow {
@@ -1127,6 +1145,7 @@ mod tests {
                 dormant: false,
                 by: Some("by laptop:imker/0 — gone".into()),
                 depth: 0,
+                elsewhere: None,
                 keeper: false,
             },
         ];
@@ -1143,6 +1162,50 @@ mod tests {
         assert!(find("  lonely").is_some());
         let orphan = find("by laptop:imker/0 — gone").unwrap();
         assert_eq!(orphan.1, Some(Target::Session(2)));
+    }
+
+    /// A worker from another machine sits under its orchestrator, in its
+    /// group, and names its own machine; clicking it goes there (#9621).
+    #[test]
+    fn workers_from_other_machines_name_their_machine() {
+        let mut data = data();
+        let row = |host: Option<&str>, name: &str, depth, elsewhere: Option<&str>| SessionRow {
+            host: host.map(str::to_owned),
+            machine: Some("⌂ laptop".into()),
+            name: name.into(),
+            current: false,
+            dots: vec![(AgentState::Working, Some(1))],
+            problem: None,
+            offline: false,
+            dormant: false,
+            by: None,
+            depth,
+            elsewhere: elsewhere.map(str::to_owned),
+            keeper: depth == 0,
+        };
+        data.sessions = vec![
+            row(None, "imker", 0, None),
+            row(
+                Some("codingmachine"),
+                "brain-waechter",
+                1,
+                Some("codingmachine"),
+            ),
+            row(None, "kurz", 1, None),
+        ];
+        let rows: Vec<(String, Option<Target>)> = lines(&data, 40)
+            .into_iter()
+            .map(|(line, target)| (line.to_string(), target))
+            .collect();
+        let at = |text: &str| rows.iter().position(|(line, _)| line.contains(text));
+        let bee = at("↳ brain-waechter · codingmachine").expect("in the line");
+        assert_eq!(rows[bee].1, Some(Target::Session(1)));
+        // Its state shows as for every other session.
+        assert!(rows[bee].0.contains('❶'), "{rows:#?}");
+        // One heading for the group, and no group of its own.
+        assert_eq!(rows.iter().filter(|(l, _)| l.contains("laptop")).count(), 1);
+        assert!(!rows.iter().any(|(l, _)| l.trim() == "⇄ codingmachine"));
+        assert!(at("imker") < Some(bee) && Some(bee) < at("↳ kurz"));
     }
 
     #[test]

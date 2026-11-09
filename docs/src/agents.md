@@ -104,9 +104,23 @@ Sessions
     by laptop:imker/0 — gone
 ```
 
-Only within one machine, because those lists group by machine; a session whose orchestrator
-sits on another one keeps its place and names it instead. `Ctrl+B O` shows the whole tree
-across machines, orchestrator above and its sessions below with their state.
+Across machines as well: a worker on another machine than its orchestrator leaves its own
+machine's group and sits under the orchestrator, with its machine after its name, its state
+and its dots as anywhere else. It is listed there only, not a second time in its own group;
+Enter or a click goes there as before.
+
+```text
+⌂ laptop
+  ▸ ⚑ imker
+    ↳ brain-waechter · codingmachine  ❶
+      ↳ enkel · codingmachine         ❶
+⇄ codingmachine
+    solo
+```
+
+When the orchestrator cannot be seen — gone, or its machine does not answer — the worker stays
+in its own machine's group and names it underneath. `Ctrl+B O` shows the same tree with the
+messages between them.
 
 **When the orchestrator is gone** — its pane closed, its session ended — the session says
 `— gone` and goes back to the top level. It keeps running: the mark says who asked for the

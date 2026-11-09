@@ -514,10 +514,13 @@ struct Places {
 /// Orders sessions so that each one that was started for another follows
 /// it right away, and says how deep each one sits (#9087).
 ///
-/// Only sessions of the same machine are put under each other: every list
-/// groups by machine, and a group has to stay in one piece
-/// (`MenuItem::group`). One whose orchestrator sits elsewhere stays a
-/// root and says `by …` instead.
+/// Across machines as well (#9621): a worker on another machine than its
+/// orchestrator moves out of its own machine's group and under it. The
+/// lists group by machine and a group has to stay in one piece
+/// (`MenuItem::group`), so the callers file every session under the
+/// machine of its root (`root_hosts`) and name its own machine in the
+/// line. One whose orchestrator is not in the list stays a root and says
+/// `by …` instead.
 fn tree_order<T>(
     items: Vec<T>,
     key: impl Fn(&T) -> (Option<String>, String),
@@ -567,6 +570,44 @@ fn tree_order<T>(
         .into_iter()
         .filter_map(|(i, depth)| Some((taken[i].take()?, depth)))
         .collect()
+}
+
+/// The machine of the root each session of a `tree_order` sits under: the
+/// group it is listed in (#9621). A worker from another machine belongs to
+/// its orchestrator's group, not to its own.
+fn root_hosts<T>(
+    ordered: &[(T, usize)],
+    host: impl Fn(&T) -> Option<String>,
+) -> Vec<Option<String>> {
+    let mut root = None;
+    ordered
+        .iter()
+        .map(|(item, depth)| {
+            if *depth == 0 {
+                root = host(item);
+            }
+            root.clone()
+        })
+        .collect()
+}
+
+/// The session an address names, as a place in the lists here (#9087,
+/// #9621): which machine (`None` for this one) and which session. `host`
+/// is the machine of whoever wrote the address — a session on another
+/// machine names its own machine, and an address without one means that
+/// machine, not this. `ours` says whether a machine name is this machine.
+fn by_place_from(by: &str, host: Option<&str>, ours: impl Fn(&str) -> bool) -> Option<Place> {
+    let (machine, session, _) = crate::cli::address_parts(by).ok()?;
+    let name = session?;
+    let host = match machine {
+        // Written without a machine, or naming the writer's own.
+        None => host.map(str::to_owned),
+        Some(m) if host.map_or_else(|| ours(&m), |h| h == m) => host.map(str::to_owned),
+        // Another machine: this one, or one the lists know by that name.
+        Some(m) if ours(&m) => None,
+        Some(m) => Some(m),
+    };
+    Some(Place { host, name })
 }
 
 /// What a session's `by` address points at, as far as this machine can
@@ -5351,6 +5392,7 @@ impl App {
             // once the whole list is in (`tree_order`).
             by: Some(info.by.clone()).filter(|by| !by.is_empty()),
             depth: 0,
+            elsewhere: None,
             host,
             name: info.name.clone(),
             problem: None,
@@ -5381,6 +5423,7 @@ impl App {
                         dormant: false,
                         by: None,
                         depth: 0,
+                        elsewhere: None,
                         keeper: false,
                     });
                 }
@@ -5405,6 +5448,7 @@ impl App {
                         dormant: false,
                         by: None,
                         depth: 0,
+                        elsewhere: None,
                         keeper: false,
                     });
                     // What ran there when it last answered, greyed out.
@@ -5421,6 +5465,7 @@ impl App {
                             dormant: false,
                             by: None,
                             depth: 0,
+                            elsewhere: None,
                             keeper: false,
                         });
                     }
@@ -5450,10 +5495,18 @@ impl App {
                 Some((place.host, place.name))
             },
         );
+        // A worker from another machine sits in its orchestrator's group
+        // and names its own machine in the line (#9621).
+        let roots = root_hosts(&ordered, |row| row.host.clone());
         ordered
             .into_iter()
-            .map(|(mut row, depth)| {
+            .zip(roots)
+            .map(|((mut row, depth), root)| {
                 row.depth = depth;
+                if row.host != root {
+                    row.elsewhere = Some(self.machine_word(row.host.as_deref()));
+                    row.machine = self.machine_label(root.as_deref());
+                }
                 // Under its orchestrator the arrow says it; otherwise the
                 // line underneath names it, and says when it is gone.
                 row.by = match (depth, row.by.take()) {
@@ -8041,112 +8094,128 @@ impl App {
                 Some((found.host, found.name))
             },
         );
+        // A worker from another machine is listed in its orchestrator's
+        // group and names its own machine after its name (#9621).
+        let groups = root_hosts(&entries, |(place, ..)| place.host.clone());
         let (places, items): (Vec<Place>, Vec<menu::MenuItem>) = entries
             .into_iter()
+            .zip(groups.iter())
             .enumerate()
-            .map(|(i, ((place, hint, agents, dormant, quiet, by), depth))| {
-                if let Some(dormant) = dormant {
-                    let hint = if hint.is_empty() {
-                        format!("{dormant} · Enter brings it back")
-                    } else {
-                        format!("{dormant} · {hint}")
+            .map(
+                |(i, (((place, hint, agents, dormant, quiet, by), depth), group))| {
+                    if let Some(dormant) = dormant {
+                        let hint = if hint.is_empty() {
+                            format!("{dormant} · Enter brings it back")
+                        } else {
+                            format!("{dormant} · {hint}")
+                        };
+                        // Who it was started for, also while it is asleep.
+                        let hint = match by {
+                            Some(by) => format!("{hint} · by {by}"),
+                            None => hint,
+                        };
+                        let item = menu::MenuItem {
+                            key: list_key_char(i),
+                            title: format!("◌ {}{}", "  ".repeat(depth), place.name),
+                            hint,
+                            danger: false,
+                            apart: false,
+                            color: Some(theme::current().muted),
+                            group: None,
+                            marks: Vec::new(),
+                        };
+                        return (place, item);
+                    }
+                    // What its agents do, as the sidebar marks them: a dot per
+                    // agent in its state's colour.
+                    let info = protocol::SessionInfo {
+                        agents,
+                        ..Default::default()
                     };
-                    // Who it was started for, also while it is asleep.
-                    let hint = match by {
-                        Some(by) => format!("{hint} · by {by}"),
-                        None => hint,
+                    let urgent = info.urgent().map(|(state, _)| state);
+                    let dots = if place.host.is_none() && place.name == protocol::session_name() {
+                        self.own_dots()
+                    } else {
+                        self.session_info(&place)
+                            .map_or_else(|| info.dots(), |found| found.dots())
+                    };
+                    let marks: Vec<(ratatui::style::Color, String)> = sidebar::agent_dots(&dots)
+                        .into_iter()
+                        .filter_map(|(style, dot)| Some((style.fg?, dot)))
+                        .collect();
+                    // How long its agents have been quiet: "2h ago".
+                    let mut counts = String::new();
+                    if let Some(quiet) = quiet.filter(|&q| q >= 60) {
+                        let ago = sidebar::age(Duration::from_secs(quiet));
+                        counts = format!("{ago} ago");
+                    }
+                    let hint = match (counts.is_empty(), hint.is_empty()) {
+                        (true, _) => hint,
+                        (false, true) => counts,
+                        (false, false) => format!("{counts} · {hint}"),
+                    };
+                    // Under its orchestrator the arrow says it; a session
+                    // whose orchestrator sits elsewhere or is gone says so.
+                    let by = by.filter(|_| depth == 0).map(|by| {
+                        let boss = bosses.get(&by).cloned().unwrap_or(Boss::Unknown);
+                        Self::by_label(&by, &boss)
+                    });
+                    let hint = match (by, hint.is_empty()) {
+                        (None, _) => hint,
+                        (Some(by), true) => by,
+                        (Some(by), false) => format!("{hint} · {by}"),
+                    };
+                    let under = "  ".repeat(depth);
+                    let arrow = if depth > 0 { "↳ " } else { "" };
+                    let elsewhere = if place.host == *group {
+                        String::new()
+                    } else {
+                        format!(" · {}", self.machine_word(place.host.as_deref()))
+                    };
+                    let keeper = keepers.contains(&place);
+                    let arrow = if keeper {
+                        format!("{arrow}{} ", crate::keeper::MARK)
+                    } else {
+                        arrow.to_owned()
                     };
                     let item = menu::MenuItem {
-                        key: list_key_char(i),
-                        title: format!("◌ {}{}", "  ".repeat(depth), place.name),
+                        key: if i < 9 {
+                            char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
+                        } else {
+                            ' '
+                        },
+                        title: match urgent {
+                            Some(state) => {
+                                format!(
+                                    "{} {under}{arrow}{}{elsewhere}",
+                                    state.symbol(),
+                                    place.name
+                                )
+                            }
+                            None => format!("  {under}{arrow}{}{elsewhere}", place.name),
+                        },
                         hint,
                         danger: false,
                         apart: false,
-                        color: Some(theme::current().muted),
+                        color: urgent
+                            .and_then(|state| sidebar::state_style(state).fg)
+                            .or_else(|| keeper.then(|| theme::current().accent)),
                         group: None,
-                        marks: Vec::new(),
+                        marks,
                     };
-                    return (place, item);
-                }
-                // What its agents do, as the sidebar marks them: a dot per
-                // agent in its state's colour.
-                let info = protocol::SessionInfo {
-                    agents,
-                    ..Default::default()
-                };
-                let urgent = info.urgent().map(|(state, _)| state);
-                let dots = if place.host.is_none() && place.name == protocol::session_name() {
-                    self.own_dots()
-                } else {
-                    self.session_info(&place)
-                        .map_or_else(|| info.dots(), |found| found.dots())
-                };
-                let marks: Vec<(ratatui::style::Color, String)> = sidebar::agent_dots(&dots)
-                    .into_iter()
-                    .filter_map(|(style, dot)| Some((style.fg?, dot)))
-                    .collect();
-                // How long its agents have been quiet: "2h ago".
-                let mut counts = String::new();
-                if let Some(quiet) = quiet.filter(|&q| q >= 60) {
-                    let ago = sidebar::age(Duration::from_secs(quiet));
-                    counts = format!("{ago} ago");
-                }
-                let hint = match (counts.is_empty(), hint.is_empty()) {
-                    (true, _) => hint,
-                    (false, true) => counts,
-                    (false, false) => format!("{counts} · {hint}"),
-                };
-                // Under its orchestrator the arrow says it; a session
-                // whose orchestrator sits elsewhere or is gone says so.
-                let by = by.filter(|_| depth == 0).map(|by| {
-                    let boss = bosses.get(&by).cloned().unwrap_or(Boss::Unknown);
-                    Self::by_label(&by, &boss)
-                });
-                let hint = match (by, hint.is_empty()) {
-                    (None, _) => hint,
-                    (Some(by), true) => by,
-                    (Some(by), false) => format!("{hint} · {by}"),
-                };
-                let under = "  ".repeat(depth);
-                let arrow = if depth > 0 { "↳ " } else { "" };
-                let keeper = keepers.contains(&place);
-                let arrow = if keeper {
-                    format!("{arrow}{} ", crate::keeper::MARK)
-                } else {
-                    arrow.to_owned()
-                };
-                let item = menu::MenuItem {
-                    key: if i < 9 {
-                        char::from_digit(i as u32 + 1, 10).unwrap_or(' ')
-                    } else {
-                        ' '
-                    },
-                    title: match urgent {
-                        Some(state) => {
-                            format!("{} {under}{arrow}{}", state.symbol(), place.name)
-                        }
-                        None => format!("  {under}{arrow}{}", place.name),
-                    },
-                    hint,
-                    danger: false,
-                    apart: false,
-                    color: urgent
-                        .and_then(|state| sidebar::state_style(state).fg)
-                        .or_else(|| keeper.then(|| theme::current().accent)),
-                    group: None,
-                    marks,
-                };
-                (place, item)
-            })
+                    (place, item)
+                },
+            )
             .unzip();
         // Grouped by machine under its name, which leaves the hints; what
         // does not run is a group of its own at the end.
         let mut grouped: Vec<(Place, menu::MenuItem)> = places
             .into_iter()
             .zip(items)
-            .map(|(place, mut item)| {
+            .zip(groups)
+            .map(|((place, mut item), group)| {
                 let asleep = item.title.starts_with('◌');
-                let machine = self.machine_label(place.host.as_deref());
+                let machine = self.machine_label(group.as_deref());
                 let archive = archive_view
                     .then(|| {
                         archive_of
@@ -8159,12 +8228,17 @@ impl App {
                 } else if asleep {
                     item.group = Some("◌ not running".into());
                 } else if let Some(machine) = machine {
-                    item.hint = item
-                        .hint
-                        .replace(&format!(" · {machine}"), "")
-                        .replace(&machine, "")
-                        .trim_start_matches(" · ")
-                        .to_owned();
+                    // Its own machine as well: a worker from another one
+                    // names it in the title already (#9621).
+                    let own = self.machine_label(place.host.as_deref());
+                    for label in std::iter::once(&machine).chain(own.as_ref()) {
+                        item.hint = item
+                            .hint
+                            .replace(&format!(" · {label}"), "")
+                            .replace(label.as_str(), "")
+                            .trim_start_matches(" · ")
+                            .to_owned();
+                    }
                     item.group = Some(machine);
                 }
                 (place, item)
@@ -10761,26 +10835,19 @@ impl App {
         }
     }
 
-    /// The session an address names, as a place in the lists here: which
-    /// machine (`None` for this one) and which session. `host` is the
-    /// machine of whoever wrote the address — a session on another
-    /// machine names its own machine, and `machine_name()` here is not
-    /// it (#9087).
-    ///
-    /// `None` when the address is no address, or names a machine other
-    /// than `host`: such a session stays where it is and says `by …`
-    /// instead of moving under an orchestrator somewhere else.
+    /// The session an address names, as a place in the lists here, also on
+    /// another machine (#9621); see `by_place_from`.
     fn by_place(&self, by: &str, host: Option<&str>) -> Option<Place> {
-        let (machine, session, _) = crate::cli::address_parts(by).ok()?;
-        let name = session?;
-        let here = machine.as_deref().is_none_or(|m| match host {
-            Some(host) => m == host,
-            None => m == protocol::machine_name() || m == protocol::hostname(),
-        });
-        here.then(|| Place {
-            host: host.map(str::to_owned),
-            name,
+        let own = self.own_name();
+        by_place_from(by, host, |m| {
+            m == protocol::machine_name() || m == protocol::hostname() || m == own
         })
+    }
+
+    /// A machine's name for a line in a list: the host as the lists know
+    /// it, or this machine as the user knows it.
+    fn machine_word(&self, host: Option<&str>) -> String {
+        host.map_or_else(|| self.own_name(), str::to_owned)
     }
 
     /// `by laptop:imker/0`, without this machine's name when it is this
@@ -16548,7 +16615,7 @@ mod tests {
     }
 
     /// Sessions started for another sit under it, in the order they came,
-    /// and only within the same machine (#9087).
+    /// also when the orchestrator runs on another machine (#9087, #9621).
     #[test]
     fn worker_sessions_come_under_their_orchestrator() {
         // (machine, name, who it works for)
@@ -16564,16 +16631,18 @@ mod tests {
             of(None, "beta", Some((None, "imker"))),
             of(Some("laptop"), "work", None),
             of(None, "alpha", Some((None, "imker"))),
-            // Its orchestrator is on another machine: stays a root.
+            // Its orchestrator is on another machine: under it all the same.
             of(None, "far", Some((Some("laptop"), "work"))),
             of(None, "deep", Some((None, "alpha"))),
+            // A worker of that worker, back on laptop.
+            of(Some("laptop"), "farther", Some((None, "far"))),
+            // Its orchestrator is not in the list: a root of its own.
+            of(Some("laptop"), "lonely", Some((Some("gone"), "x"))),
         ];
         let ordered = super::tree_order(
             items,
             |(m, n, _)| (m.clone(), n.clone()),
-            // What `App::by_place` does: an orchestrator on another
-            // machine is none for this list.
-            |(m, _, by)| by.clone().filter(|(there, _)| there == m),
+            |(_, _, by)| by.clone(),
         );
         let seen: Vec<(&str, usize)> = ordered
             .iter()
@@ -16588,9 +16657,70 @@ mod tests {
                 ("deep", 2),
                 // Roots keep the order they came in, machine by machine.
                 ("work", 0),
-                ("far", 0),
+                ("far", 1),
+                ("farther", 2),
+                ("lonely", 0),
             ]
         );
+        // Each is listed in the group of its root, so that every machine's
+        // group stays in one piece: `far` in laptop's, `farther` as well.
+        let groups = super::root_hosts(&ordered, |(m, _, _)| m.clone());
+        let laptop = Some(String::from("laptop"));
+        assert_eq!(
+            groups,
+            vec![
+                None,
+                None,
+                None,
+                None,
+                laptop.clone(),
+                laptop.clone(),
+                laptop.clone(),
+                laptop
+            ]
+        );
+    }
+
+    /// Which session a `by` address means depends on who wrote it: an
+    /// address without a machine is the writer's, one naming this machine
+    /// is a session here (#9621).
+    #[test]
+    fn by_addresses_are_read_as_their_writer_meant_them() {
+        let ours = |m: &str| m == "laptop";
+        let place = |host: Option<&str>, name: &str| {
+            Some(super::Place {
+                host: host.map(str::to_owned),
+                name: name.to_owned(),
+            })
+        };
+        let from = |by: &str, host: Option<&str>| super::by_place_from(by, host, ours);
+        // A bee on codingmachine, started by the keeper here.
+        assert_eq!(
+            from("laptop:imker/0", Some("codingmachine")),
+            place(None, "imker")
+        );
+        // Written there without a machine: one of codingmachine's sessions.
+        assert_eq!(
+            from("imker/0", Some("codingmachine")),
+            place(Some("codingmachine"), "imker")
+        );
+        assert_eq!(
+            from("codingmachine:imker/0", Some("codingmachine")),
+            place(Some("codingmachine"), "imker")
+        );
+        // A session here working for one on another machine.
+        assert_eq!(
+            from("codingmachine:keeper/0", None),
+            place(Some("codingmachine"), "keeper")
+        );
+        assert_eq!(from("laptop:imker/0", None), place(None, "imker"));
+        // A third machine, as the lists know it.
+        assert_eq!(
+            from("third:keeper/0", Some("codingmachine")),
+            place(Some("third"), "keeper")
+        );
+        // No session in it: nothing to sit under.
+        assert_eq!(from("claude", None), None);
     }
 
     /// Two sessions that started each other must not take the list with
