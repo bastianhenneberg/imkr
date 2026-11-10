@@ -124,8 +124,8 @@ Commands:
                 for machines set up by hand before pairing existed
   hosts sync    the latest release on every one of them: installed where
                 imkr is missing, upgraded with its sessions elsewhere
-  hosts vpn     the machines of your Tailscale and NetBird networks, and
-                which imkr uses (also `hosts tailnet`)
+  hosts vpn     the machines of your Tailscale network, and which imkr
+                uses (also `hosts tailnet`); NetBird peers are not listed
   settings sync [--yes] [HOST…]
                 settings with the other machines: config (without name,
                 hosts, web), templates, layouts, own plugins; what one

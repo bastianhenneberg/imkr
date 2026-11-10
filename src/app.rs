@@ -505,9 +505,6 @@ struct Places {
     last_seen: HashMap<String, Vec<String>>,
     /// Machines of the Tailscale network that are online, as suggestions.
     tailnet: Vec<String>,
-    /// Machines of the NetBird network ssh reached, without imkr yet, as
-    /// suggestions (#9648).
-    netbird: Vec<crate::machines::Suggestion>,
     /// The devices that have `imkr web` of this machine open.
     web: Vec<crate::web::Seen>,
     /// Whether the thread has filled this in once. Before it has, an
@@ -8515,18 +8512,8 @@ impl App {
             .collect();
         let first_suggested = machines.len();
         machines.extend(suggested.into_iter().map(Some));
-        // Those of the NetBird network ssh reached, which have no imkr yet.
-        let netbird: Vec<crate::machines::Suggestion> = self
-            .places
-            .lock()
-            .unwrap()
-            .netbird
-            .iter()
-            .filter(|peer| !machines.contains(&Some(peer.name.clone())))
-            .cloned()
-            .collect();
-        let first_netbird = machines.len();
-        machines.extend(netbird.iter().map(|peer| Some(peer.name.clone())));
+        // No NetBird peers: that network is shared with other people's
+        // machines, and nobody installing imkr may see them all (#9648).
         let items = machines
             .iter()
             .enumerate()
@@ -8539,8 +8526,6 @@ impl App {
                     title: label,
                     hint: if host.is_none() {
                         "this machine".into()
-                    } else if i >= first_netbird {
-                        "in your NetBird network, not tried: picking it connects by ssh".into()
                     } else if i >= first_suggested {
                         "in your tailnet, not used with imkr yet".into()
                     } else {
@@ -8549,9 +8534,7 @@ impl App {
                     danger: false,
                     apart: false,
                     color: None,
-                    group: if i >= first_netbird {
-                        Some("NetBird".to_owned())
-                    } else if i >= first_suggested {
+                    group: if i >= first_suggested {
                         Some("Tailscale".to_owned())
                     } else {
                         None
@@ -8908,12 +8891,6 @@ impl App {
             KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
             _ => return,
         };
-        if let Some(Some(host)) = machines.get(pick) {
-            let suggested = self.places.lock().unwrap().netbird.clone();
-            if let Some(peer) = suggested.iter().find(|p| &p.name == host) {
-                crate::machines::reach_suggested(peer);
-            }
-        }
         match machines.get(pick).cloned() {
             Some(host) if self.hosting => {
                 self.mode = Mode::Normal;
@@ -15332,10 +15309,9 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
             }
             if found_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {
                 found_at = Some(Instant::now());
-                // Machines found since, through NetBird or the others,
-                // become hosts here; the next round asks them.
-                let suggested = crate::machines::settle();
-                places.lock().unwrap().netbird = suggested;
+                // Machines found since, through the register of the
+                // others, become hosts here; the next round asks them.
+                crate::machines::settle();
             }
             if hosts_at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY) {
                 hosts_at = Some(Instant::now());

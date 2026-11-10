@@ -51,58 +51,6 @@ pub const HOSTS_ENV: &str = "IMKR_HOSTS_TOO";
 /// notes the address that machine came from.
 pub const CALLER_ENV: &str = "IMKR_CALLER";
 
-/// A machine of a NetBird network.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Peer {
-    /// The first label of its NetBird name.
-    pub name: String,
-    pub fqdn: String,
-    pub address: String,
-    /// Connected or idle (lazy connections are idle until used); not when
-    /// NetBird is still trying to reach it.
-    pub online: bool,
-}
-
-/// The other machines of the NetBird network this one is in; empty
-/// without NetBird.
-pub fn netbird_peers() -> Vec<Peer> {
-    let Ok(output) = Command::new("netbird")
-        .args(["status", "--json"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-    else {
-        return Vec::new();
-    };
-    let Ok(status) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-        return Vec::new();
-    };
-    parse_netbird(&status)
-}
-
-fn parse_netbird(status: &serde_json::Value) -> Vec<Peer> {
-    let mut peers: Vec<Peer> = status["peers"]["details"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|peer| {
-            let fqdn = peer["fqdn"].as_str()?.trim_end_matches('.').to_lowercase();
-            let name = fqdn.split('.').next().filter(|n| !n.is_empty())?.to_owned();
-            let address = peer["netbirdIp"].as_str()?.split('/').next()?.to_owned();
-            address.parse::<IpAddr>().ok()?;
-            let online = matches!(peer["status"].as_str(), Some("Connected" | "Idle"));
-            Some(Peer {
-                name,
-                fqdn,
-                address,
-                online,
-            })
-        })
-        .collect();
-    peers.sort_by(|a, b| a.name.cmp(&b.name));
-    peers
-}
-
 /// Whether `address` is in 100.64.0.0/10, where Tailscale and NetBird
 /// hand out theirs: a machine of the user's own VPN.
 pub fn in_vpn(address: &str) -> bool {
@@ -729,8 +677,9 @@ fn try_again() -> u64 {
 /// every minute: removed machines leave the hosts, renamed ones follow
 /// their new name, and the machines not shown yet are tried (ssh in batch
 /// mode, `imkr ls --json`) and become hosts once imkr answers there.
-/// Returns the NetBird peers to suggest.
-pub fn settle() -> Vec<Suggestion> {
+/// Machines nobody named are never looked for: the VPN is shared with
+/// other people's machines, which an imkr must not list (#9648).
+pub fn settle() {
     let entries = register();
     let own_id = crate::protocol::machine_id();
     let here = crate::protocol::machine_name();
@@ -804,7 +753,6 @@ pub fn settle() -> Vec<Suggestion> {
         }
     }
     let _ = write_json(tried_file(), &tried);
-    suggestions()
 }
 
 /// Makes `entry` a host here, with its address where ssh does not know
@@ -933,62 +881,19 @@ fn reach(entry: &Entry) -> Option<Vec<crate::protocol::SessionInfo>> {
         .then_some(sessions)
 }
 
-/// A NetBird peer to offer when a session starts elsewhere, with the
-/// address to reach it at once the user picks it. imkr never tries it by
-/// itself.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Suggestion {
-    pub name: String,
-    pub address: String,
-}
-
-/// The NetBird peers that are online and neither a host here nor in the
-/// register (where they are tried, or were taken out).
-pub fn suggestions() -> Vec<Suggestion> {
-    let known = crate::client::known_hosts();
-    let entries = register();
-    netbird_peers()
-        .into_iter()
-        .filter(|p| p.online && !known.contains(&p.name))
-        .filter(|p| {
-            !entries
-                .iter()
-                .any(|e| e.name == p.name || e.address == p.address)
-        })
-        .map(|p| Suggestion {
-            name: p.name,
-            address: p.address,
-        })
-        .collect()
-}
-
-/// The user picked `suggestion` to start a session on: ssh is to reach it
-/// at its NetBird address unless it knows the name.
-pub fn reach_suggested(suggestion: &Suggestion) {
-    if !ssh_knows(&suggestion.name) && !routes().contains_key(&suggestion.name) {
-        remember_route(
-            &suggestion.name,
-            Route {
-                address: suggestion.address.clone(),
-                user: String::new(),
-            },
-        );
-    }
-}
-
-/// `imkr hosts vpn`: the machines of the Tailscale and NetBird networks,
-/// and what imkr knows of each. None of them is tried.
+/// `imkr hosts vpn`: the machines of the Tailscale network, the user's
+/// own, and what imkr knows of each. None of them is tried. NetBird's
+/// peers are not listed: its network is shared with other people.
 pub fn print_vpn() -> Result<()> {
     let tailnet = crate::client::tailnet_peers();
-    let netbird = netbird_peers();
-    if tailnet.is_empty() && netbird.is_empty() {
+    if tailnet.is_empty() {
         anyhow::bail!(
-            "no machines found: is Tailscale or NetBird installed and up \
-             (`tailscale status`, `netbird status`)?"
+            "no machines found: is Tailscale installed and up (`tailscale status`)? \
+             Machines of a NetBird network are not listed; add yours with `imkr hosts add` \
+             or pair them (`imkr hosts pair`)"
         );
     }
     let known = crate::client::known_hosts();
-    let entries = register();
     let mut out = std::io::stdout().lock();
     for peer in tailnet {
         let what = match (known.contains(&peer.name), peer.online) {
@@ -998,24 +903,6 @@ pub fn print_vpn() -> Result<()> {
         };
         writeln!(out, "{:<24} tailscale {:<8} {what}", peer.name, peer.os)?;
     }
-    for peer in netbird {
-        let entry = entries
-            .iter()
-            .find(|e| e.address == peer.address || e.name == peer.name);
-        let what = match entry {
-            Some(e) if e.removed => format!("taken out as {}", e.name),
-            Some(e) if known.contains(&e.name) => format!("used with imkr as {}", e.name),
-            Some(e) => format!("in the register as {}, not reached yet", e.name),
-            None if known.contains(&peer.name) => "used with imkr".into(),
-            None if peer.online => "online · `imkr hosts add NAME ADDRESS` uses it".into(),
-            None => "offline".into(),
-        };
-        writeln!(
-            out,
-            "{:<24} netbird   {:<15} {what}",
-            peer.name, peer.address
-        )?;
-    }
     Ok(())
 }
 
@@ -1024,31 +911,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn netbird_peers_by_the_first_label_with_their_address() {
-        let status = serde_json::json!({
-            "fqdn": "laptop.netbird.selfhosted",
-            "peers": {"total": 3, "connected": 1, "details": [
-                {"fqdn": "pimarchy-on-the-road.netbird.selfhosted",
-                 "netbirdIp": "100.97.139.120", "status": "Connected"},
-                {"fqdn": "iphone-x.netbird.selfhosted",
-                 "netbirdIp": "100.97.37.222/32", "status": "Idle"},
-                {"fqdn": "pe-l-2207.netbird.selfhosted",
-                 "netbirdIp": "100.97.21.213", "status": "Connecting"},
-                {"fqdn": "", "netbirdIp": "100.97.1.1", "status": "Connected"}
-            ]}
-        });
-        let peers = parse_netbird(&status);
-        assert_eq!(
-            peers
-                .iter()
-                .map(|p| (p.name.as_str(), p.address.as_str(), p.online))
-                .collect::<Vec<_>>(),
-            [
-                ("iphone-x", "100.97.37.222", true),
-                ("pe-l-2207", "100.97.21.213", false),
-                ("pimarchy-on-the-road", "100.97.139.120", true),
-            ]
-        );
+    fn no_module_asks_netbird_for_its_peers() {
+        // The NetBird network is shared with other people's machines:
+        // listing its peers would show them to everyone who installs
+        // imkr (#9648). Reaching a machine of the register at its NetBird
+        // address needs no `netbird`.
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for file in std::fs::read_dir(src).unwrap() {
+            let path = file.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                !text.contains(&format!("Command::new(\"{}\")", "netbird")),
+                "{} runs netbird",
+                path.display()
+            );
+        }
     }
 
     #[test]

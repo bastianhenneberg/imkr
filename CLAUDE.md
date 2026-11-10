@@ -627,9 +627,13 @@ Projekt-Slug: `imkr`
   Default nur wenn keiner da); nie Logins. `default_of` zählt nur angemeldete Konten.
   Test: Fake-ssh, das nach `--` den Befehl mit HOME/IMKR_CONFIG der zweiten Welt ausführt.
 - Rechner-Register (#9648): `src/machines.rs`. **Kein Absuchen des VPN** (Bastians Entscheidung:
-  Kollegen-Rechner und fail2ban-Server dürfen keine abgelehnten Logins sehen) — NetBird-/Tailscale-
-  Peers sind nur Vorschläge in `Ctrl+B s n` (`suggestions`, `Places::netbird`, Wahl →
-  `reach_suggested` merkt die NetBird-Adresse). Stattdessen `register.json`: `Entry` (Name =
+  Kollegen-Rechner und fail2ban-Server dürfen keine abgelehnten Logins sehen) — Tailscale-Peers
+  sind nur Vorschläge in `Ctrl+B s n`. **NetBird-Peers nirgends** (Bastian 10.11.: „Niemand darf
+  alle NetBird-Rechner sehen, der sich imkr installiert“, das Netz ist mit Fremden geteilt): imkr
+  ruft `netbird` gar nicht auf (Test `no_module_asks_netbird_for_its_peers`, E2E-Test
+  `tests/no_netbird_peers.rs` mit Schein-netbird für `hosts vpn`). Eigene Rechner dort kommen über
+  `hosts add NAME ADRESSE`, Register oder Kopplung und werden dann per NetBird-Adresse erreicht.
+  Stattdessen `register.json`: `Entry` (Name =
   `machine_name` des Rechners, `id` = `machine_id`, Adresse, User, `at`, `removed`), Schlüssel
   `Entry::key` (id, vorher `name:NAME`). `merge` = Vereinigung, je Schlüssel gewinnt das neuere
   `at` (Umbenennung, neue IP); ein Eintrag nur mit Namen weicht dem mit id gleichen Namens (ist er

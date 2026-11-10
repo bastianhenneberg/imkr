@@ -50,7 +50,9 @@ connection came from, so a new laptop that reaches the desktop shows up on the d
 A machine from the register shows as a host once ssh got in from here, without prompting, and
 imkr answered there; until then `imkr hosts` lists it as *in the register, not reached yet*, and
 it is tried again every ten minutes. imkr does not search your network: it never knocks at a
-peer of your NetBird or Tailscale network that no machine of yours named.
+peer of your NetBird or Tailscale network that no machine of yours named, and it never lists the
+peers of a NetBird network at all. Such a network is often shared with other people's machines,
+and nobody who installs imkr is to see them all.
 
 `imkr hosts rm NAME` takes a machine out everywhere: it leaves a removal with its time in the
 register, which travels like any entry, so the machine does not come back over the others.
@@ -149,11 +151,13 @@ on a machine that does not have it (`hosts sync`, `imkr --host`) needs your own 
 paired machine always has imkr. Older versions of imkr ignore the keys in the register; they need
 `imkr update` to take part.
 
-**NetBird and Tailscale.** The peers of your networks that are online and not used yet show as
-suggestions when you start a session on another machine (`Ctrl+B s n`, groups *NetBird* and
-*Tailscale*); picking one connects to it by ssh, a NetBird one at its NetBird address. `imkr hosts
-vpn` lists the peers of both networks and what imkr knows of each (`imkr hosts tailnet` still
-works).
+**NetBird and Tailscale.** The machines of your tailnet that are online and not used yet show as
+suggestions when you start a session on another machine (`Ctrl+B s n`, group *Tailscale*);
+`imkr hosts vpn` lists them and what imkr knows of each (`imkr hosts tailnet` still works). A
+NetBird network is offered nowhere, not in `Ctrl+B s n`, not in `imkr hosts vpn`: imkr does not
+even ask `netbird` for its peers. Your own machines there come in the ways above (`imkr hosts
+add NAME ADDRESS`, the register, `imkr hosts pair`), and imkr then reaches them at their NetBird
+address like at any other.
 
 **Without `~/.ssh/config`.** imkr notes the address and login of every machine it reached
 (`~/.local/state/imkr/host-routes.json`; `imkr hosts` shows them, `imkr hosts add NAME ADDRESS
