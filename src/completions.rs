@@ -181,6 +181,7 @@ const COMMANDS: &[Command] = &[
             sub("add", Hosts),
             sub("rm", Hosts),
             sub("sync", Nothing),
+            sub("vpn", Nothing),
             sub("tailnet", Nothing),
         ],
     ),

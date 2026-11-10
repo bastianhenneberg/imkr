@@ -36,6 +36,37 @@ where it is missing, upgraded with all its running sessions everywhere else. Wit
 Tailscale, the machines of your tailnet that are online and not used yet show as suggestions when
 you start a session on another machine (`Ctrl+B s n`), by their MagicDNS name.
 
+### Machines that find each other
+
+You do not have to list every machine everywhere. imkr finds them in three ways, and shows a
+machine only once imkr answered there:
+
+- **NetBird.** Once a minute imkr reads `netbird status --json` and tries the peers that are
+  online, a handful per round: first whether ssh's port is open (a phone or a laptop without sshd
+  costs one refused connection and nothing in anyone's logs), then ssh without prompting and
+  `imkr ls --json`. A machine where imkr answers becomes a host under the name it gives itself
+  (`desktop`, not `archlinux-henneberg-desktop`). One where ssh gets in but imkr is missing shows
+  as a suggestion in the group *NetBird* when you start a session elsewhere. Everything else (a
+  colleague's laptop, no key there) is left alone for a day. `imkr hosts vpn` lists the peers of
+  both networks and what came out for each (`imkr hosts tailnet` still works).
+- **The machines the others know.** Once a minute every machine asked also tells the machines it
+  knows, with their addresses. If A knows B and B knows C, A tries C and keeps it if imkr answers.
+- **The way back.** Whoever reaches a machine is tried from there too, at the address its ssh
+  connection came from. So a new laptop that reaches the desktop shows up on the desktop as well.
+
+`imkr hosts rm NAME` takes a found machine out for good: finding it again does not bring it back,
+`imkr hosts add NAME` does.
+
+**Without `~/.ssh/config`.** imkr notes the address and login of every machine it found
+(`~/.local/state/imkr/host-routes.json`; `imkr hosts` shows them, `imkr hosts add NAME ADDRESS
+[--user USER]` sets one by hand). ssh is called with the name as long as ssh knows it (an entry in
+`~/.ssh/config`, or a name that resolves), else with that address. Host keys: for an address of
+your own VPN (100.64.0.0/10, where Tailscale and NetBird give theirs) imkr passes
+`StrictHostKeyChecking=accept-new`, so a machine seen for the first time is taken and kept in
+`~/.local/state/imkr/machines/known_hosts`; a key that **changed** still stops ssh. Any other
+address keeps ssh's own rules. imkr never puts keys into another machine's `authorized_keys`:
+ssh must already let you in.
+
 `imkr settings sync` keeps the settings the same on all known machines: the config (without
 what belongs to one machine: `name`, `hosts`, `web`, `web_listen`), session templates, saved
 layouts, the list of accounts (without their logins) and your own plugins (not the ones installed with `imkr plugin add`, every machine gets

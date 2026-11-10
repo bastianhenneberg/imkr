@@ -72,7 +72,8 @@ impl Conn {
             args.push("--start");
         }
         let mut ssh = Command::new("ssh")
-            .args(["-C", "-T", "-o", "ServerAliveInterval=15", "--", host])
+            .args(["-C", "-T", "-o", "ServerAliveInterval=15"])
+            .args(crate::machines::ssh_to(host))
             .arg(remote_command(&args))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -210,7 +211,8 @@ const INSTALL: &str = "u=https://raw.githubusercontent.com/bastianhenneberg/imkr
 /// its output shown if `show`, else only in the error.
 pub fn install_on(host: &str, show: bool) -> Result<()> {
     let mut ssh = Command::new("ssh");
-    ssh.args(["-T", "-o", "ConnectTimeout=10", "--", host])
+    ssh.args(["-T", "-o", "ConnectTimeout=10"])
+        .args(crate::machines::ssh_to(host))
         .arg(format!("exec \"${{SHELL:-sh}}\" -lc '{INSTALL}'"))
         .stdin(Stdio::null());
     if show {
@@ -231,7 +233,8 @@ pub fn install_on(host: &str, show: bool) -> Result<()> {
 /// reached.
 pub fn installed_on(host: &str) -> Result<bool> {
     let status = Command::new("ssh")
-        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
         .arg("exec \"${SHELL:-sh}\" -lc 'PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH; command -v imkr'")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -253,11 +256,21 @@ const PROXY_READY: u8 = 0x06;
 /// ~/.local/bin added, which are often only on the PATH of interactive
 /// shells. `args` are session names and fixed words, nothing to quote.
 pub fn remote_command(args: &[&str]) -> String {
+    remote_command_with(&[], args)
+}
+
+/// `remote_command` with environment variables set for imkr there, which
+/// an older imkr ignores.
+pub fn remote_command_with(env: &[(&str, &str)], args: &[&str]) -> String {
     // Each word quoted here: `--from "the user at laptop"` arrived as four
     // words, and the message for pane "user" failed.
     let words: Vec<String> = args.iter().map(|w| sh_quote(w)).collect();
+    let vars: String = env
+        .iter()
+        .map(|(key, value)| format!("{key}={} ", sh_quote(value)))
+        .collect();
     let command = format!(
-        "PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH exec imkr {}",
+        "PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH {vars}exec imkr {}",
         words.join(" ")
     );
     format!("exec \"${{SHELL:-sh}}\" -lc {}", sh_quote(&command))
@@ -438,8 +451,11 @@ pub fn remember_host(host: &str) {
     }
 }
 
-/// Forgets `host` again. False if it was not remembered.
+/// Forgets `host` again, with its address, and so that finding it again
+/// does not bring it back. False if it was not remembered.
 pub fn forget_host(host: &str) -> bool {
+    crate::machines::forget_route(host);
+    crate::machines::set_forgotten(host, true);
     let mut hosts = remembered_hosts();
     let before = hosts.len();
     hosts.retain(|h| h != host);
@@ -567,17 +583,23 @@ fn or_default(names: Vec<String>) -> Vec<String> {
 
 /// The sessions running on `host`, asked through ssh without prompting.
 pub fn remote_sessions(host: &str) -> Result<Vec<SessionInfo>> {
+    remote_sessions_asking(host, false)
+}
+
+/// `remote_sessions`, with `hosts` also the machine's name and the
+/// machines it knows on the first entry (#9648). Either way it hears who
+/// asks, for its way back here.
+pub fn remote_sessions_asking(host: &str, hosts: bool) -> Result<Vec<SessionInfo>> {
+    use crate::machines::{CALLER_ENV, HOSTS_ENV};
+    let caller = crate::machines::caller();
+    let mut env = vec![(CALLER_ENV, caller.as_str())];
+    if hosts {
+        env.push((HOSTS_ENV, "1"));
+    }
     let output = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "--",
-            host,
-        ])
-        .arg(remote_command(&["ls", "--json"]))
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
+        .arg(remote_command_with(&env, &["ls", "--json"]))
         .stdin(Stdio::null())
         .stderr(Stdio::piped())
         .output()
@@ -1155,15 +1177,8 @@ pub fn snapshot_everywhere(
 /// prompting.
 fn remote_snapshot(host: &str) -> Result<crate::persist::Hive> {
     let output = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "--",
-            host,
-        ])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
         .arg(remote_command(&["hive", "snapshot"]))
         .stdin(Stdio::null())
         .stderr(Stdio::piped())
@@ -1186,15 +1201,8 @@ pub fn push_hive(name: &str, hive: &crate::persist::Hive) -> Vec<String> {
         .into_iter()
         .filter(|host| {
             let child = Command::new("ssh")
-                .args([
-                    "-T",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=5",
-                    "--",
-                    host,
-                ])
+                .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+                .args(crate::machines::ssh_to(host))
                 .arg(remote_command(&["hive", "import"]))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
@@ -1215,15 +1223,8 @@ pub fn push_hive(name: &str, hive: &crate::persist::Hive) -> Vec<String> {
 /// names taken.
 pub fn pull_hives(host: &str) -> Result<Vec<String>> {
     let output = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "--",
-            host,
-        ])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
         .arg(remote_command(&["hive", "export"]))
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -1252,15 +1253,8 @@ pub fn pull_archive(host: &str) -> Result<()> {
         }
     }
     let output = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "--",
-            host,
-        ])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
         .arg(remote_command(&["archive", "export"]))
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -1655,15 +1649,8 @@ impl std::error::Error for RemoteRejected {}
 /// `input` on its stdin, and returns what it printed.
 pub fn remote_output(host: &str, args: &[&str], input: &str) -> Result<String> {
     let mut child = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "--",
-            host,
-        ])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
         .arg(remote_command(args))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1688,15 +1675,8 @@ pub fn remote_output(host: &str, args: &[&str], input: &str) -> Result<String> {
 /// Runs `imkr args...` on `host` through ssh without prompting.
 fn remote_run(host: &str, args: &[&str]) -> Result<()> {
     let status = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "--",
-            host,
-        ])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
         .arg(remote_command(args))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1715,15 +1695,8 @@ fn remote_restore(
     sessions: &std::collections::BTreeMap<String, crate::persist::HiveSession>,
 ) -> Result<Vec<String>> {
     let mut child = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "--",
-            host,
-        ])
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(crate::machines::ssh_to(host))
         .arg(remote_command(&["hive", "start"]))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

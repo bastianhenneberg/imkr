@@ -146,6 +146,15 @@ pub struct SessionInfo {
     /// A keeper's session (#9133). False from versions before.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keeper: bool,
+    /// The name and id of the machine, and the machines it knows: only on
+    /// the first entry of `imkr ls --json` asked with
+    /// `machines::HOSTS_ENV` (#9648). Empty from versions before.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub machine: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub machine_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<crate::machines::HostInfo>,
 }
 
 fn is_zero(n: &u64) -> bool {

@@ -59,11 +59,13 @@ Commands:
                 save this session's windows, splits and agents as template NAME
   template start NAME [SESSION]
                 start session SESSION (default: the template's name) from it
-  hosts [add NAME | rm NAME]
-                the other machines shown, from the settings and remembered
+  hosts [add NAME [ADDRESS] [--user USER] | rm NAME]
+                the other machines shown, from the settings, remembered and
+                found; ADDRESS for one ssh does not know by its name
   hosts sync    the latest release on every one of them: installed where
                 imkr is missing, upgraded with its sessions elsewhere
-  hosts tailnet the machines of your Tailscale network, and which imkr uses
+  hosts vpn     the machines of your Tailscale and NetBird networks, and
+                which imkr uses (also `hosts tailnet`)
   settings sync [--yes] [HOST…]
                 settings with the other machines: config (without name,
                 hosts, web), templates, layouts, own plugins; what one

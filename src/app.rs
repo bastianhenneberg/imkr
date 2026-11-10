@@ -505,6 +505,9 @@ struct Places {
     last_seen: HashMap<String, Vec<String>>,
     /// Machines of the Tailscale network that are online, as suggestions.
     tailnet: Vec<String>,
+    /// Machines of the NetBird network ssh reached, without imkr yet, as
+    /// suggestions (#9648).
+    netbird: Vec<String>,
     /// The devices that have `imkr web` of this machine open.
     web: Vec<crate::web::Seen>,
     /// Whether the thread has filled this in once. Before it has, an
@@ -8512,6 +8515,18 @@ impl App {
             .collect();
         let first_suggested = machines.len();
         machines.extend(suggested.into_iter().map(Some));
+        // Those of the NetBird network ssh reached, which have no imkr yet.
+        let netbird: Vec<String> = self
+            .places
+            .lock()
+            .unwrap()
+            .netbird
+            .iter()
+            .filter(|peer| !machines.contains(&Some((*peer).clone())))
+            .cloned()
+            .collect();
+        let first_netbird = machines.len();
+        machines.extend(netbird.into_iter().map(Some));
         let items = machines
             .iter()
             .enumerate()
@@ -8524,6 +8539,8 @@ impl App {
                     title: label,
                     hint: if host.is_none() {
                         "this machine".into()
+                    } else if i >= first_netbird {
+                        "in your NetBird network, imkr not installed yet".into()
                     } else if i >= first_suggested {
                         "in your tailnet, not used with imkr yet".into()
                     } else {
@@ -8532,7 +8549,13 @@ impl App {
                     danger: false,
                     apart: false,
                     color: None,
-                    group: (i >= first_suggested).then(|| "Tailscale".to_owned()),
+                    group: if i >= first_netbird {
+                        Some("NetBird".to_owned())
+                    } else if i >= first_suggested {
+                        Some("Tailscale".to_owned())
+                    } else {
+                        None
+                    },
                     marks: Vec::new(),
                 }
             })
@@ -15244,6 +15267,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
     let _ = thread::Builder::new().name("places".into()).spawn(move || {
         let mut hosts_at: Option<Instant> = None;
         let mut hives_at: Option<Instant> = None;
+        let mut found_at: Option<Instant> = None;
         // The state each agent elsewhere was last seen in, by host, session
         // and pane.
         let mut states: HashMap<(String, String, PaneId), String> = HashMap::new();
@@ -15300,6 +15324,16 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                     .collect();
                 places.lock().unwrap().tailnet = online;
             }
+            if found_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY) {
+                found_at = Some(Instant::now());
+                // Machines found since, through NetBird or the others,
+                // become hosts here; the next round asks them.
+                let suggested = crate::machines::discover()
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect();
+                places.lock().unwrap().netbird = suggested;
+            }
             if hosts_at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY) {
                 hosts_at = Some(Instant::now());
                 let here = protocol::machine_name();
@@ -15307,12 +15341,17 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                 all.extend(crate::client::remembered_hosts());
                 let mut seen = HashSet::new();
                 all.retain(|h| *h != here && seen.insert(h.clone()));
+                // Once a minute with the machines each one knows, which
+                // become candidates here (#9648).
+                let learn = hives_at.is_none_or(|at| at.elapsed() >= HIVES_EVERY);
                 let found: Vec<_> = all
                     .into_iter()
                     .map(|host| {
-                        let sessions =
-                            crate::client::remote_sessions(&host).map_err(|e| format!("{e:#}"));
-                        (host, sessions)
+                        let sessions = crate::client::remote_sessions_asking(&host, learn);
+                        if let Ok(sessions) = &sessions {
+                            crate::machines::learn_from(&host, sessions);
+                        }
+                        (host, sessions.map_err(|e| format!("{e:#}")))
                     })
                     .collect();
                 let mut alerts = Vec::new();

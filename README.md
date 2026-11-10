@@ -35,6 +35,7 @@ sessions across machines, is imkr's own.
   longest; the inbox (`Ctrl+B i`) answers them without going there.
 - **Every machine in one place.** The sessions and agents of all your machines in one sidebar,
   one search (`Ctrl+B /`) and one inbox. Switching goes over ssh, your terminal stays local.
+  Machines find each other: in a NetBird network, and through the machines the others know.
 - **Agents talk to each other.** `imkr msg server:api/claude "…"` types a message into another
   agent once it is idle, on any machine. Also to a colleague's imkr, over a VPN or through
   AI Brain, and only after they accept it.

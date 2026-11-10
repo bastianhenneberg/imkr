@@ -626,9 +626,26 @@ Projekt-Slug: `imkr`
   Namen stehen, die hier fehlen — Listen dürfen dauerhaft verschieden sein; `apply` → `Store::merge_in`: fehlende anhängen samt Ordner,
   Default nur wenn keiner da); nie Logins. `default_of` zählt nur angemeldete Konten.
   Test: Fake-ssh, das nach `--` den Befehl mit HOME/IMKR_CONFIG der zweiten Welt ausführt.
+- Rechner finden sich (#9648): `src/machines.rs`. NetBird-Peers (`netbird_peers`, Name = erstes
+  Label der FQDN, online = Connected|Idle), Kandidaten aus `learn_from` (die Hosts, die ein Rechner
+  im `ls --json` mitliefert) und `note_caller` (Rückweg: `CALLER_ENV` + Adresse aus
+  `SSH_CONNECTION`) → `discover` (minütlich in `watch_places`, `found_at`, Sperre `discover.lock`,
+  `PROBES_AT_ONCE`) → `probe` (erst TCP 22, dann ssh BatchMode + `ls --json` mit `HOSTS_ENV`) →
+  `checked.json` (ohne imkr `CHECK_AGAIN` 1 Tag Ruhe) → `take` = `remember_host` unter dem Namen,
+  den imkr drüben nennt (`SessionInfo::machine`, `machine_id` erkennt sich selbst). ssh+kein imkr =
+  Vorschlag „NetBird“ in `machine_choices` (`Places::netbird`). Weitergabe kompatibel: Umgebungs-
+  variablen über `remote_command_with` (alte imkr ignorieren sie), Felder `machine`/`machine_id`/
+  `hosts` auf dem ersten `SessionInfo` (`tell_hosts`, bei leerer Liste ein Stand-in, das der
+  Fragende sonst selbst erfände) — nie neue Flags/Requests. Adresse ohne ssh-config:
+  `host-routes.json` (`Route`), `hosts` bleibt eine Zeile je Name (alte Binaries lesen sie);
+  **jeder** ssh-Aufruf nimmt `machines::ssh_to(host)` statt `"--", host` (Name, wenn `ssh -G` ihn
+  umbenennt oder er auflöst, sonst Adresse; `accept-new` + eigenes `machines/known_hosts` nur für
+  100.64.0.0/10). `hosts rm` → `forgotten`, sonst brächte das Finden ihn zurück. Test: drei Welten,
+  Fake-`ssh` nach Adresse 127.0.0.1–3 (lokaler sshd lässt Port 22 offen, setzt `SSH_CONNECTION`,
+  `-G` gibt den Namen unverändert), Fake-`netbird` nur in Welt alpha, kurze `XDG_RUNTIME_DIR`.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe
-  „Tailscale“), `imkr hosts tailnet`. Test: Fake-`tailscale` im Scratchpad-bin.
+  „Tailscale“), `imkr hosts vpn` (alias `tailnet`, mit NetBird). Test: Fake-`tailscale` im Scratchpad-bin.
 - Verteilen: `imkr update`/`upgrade` stellen jede laufende Session des Rechners um (`-s` nur eine,
   eigenes `IMKR_SOCKET` außerhalb des Runtime-Verzeichnisses nur diesen). `imkr hosts sync`
   (`cli::hosts_sync`, parallel je Host): `client::installed_on` → `install_on` (install.sh per

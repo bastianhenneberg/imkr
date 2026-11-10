@@ -190,8 +190,9 @@ pub fn dirs(parent: Option<&str>) -> Result<()> {
 }
 
 pub fn ls(args: &[String]) -> Result<()> {
-    let sessions = client::local_sessions();
+    let mut sessions = client::local_sessions();
     if args.iter().any(|a| a == "--json") {
+        crate::machines::tell_hosts(&mut sessions);
         println!("{}", serde_json::to_string(&sessions)?);
         return Ok(());
     }
@@ -200,7 +201,6 @@ pub fn ls(args: &[String]) -> Result<()> {
         return Ok(());
     }
     let current = protocol::session_name();
-    let mut sessions = sessions;
     // Keepers on top of what runs (#9133).
     sessions.sort_by_key(|info| (info.dormant.is_some(), !info.keeper));
     for info in sessions {
@@ -2133,9 +2133,8 @@ pub fn hosted(args: &[String]) -> Result<()> {
                 "ServerAliveInterval=10",
                 "-o",
                 "ServerAliveCountMax=3",
-                "--",
-                host,
             ])
+            .args(crate::machines::ssh_to(host))
             .arg(client::remote_command(&words))
             .status()
             .context("could not run ssh")?;
@@ -4151,26 +4150,49 @@ pub fn template(args: &[String]) -> Result<()> {
     }
 }
 
-/// `imkr hosts [add NAME | rm NAME]`: the other machines this one shows,
-/// from the settings and remembered.
+/// `imkr hosts [add NAME [ADDRESS] [--user USER] | rm NAME]`: the other
+/// machines this one shows, from the settings and remembered, with the
+/// address imkr reaches each by where ssh does not know the name (#9648).
 pub fn hosts(args: &[String]) -> Result<()> {
     match args {
         [] => {
             let config = crate::config::Config::load().0.hosts;
+            let routes = crate::machines::routes();
+            let via = |host: &str| match routes.get(host) {
+                Some(r) if r.user.is_empty() => format!(" · at {}", r.address),
+                Some(r) => format!(" · at {} as {}", r.address, r.user),
+                None => String::new(),
+            };
             for host in &config {
-                println!("{host:<24} settings");
+                println!("{host:<24} settings{}", via(host));
             }
             for host in client::remembered_hosts() {
                 if !config.contains(&host) {
-                    println!("{host:<24} remembered");
+                    println!("{host:<24} remembered{}", via(&host));
                 }
             }
             Ok(())
         }
-        [cmd, name] if cmd == "add" => {
-            if *name != crate::protocol::machine_name() {
-                client::remember_host(name);
+        [cmd, name, rest @ ..] if cmd == "add" => {
+            if *name == crate::protocol::machine_name() {
+                return Ok(());
             }
+            let mut route = crate::machines::Route::default();
+            let mut words = rest.iter();
+            while let Some(word) = words.next() {
+                match word.as_str() {
+                    "--user" => route.user = words.next().cloned().unwrap_or_default(),
+                    address if route.address.is_empty() && !address.starts_with('-') => {
+                        route.address = address.to_owned()
+                    }
+                    _ => bail!("usage: imkr hosts add NAME [ADDRESS] [--user USER]"),
+                }
+            }
+            if !route.address.is_empty() {
+                crate::machines::remember_route(name, route);
+            }
+            crate::machines::set_forgotten(name, false);
+            client::remember_host(name);
             Ok(())
         }
         [cmd, name] if cmd == "rm" => {
@@ -4180,23 +4202,8 @@ pub fn hosts(args: &[String]) -> Result<()> {
             Ok(())
         }
         [cmd] if cmd == "sync" => hosts_sync(),
-        [cmd] if cmd == "tailnet" => {
-            let peers = client::tailnet_peers();
-            if peers.is_empty() {
-                bail!("no machines found: is Tailscale installed and up (`tailscale status`)?");
-            }
-            let known = client::known_hosts();
-            for peer in peers {
-                let what = match (known.contains(&peer.name), peer.online) {
-                    (true, _) => "used with imkr",
-                    (false, true) => "online · `imkr hosts add` or `imkr --host` uses it",
-                    (false, false) => "offline",
-                };
-                println!("{:<24} {:<8} {what}", peer.name, peer.os);
-            }
-            Ok(())
-        }
-        _ => bail!("usage: imkr hosts [add NAME | rm NAME | sync | tailnet]"),
+        [cmd] if cmd == "vpn" || cmd == "tailnet" => crate::machines::print_vpn(),
+        _ => bail!("usage: imkr hosts [add NAME [ADDRESS] [--user USER] | rm NAME | sync | vpn]"),
     }
 }
 
