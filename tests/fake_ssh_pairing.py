@@ -3,7 +3,7 @@
 that world's authorized_keys like sshd (first line with the offered key
 wins; command= is forced with SSH_ORIGINAL_COMMAND), and runs the command
 with that world's environment. No network, no real sshd."""
-import json, os, subprocess, sys
+import json, os, subprocess, sys, time
 
 BASE = os.environ["PW_BASE"]
 WORLDS = json.load(open(os.path.join(BASE, "worlds.json")))  # name -> {addr, home, env}
@@ -45,7 +45,8 @@ target = next((w for n, w in WORLDS.items() if dest in (n, w["addr"])), None)
 caller = next((w for w in WORLDS.values() if w["home"] == os.environ.get("HOME")), None)
 command = " ".join(rest)
 with open(LOG, "a") as log:
-    log.write(json.dumps({"from": caller and caller["addr"], "to": dest, "keys": keys, "cmd": command[:120]}) + "\n")
+    log.write(json.dumps({"from": caller and caller["addr"], "to": dest, "keys": keys,
+                          "cmd": command[:120], "at": time.time()}) + "\n")
 if target is None:
     print(f"ssh: Could not resolve hostname {dest}", file=sys.stderr)
     sys.exit(255)

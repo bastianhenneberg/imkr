@@ -259,7 +259,11 @@ become hosts of each other. Nothing else asks first: there is no searching of th
 gets written without a code.</p>
 <p><strong>Once is enough.</strong> The register entry of a machine carries its key, and every machine that gets
 the entry lets that machine in. Within a minute or two, as the machines ask each other for their
-sessions, the new one's key reaches all your other machines and theirs reach it. Keys are taken
+sessions, the new one's key reaches all your other machines and theirs reach it. Only a <strong>paired</strong> machine takes keys at all: one with a key of its own
+from <code>hosts pair</code>, <code>hosts join</code> or <code>hosts key</code>. A machine you only reach by a login you set up
+yourself (a server you use with <code>--host</code>, a machine that is never paired) never stores the keys
+of others and never touches its <code>authorized_keys</code>, not even for a backup, however often your
+machines ask it for its sessions. Keys are taken
 only from a machine that may hand them on: on the machine that is asked, the asking one has just
 logged in (by a key you set by hand it has a shell there anyway; by a key of imkr's it was paired);
 on the asking side, what comes back loses its keys, because answering does not prove a machine may
@@ -296,9 +300,10 @@ may have handed on keys of its own in the meantime: check <code>imkr hosts</code
 <p><strong>Machines set up by hand before.</strong> They keep working as they are. To move them to keys of their
 own, so each can be revoked alone:</p>
 <ol>
-<li>On each machine, once: <code>imkr hosts key</code> makes <code>~/.ssh/imkr-&lt;machine id&gt;</code> and puts it in the
-   register. (A pairing does the same.) Over the next minute or two every machine that already
-   reaches it by the old key takes the new key in, as an imkr line.</li>
+<li>On each machine that is to take part, once: <code>imkr hosts key</code> makes <code>~/.ssh/imkr-&lt;machine id&gt;</code>
+   and puts it in the register; from then on it is paired. (A pairing does the same.) Over the
+   next minute or two every paired machine that already reaches it by the old key takes the new
+   key in, as an imkr line. Machines you leave out (servers) stay as they are.</li>
 <li>Wait until <code>imkr hosts</code> on every machine says <em>paired</em> for all the others.</li>
 <li>Then remove the lines with the old, copied key from <code>~/.ssh/authorized_keys</code> on each machine,
    take <code>~/.ssh/imkr</code> out of the dotfile manager and delete it. From then on <code>imkr hosts rm NAME</code>

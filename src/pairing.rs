@@ -10,6 +10,10 @@
 //! machine that gets one lets that machine in too; `imkr hosts rm` leaves a
 //! removal that takes the key out everywhere.
 //!
+//! Who takes keys at all: only a paired machine (`paired`, it has a key of
+//! its own). One reached only by a login set up by hand, such as a server,
+//! never stores the keys of others nor touches `authorized_keys`.
+//!
 //! Who may hand on keys: a register joined on the side that was asked
 //! (`machines::tell_hosts`) came from a machine that just logged in here —
 //! by hand-set key it has a shell anyway, by a key of ours it was paired.
@@ -85,6 +89,14 @@ pub fn own_key() -> Option<String> {
     let mut file = key_file()?.into_os_string();
     file.push(".pub");
     public_key(&std::fs::read_to_string(file).ok()?)
+}
+
+/// Whether this machine is paired: it has its own key, from `hosts pair`,
+/// `join` or `key`. Only then does it keep the keys of other machines and
+/// write `authorized_keys`; a machine imkr only reaches by a login set up
+/// by hand leaves the file alone, not even a backup.
+pub fn paired() -> bool {
+    own_key().is_some()
 }
 
 /// The machine key, made (ed25519, `imkr@NAME`) when there is none yet.

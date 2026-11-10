@@ -9,6 +9,8 @@ alpha and beta know each other by hand (plain lines in authorized_keys,
 key reaches beta over the register, beta's reaches gamma, both reach each
 other through `imkr gate`; `hosts rm gamma` on beta takes gamma's key out
 on beta and on alpha; lines nobody of imkr wrote stay byte for byte.
+`server` is never paired, alpha reaches it by a line set up by hand: it
+never stores a key of another machine nor touches its authorized_keys.
 
 Guard (CLAUDE.md, Test-Abschirmung): notifications off, fake notify-send
 first in PATH, DBus on missing sockets, no DISPLAY/WAYLAND, own runtime/
@@ -20,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 # Outside the repo; short, for the socket paths of the runtime dirs.
 BASE = tempfile.mkdtemp(prefix="imkr-pairing-")
-WORLD_ADDR = {"gamma": "127.0.0.1", "alpha": "127.0.0.2", "beta": "127.0.0.3"}
+WORLD_ADDR = {"gamma": "127.0.0.1", "alpha": "127.0.0.2", "beta": "127.0.0.3", "server": "127.0.0.4"}
 FOREIGN = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQforeignforeignforeign someone@else\n"
 PORT = 47581
 
@@ -112,6 +114,7 @@ def main():
         "alpha": FOREIGN + shared,
         "beta": "# hand-written\n" + shared + FOREIGN.rstrip("\n"),  # no newline at the end
         "gamma": FOREIGN,
+        "server": "# server, by hand\n" + shared + FOREIGN,
     }
     for name, text in hand.items():
         path = os.path.join(worlds[name]["home"], ".ssh/authorized_keys")
@@ -119,6 +122,7 @@ def main():
         os.chmod(path, 0o600)
     run(worlds, "alpha", "imkr", "hosts", "add", "beta", "127.0.0.3", "--user", "bastian")
     run(worlds, "beta", "imkr", "hosts", "add", "alpha", "127.0.0.2", "--user", "bastian")
+    run(worlds, "alpha", "imkr", "hosts", "add", "server", "127.0.0.4", "--user", "bastian")
     for name in worlds:
         run(worlds, name, "imkr", "new", "--start", "--window", "0", "--", "sleep", "100000", check=False)
     time.sleep(2)
@@ -139,9 +143,17 @@ def main():
     # Migration of a machine set up by hand: its own key.
     r = run(worlds, "beta", "imkr", "hosts", "key")
     log("beta hosts key:", r.stdout.strip().replace("\n", " | ")[:200])
-    wait_for("alpha's register has beta's own key (beta asked alpha)", lambda: has_key("alpha", "beta"))
-    wait_for("alpha lets beta in by its own key", lambda: "imkr:id-beta" in ak(worlds, "alpha"))
-    assert ak(worlds, "alpha").startswith(hand["alpha"])
+    wait_for("beta asked alpha with its own key in the register",
+             lambda: any('"key"' in json.dumps(e) for e in register("beta")) and
+             any(json.loads(l)["from"] == "127.0.0.3" and json.loads(l)["to"] == "127.0.0.2" and
+                 "IMKR_HOSTS_TOO" in json.loads(l)["cmd"] and json.loads(l)["at"] > time.time() - 20
+                 for l in open(os.path.join(BASE, "ssh.log"))))
+    time.sleep(3)
+    # alpha is not paired yet: it keeps no key of others and leaves its file alone.
+    assert not has_key("alpha", "beta"), "an unpaired machine stored a key"
+    assert ak(worlds, "alpha") == hand["alpha"], "an unpaired machine wrote authorized_keys"
+    assert not os.path.exists(os.path.join(worlds["alpha"]["home"], ".ssh/authorized_keys.imkr-backup"))
+    log("unpaired alpha took no key from beta and left its file alone")
 
     # gamma pairs with alpha.
     pair = subprocess.Popen(["imkr", "hosts", "pair", "--listen", f"127.0.0.2:{PORT}"],
@@ -167,8 +179,10 @@ def main():
     assert os.path.exists(os.path.join(worlds["alpha"]["home"], ".ssh/imkr-id-alpha")), "alpha got no own key"
     a, g = ak(worlds, "alpha"), ak(worlds, "gamma")
     assert a.startswith(hand["alpha"]) and "imkr:id-gamma" in a, a
-    assert g.startswith(hand["gamma"]) and "imkr:id-alpha" in g and "imkr:id-beta" in g, g
-    log("after pairing: alpha lets gamma in, gamma lets alpha and beta in")
+    assert g.startswith(hand["gamma"]) and "imkr:id-alpha" in g, g
+    log("after pairing: alpha lets gamma in, gamma lets alpha in")
+    wait_for("alpha, paired now, lets beta in by its own key", lambda: "imkr:id-beta" in ak(worlds, "alpha"))
+    wait_for("gamma lets beta in (beta's key from alpha's register)", lambda: "imkr:id-beta" in ak(worlds, "gamma"))
     for name in ["alpha", "gamma"]:
         st = os.stat(os.path.join(worlds[name]["home"], ".ssh/authorized_keys"))
         assert oct(st.st_mode & 0o777) == "0o600", oct(st.st_mode)
@@ -235,6 +249,20 @@ def main():
     log("without the copied key: alpha and beta reach each other by their own keys only")
     for name in worlds:
         log(f"{name} authorized_keys:\n" + ak(worlds, name))
+    # The server: alpha's imkr asked it every minute (`ls --json` with its
+    # register, keys included), as for any host.
+    asked = [json.loads(l) for l in open(os.path.join(BASE, "ssh.log"))]
+    asked = [a for a in asked if a["to"] == "127.0.0.4" and "IMKR_HOSTS_TOO" in a["cmd"]]
+    assert asked, "alpha never asked the server with its register"
+    sent = run(worlds, "alpha", "cat", os.path.join(worlds["alpha"]["home"],
+               ".local/state/imkr/machines/register.json")).stdout
+    assert '"key"' in sent, "alpha had no keys to send"
+    assert ak(worlds, "server") == hand["server"], "the server's authorized_keys changed"
+    sh = os.path.join(worlds["server"]["home"], ".ssh")
+    assert sorted(os.listdir(sh)) == ["authorized_keys"], os.listdir(sh)
+    assert '"key"' not in json.dumps(register("server")), register("server")
+    log(f"server: asked {len(asked)} times with keys, authorized_keys byte for byte, "
+        "no backup, no key of its own, no key in its register")
     log("PASS")
 
 if __name__ == "__main__":

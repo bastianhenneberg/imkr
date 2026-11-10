@@ -666,7 +666,11 @@ Projekt-Slug: `imkr`
   **dieselbe** Datei (chezmoi) — Widerruf je Rechner unmöglich. Er wird nie angekündigt, nur
   noch nach dem eigenen angeboten (`pairing::offered_keys` in `by_address`; `by_name` gibt nur
   den eigenen dazu). Ein Schlüssel, den das Register bei >1 id zeigt, lässt keinen herein
-  (`to_let_in` → Zeilen weg). **Wer Schlüssel weitergeben darf:**
+  (`to_let_in` → Zeilen weg). **Nur gekoppelte Rechner nehmen Schlüssel** (Bastians
+  Entscheidung): `pairing::paired()` = eigener Schlüssel vorhanden; sonst leert
+  `change_register_noting` alle `key`-Felder vor dem Schreiben und ruft `sync_keys` nicht —
+  ein Server, auf den man nur per Hand-Login kommt, fasst `authorized_keys` nie an (auch kein
+  Backup). Test: Welt `server` in `tests/pairing.py`. **Wer Schlüssel weitergeben darf:**
   `tell_hosts` (gefragte Seite) behält sie — der Aufrufer ist gerade hereingekommen;
   `learn_from` (fragende Seite) streift sie ab. `change_register` ruft unter der Register-Sperre
   `pairing::sync_keys`: `authorized_keys` bekommt für jeden Eintrag mit Schlüssel eine Zeile

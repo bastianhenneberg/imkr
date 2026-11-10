@@ -426,12 +426,22 @@ fn change_register_noting(
     let mut entries = register();
     let before = entries.clone();
     change(&mut entries);
+    // Only a paired machine keeps keys of others and lets them in; one
+    // reached by a login set up by hand (a server) never does (#605).
+    let paired = crate::pairing::paired();
+    if !paired {
+        for entry in &mut entries {
+            entry.key.clear();
+        }
+    }
     let mut changes = crate::pairing::Changes::default();
     if entries != before {
         let _ = write_json(register_file(), &entries);
         // Under the lock still: two writers of authorized_keys at once
         // would lose a line.
-        changes = crate::pairing::sync_keys(&entries);
+        if paired {
+            changes = crate::pairing::sync_keys(&entries);
+        }
     }
     (entries, changes)
 }

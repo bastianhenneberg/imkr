@@ -81,7 +81,11 @@ gets written without a code.
 
 **Once is enough.** The register entry of a machine carries its key, and every machine that gets
 the entry lets that machine in. Within a minute or two, as the machines ask each other for their
-sessions, the new one's key reaches all your other machines and theirs reach it. Keys are taken
+sessions, the new one's key reaches all your other machines and theirs reach it. Only a **paired** machine takes keys at all: one with a key of its own
+from `hosts pair`, `hosts join` or `hosts key`. A machine you only reach by a login you set up
+yourself (a server you use with `--host`, a machine that is never paired) never stores the keys
+of others and never touches its `authorized_keys`, not even for a backup, however often your
+machines ask it for its sessions. Keys are taken
 only from a machine that may hand them on: on the machine that is asked, the asking one has just
 logged in (by a key you set by hand it has a shell there anyway; by a key of imkr's it was paired);
 on the asking side, what comes back loses its keys, because answering does not prove a machine may
@@ -126,9 +130,10 @@ may have handed on keys of its own in the meantime: check `imkr hosts` afterward
 **Machines set up by hand before.** They keep working as they are. To move them to keys of their
 own, so each can be revoked alone:
 
-1. On each machine, once: `imkr hosts key` makes `~/.ssh/imkr-<machine id>` and puts it in the
-   register. (A pairing does the same.) Over the next minute or two every machine that already
-   reaches it by the old key takes the new key in, as an imkr line.
+1. On each machine that is to take part, once: `imkr hosts key` makes `~/.ssh/imkr-<machine id>`
+   and puts it in the register; from then on it is paired. (A pairing does the same.) Over the
+   next minute or two every paired machine that already reaches it by the old key takes the new
+   key in, as an imkr line. Machines you leave out (servers) stay as they are.
 2. Wait until `imkr hosts` on every machine says *paired* for all the others.
 3. Then remove the lines with the old, copied key from `~/.ssh/authorized_keys` on each machine,
    take `~/.ssh/imkr` out of the dotfile manager and delete it. From then on `imkr hosts rm NAME`
