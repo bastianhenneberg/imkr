@@ -682,9 +682,12 @@ Projekt-Slug: `imkr`
   Tunnel und Kopplung weiterer Rechner ab, ist keine Sandbox. Installieren per `hosts sync`
   braucht weiter den eigenen Login. `imkr hosts` zeigt „paired“/„key by hand“
   (`pairing::access`). E2E ohne sshd: Fake-ssh, das `authorized_keys` der Zielwelt wie sshd
-  auswertet (erste Zeile mit dem Schlüssel, `command=` mit `SSH_ORIGINAL_COMMAND`); Falle: der
-  Gekoppelte wird unter der **Absenderadresse** der Verbindung eingetragen — im Test landet
-  jede Verbindung von 127.0.0.1, also die neue Welt auf 127.0.0.1 legen.
+  auswertet (erste Zeile mit dem Schlüssel, `command=` mit `SSH_ORIGINAL_COMMAND`), `cargo build &&
+  python3 tests/pairing.py` (~5 min). Nach einer Kopplung versucht `settle` 15 min
+  lang jede Minute (`machines/paired-at`, `TRY_AGAIN_PAIRED`): der erste Versuch des Neuen kommt
+  vor seinem Schlüssel an, sonst wartete er 10 min. Falle: der Gekoppelte wird unter der
+  **Absenderadresse** der Verbindung eingetragen — im Test landet jede Verbindung von 127.0.0.1,
+  also die neue Welt auf 127.0.0.1 legen.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe
   „Tailscale“), `imkr hosts vpn` (alias `tailnet`, mit NetBird, probiert nichts). Test: Fake-`tailscale` im Scratchpad-bin.

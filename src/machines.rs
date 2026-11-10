@@ -680,6 +680,29 @@ fn tried_file() -> Result<PathBuf> {
 /// How long a machine of the register that ssh did not reach is left
 /// before it is tried again: it may be off, or not let this one in.
 const TRY_AGAIN: u64 = 10 * 60;
+/// After a pairing, how long the machines of the register are tried every
+/// `TRY_AGAIN_PAIRED` instead: the other side's key reaches them only with
+/// the next exchanges, so the first try often comes too early (#605).
+const PAIRED_FRESH: u64 = 15 * 60;
+const TRY_AGAIN_PAIRED: u64 = 60;
+
+fn paired_file() -> Result<PathBuf> {
+    Ok(dir()?.join("paired-at"))
+}
+
+/// How long to wait before trying a machine of the register again.
+fn try_again() -> u64 {
+    let paired: u64 = paired_file()
+        .and_then(|p| Ok(std::fs::read_to_string(p)?))
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0);
+    if crate::persist::now().saturating_sub(paired) < PAIRED_FRESH {
+        TRY_AGAIN_PAIRED
+    } else {
+        TRY_AGAIN
+    }
+}
 
 /// One round of acting on the register, from the server's places thread
 /// every minute: removed machines leave the hosts, renamed ones follow
@@ -695,6 +718,7 @@ pub fn settle() -> Vec<Suggestion> {
     let mut tried: BTreeMap<String, u64> = read_json(tried_file());
     let now = crate::persist::now();
     let mut to_try = Vec::new();
+    let wait = try_again();
     for entry in entries
         .iter()
         .filter(|e| e.id != own_id && e.name != here && !e.name.is_empty())
@@ -738,7 +762,7 @@ pub fn settle() -> Vec<Suggestion> {
         let reachable = !entry.address.is_empty() || ssh_knows(&entry.name);
         let due = tried
             .get(&entry.key())
-            .is_none_or(|at| now.saturating_sub(*at) >= TRY_AGAIN);
+            .is_none_or(|at| now.saturating_sub(*at) >= wait);
         if reachable && due {
             tried.insert(entry.key(), now);
             to_try.push(entry.clone());
@@ -809,6 +833,9 @@ pub fn take_paired(
     }
     take(&entry, false);
     crate::client::remember_host(&name);
+    if let Ok(file) = paired_file() {
+        let _ = std::fs::write(file, crate::persist::now().to_string());
+    }
     changes
 }
 
