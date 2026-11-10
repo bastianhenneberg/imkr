@@ -169,6 +169,12 @@ impl SessionInfo {
         self.panes == 0 && self.dormant.is_none()
     }
 
+    /// Whether it is a session that runs: neither the stand-in nor a
+    /// stopped or closed one.
+    pub fn runs(&self) -> bool {
+        !self.is_stand_in() && self.dormant.is_none()
+    }
+
     /// What a dormant session shows instead of its agents: "stopped 21:57"
     /// or "closed 12.10.".
     pub fn dormant_label(&self) -> Option<String> {

@@ -679,7 +679,9 @@ fn try_again() -> u64 {
 /// mode, `imkr ls --json`) and become hosts once imkr answers there.
 /// Machines nobody named are never looked for: the VPN is shared with
 /// other people's machines, which an imkr must not list (#9648).
-pub fn settle() {
+/// Returns the register's machines that are not hosts here yet, to be
+/// offered with that said.
+pub fn settle() -> Vec<String> {
     let entries = register();
     let own_id = crate::protocol::machine_id();
     let here = crate::protocol::machine_name();
@@ -753,6 +755,42 @@ pub fn settle() {
         }
     }
     let _ = write_json(tried_file(), &tried);
+    let known = crate::client::known_hosts();
+    let ids = host_ids();
+    register()
+        .into_iter()
+        .filter(|e| !e.removed && e.id != own_id && e.name != here && !e.name.is_empty())
+        .filter(|e| !known.contains(&e.name))
+        // Known under another name (added by hand).
+        .filter(|e| {
+            e.id.is_empty()
+                || !known
+                    .iter()
+                    .any(|n| ids.get(n).is_some_and(|h| h.id == e.id))
+        })
+        .map(|e| e.name)
+        .collect()
+}
+
+/// The user picked `name`, a machine of the register not reached yet, to
+/// start a session on: ssh is to reach it at the register's address
+/// unless it knows the name.
+pub fn reach_registered(name: &str) {
+    if ssh_knows(name) || routes().contains_key(name) {
+        return;
+    }
+    if let Some(entry) = register()
+        .into_iter()
+        .find(|e| e.name == name && !e.removed && !e.address.is_empty())
+    {
+        remember_route(
+            name,
+            Route {
+                address: entry.address,
+                user: entry.user,
+            },
+        );
+    }
 }
 
 /// Makes `entry` a host here, with its address where ssh does not know

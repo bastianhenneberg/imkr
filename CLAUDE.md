@@ -952,7 +952,14 @@ Projekt-Slug: `imkr`
   (`SessionInfo::is_stand_in`: 0 Panes) – die Sidebar zeigt dafür „no session yet“, `Ctrl+B S`
   statt des Namens `NEW_SESSION_ENTRY` („+ new session…“, #1362), Enter fragt per
   `ask_session_name(host)` nach dem Namen, statt eine `default` zu starten; nie als alt
-  ausgeblendet. Damit die Zeit Updates und
+  ausgeblendet. Welche Rechner so einen Eintrag bekommen, sagt **eine** Liste,
+  `App::empty_hosts` → freie Funktion `empty_hosts` (mit Grund): antwortet ohne laufende Session
+  (`SessionInfo::runs`; nur geschlossene zählen nicht — so verschwanden desktop und pimarchy aus
+  `Ctrl+B S`, weil ruhende als alt ausgeblendet sind), antwortet nicht (`short_problem`), steht
+  nur im Register (`Places::unreached` aus `machines::settle`, Wahl → `reach_registered` merkt
+  die Register-Adresse). `Ctrl+B S`, Enter darauf und `machine_choices` (`Ctrl+B s n`, alle
+  Hosts, auch nicht antwortende) lesen sie. Die Auswahl baut der Server, an dem der Client hängt:
+  E2E mit Client-Welt ≠ Server-Welt (Schein-ssh nach Zielname). Damit die Zeit Updates und
   Neustarts übersteht: `SavedPane::idle_since` → `App::carried` (gilt bis zum ersten Idle, höchstens
   `CARRIED_FOR`), übernommene Panes setzen `last_output` 60 s zurück (sonst kurz „working“), und
   `Handover::unseen` hält ✦ done über ein Update.

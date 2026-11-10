@@ -505,6 +505,9 @@ struct Places {
     last_seen: HashMap<String, Vec<String>>,
     /// Machines of the Tailscale network that are online, as suggestions.
     tailnet: Vec<String>,
+    /// Machines of the register that are not hosts here yet: not reached
+    /// so far, but the user's own, so they are offered with that said.
+    unreached: Vec<String>,
     /// The devices that have `imkr web` of this machine open.
     web: Vec<crate::web::Seen>,
     /// Whether the thread has filled this in once. Before it has, an
@@ -5519,7 +5522,7 @@ impl App {
         for (host, sessions) in &self.known_hosts() {
             match sessions {
                 // Nothing runs there: said so, not shown as a session.
-                Ok(sessions) if sessions.iter().all(protocol::SessionInfo::is_stand_in) => {
+                Ok(sessions) if !sessions.iter().any(protocol::SessionInfo::runs) => {
                     rows.push(sidebar::SessionRow {
                         host: Some(host.clone()),
                         machine: self.machine_label(Some(host)),
@@ -5636,6 +5639,16 @@ impl App {
             .as_ref()
             .and_then(|o| o.via.clone())
             .unwrap_or_else(protocol::hostname)
+    }
+
+    /// The machines where nothing runs to go to, with why: those that
+    /// answer with no running session, those that do not answer, and those
+    /// of the register not reached yet. Each is a place to start one.
+    fn empty_hosts(&self) -> Vec<(String, String)> {
+        let known = self.known_hosts();
+        let unreached = self.places.lock().unwrap().unreached.clone();
+        let origin = self.origin.as_ref().map(|o| o.host.clone());
+        empty_hosts(&known, &unreached, origin.as_deref())
     }
 
     /// Every other machine with its sessions: those this server asks
@@ -8069,20 +8082,14 @@ impl App {
                 ));
             }
         }
-        // Machines that answer but run nothing yet: going there starts one.
-        let mut empty = Vec::new();
         for (host, sessions) in &self.known_hosts() {
-            for session in sessions.iter().flatten() {
+            for session in sessions.iter().flatten().filter(|s| !s.is_stand_in()) {
                 let place = Place {
                     host: Some(host.clone()),
                     name: session.name.clone(),
                 };
                 let dormant = dormant_of(std::slice::from_ref(session), &session.name);
-                let mut hint = format!("⇄ {host}");
-                if session.is_stand_in() {
-                    empty.push(place.clone());
-                    hint.push_str(" · nothing runs there yet");
-                }
+                let hint = format!("⇄ {host}");
                 entries.push((
                     place,
                     hint,
@@ -8091,6 +8098,21 @@ impl App {
                     session.quiet_for(),
                     Some(session.by.clone()).filter(|by| !by.is_empty()),
                 ));
+            }
+        }
+        // Machines that run nothing, do not answer or were not reached yet:
+        // one entry each to start a session there, with why, never hidden
+        // as old. A machine with only closed sessions vanished otherwise.
+        let mut empty = Vec::new();
+        for (host, why) in self.empty_hosts() {
+            let place = Place {
+                host: Some(host.clone()),
+                name: protocol::DEFAULT_SESSION.to_owned(),
+            };
+            empty.push(place.clone());
+            if !entries.iter().any(|(p, ..)| *p == place) {
+                let hint = format!("⇄ {host} · {why}");
+                entries.push((place, hint, BTreeMap::new(), None, None, None));
             }
         }
         let old: Vec<Place> = entries
@@ -8492,8 +8514,16 @@ impl App {
         if let Some(origin) = &self.origin {
             machines.push(Some(origin.host.clone()));
         }
-        for (host, sessions) in self.known_hosts() {
-            if sessions.is_ok() && !machines.contains(&Some(host.clone())) {
+        // Every machine of the user's, also one that does not answer or
+        // was not reached yet: listed with why, not left out.
+        let reasons = self.empty_hosts();
+        for host in self
+            .known_hosts()
+            .into_iter()
+            .map(|(h, _)| h)
+            .chain(self.places.lock().unwrap().unreached.clone())
+        {
+            if !machines.contains(&Some(host.clone())) {
                 machines.push(Some(host));
             }
         }
@@ -8526,6 +8556,10 @@ impl App {
                     title: label,
                     hint: if host.is_none() {
                         "this machine".into()
+                    } else if let Some((_, why)) =
+                        reasons.iter().find(|(h, _)| host.as_ref() == Some(h))
+                    {
+                        why.clone()
                     } else if i >= first_suggested {
                         "in your tailnet, not used with imkr yet".into()
                     } else {
@@ -8891,6 +8925,11 @@ impl App {
             KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
             _ => return,
         };
+        if let Some(Some(host)) = machines.get(pick)
+            && self.places.lock().unwrap().unreached.contains(host)
+        {
+            crate::machines::reach_registered(host);
+        }
         match machines.get(pick).cloned() {
             Some(host) if self.hosting => {
                 self.mode = Mode::Normal;
@@ -10452,8 +10491,11 @@ impl App {
             // Nothing runs there: ask for a name, as `n` does, instead of
             // starting the stand-in's "default" (#1362).
             Some(place)
-                if place.host.is_some()
-                    && self.session_info(place).is_some_and(|s| s.is_stand_in()) =>
+                if place.name == protocol::DEFAULT_SESSION
+                    && self
+                        .empty_hosts()
+                        .iter()
+                        .any(|(host, _)| place.host.as_ref() == Some(host)) =>
             {
                 self.ask_session_name(place.host.clone());
             }
@@ -15232,6 +15274,35 @@ fn screen_layout(screen: Rect, bars: &Bars, spacing: &Spacing) -> ScreenLayout {
 
 /// ` ⬢ imkr `, or the session's name for a named one.
 /// Why a host's sessions are unknown, in a few words for the sidebar.
+/// See `App::empty_hosts`: `known` as `App::known_hosts` has them,
+/// `unreached` the register's machines not hosts yet, `origin` the
+/// machine the client sits at, which is listed apart.
+fn empty_hosts(
+    known: &[(
+        String,
+        std::result::Result<Vec<protocol::SessionInfo>, String>,
+    )],
+    unreached: &[String],
+    origin: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut empty: Vec<(String, String)> = known
+        .iter()
+        .filter_map(|(host, sessions)| match sessions {
+            Ok(sessions) if !sessions.iter().any(protocol::SessionInfo::runs) => {
+                Some((host.clone(), "nothing runs there yet".to_owned()))
+            }
+            Ok(_) => None,
+            Err(e) => Some((host.clone(), format!("not reachable: {}", short_problem(e)))),
+        })
+        .collect();
+    for host in unreached {
+        if !known.iter().any(|(h, _)| h == host) && origin != Some(host.as_str()) {
+            empty.push((host.clone(), "in the register, not reached yet".to_owned()));
+        }
+    }
+    empty
+}
+
 fn short_problem(error: &str) -> String {
     if error.contains("command not found") || error.contains("unknown arguments") {
         "imkr there is too old or missing".into()
@@ -15311,7 +15382,8 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                 found_at = Some(Instant::now());
                 // Machines found since, through the register of the
                 // others, become hosts here; the next round asks them.
-                crate::machines::settle();
+                let unreached = crate::machines::settle();
+                places.lock().unwrap().unreached = unreached;
             }
             if hosts_at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY) {
                 hosts_at = Some(Instant::now());
@@ -16997,6 +17069,49 @@ mod tests {
         assert!(pane_buttons(Rect::new(0, 0, 20, 10), false).is_empty());
     }
     use super::*;
+
+    #[test]
+    fn every_machine_of_the_users_is_a_place_to_start_a_session() {
+        let session = |name: &str, dormant: bool| protocol::SessionInfo {
+            name: name.to_owned(),
+            panes: 1,
+            dormant: dormant.then(|| "closed".to_owned()),
+            ..Default::default()
+        };
+        let stand_in = protocol::SessionInfo {
+            name: protocol::DEFAULT_SESSION.to_owned(),
+            ..Default::default()
+        };
+        let known = vec![
+            // Runs a session: it has its own entries.
+            ("codingmachine".to_owned(), Ok(vec![session("api", false)])),
+            // Only closed sessions: it vanished from Ctrl+B S.
+            (
+                "desktop".to_owned(),
+                Ok(vec![session("update", true), session("pixelart", true)]),
+            ),
+            ("bare".to_owned(), Ok(vec![stand_in])),
+            (
+                "pimarchy".to_owned(),
+                Err("pimarchy: ssh: connect timed out".to_owned()),
+            ),
+        ];
+        let unreached = [
+            "fresh".to_owned(),
+            "desktop".to_owned(),
+            "laptop".to_owned(),
+        ];
+        assert_eq!(
+            empty_hosts(&known, &unreached, Some("laptop")),
+            [
+                ("desktop".into(), "nothing runs there yet".into()),
+                ("bare".into(), "nothing runs there yet".into()),
+                ("pimarchy".into(), "not reachable: offline".into()),
+                ("fresh".into(), "in the register, not reached yet".into()),
+            ]
+            .map(|(a, b): (String, String)| (a, b))
+        );
+    }
 
     #[test]
     fn hosted_windows_come_back_after_a_restart() {

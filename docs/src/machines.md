@@ -6,7 +6,10 @@ starts there, with your ssh keys. Any of your machines can be the operator, whic
 
 One imkr for the sessions here and on other machines, without an imkr inside an imkr: the
 sidebar and the session list (`Ctrl+B S`) show every machine's sessions, and picking one switches
-this terminal over to it. imkr runs on that machine and keeps its shells and agents going when the
+this terminal over to it. Every machine of yours is in both lists, also one where nothing runs,
+one with only closed sessions, one that does not answer and one only the register knows: as
+*+ new session…* with why (*nothing runs there yet*, *not reachable*, *in the register, not
+reached yet*), and in `Ctrl+B s n` with the same words. imkr runs on that machine and keeps its shells and agents going when the
 connection drops; this terminal stays the client, so keys, clipboard, images and the window size
 are local. On the other machine the list offers this one's sessions to come back to. Machines
 are marked from where you sit: `⌂` is the one your terminal runs on, `⇄` any other, and the
