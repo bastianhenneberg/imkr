@@ -626,26 +626,35 @@ Projekt-Slug: `imkr`
   Namen stehen, die hier fehlen — Listen dürfen dauerhaft verschieden sein; `apply` → `Store::merge_in`: fehlende anhängen samt Ordner,
   Default nur wenn keiner da); nie Logins. `default_of` zählt nur angemeldete Konten.
   Test: Fake-ssh, das nach `--` den Befehl mit HOME/IMKR_CONFIG der zweiten Welt ausführt.
-- Rechner finden sich (#9648): `src/machines.rs`. NetBird-Peers (`netbird_peers`, Name = erstes
-  Label der FQDN, online = Connected|Idle), Kandidaten aus `learn_from` (die Hosts, die ein Rechner
-  im `ls --json` mitliefert) und `note_caller` (Rückweg: `CALLER_ENV` + Adresse aus
-  `SSH_CONNECTION`) → `discover` (minütlich in `watch_places`, `found_at`, Sperre `discover.lock`,
-  `PROBES_AT_ONCE`) → `probe` (erst TCP 22, dann ssh BatchMode + `ls --json` mit `HOSTS_ENV`) →
-  `checked.json` (ohne imkr `CHECK_AGAIN` 1 Tag Ruhe) → `take` = `remember_host` unter dem Namen,
-  den imkr drüben nennt (`SessionInfo::machine`, `machine_id` erkennt sich selbst). ssh+kein imkr =
-  Vorschlag „NetBird“ in `machine_choices` (`Places::netbird`). Weitergabe kompatibel: Umgebungs-
-  variablen über `remote_command_with` (alte imkr ignorieren sie), Felder `machine`/`machine_id`/
-  `hosts` auf dem ersten `SessionInfo` (`tell_hosts`, bei leerer Liste ein Stand-in, das der
-  Fragende sonst selbst erfände) — nie neue Flags/Requests. Adresse ohne ssh-config:
-  `host-routes.json` (`Route`), `hosts` bleibt eine Zeile je Name (alte Binaries lesen sie);
+- Rechner-Register (#9648): `src/machines.rs`. **Kein Absuchen des VPN** (Bastians Entscheidung:
+  Kollegen-Rechner und fail2ban-Server dürfen keine abgelehnten Logins sehen) — NetBird-/Tailscale-
+  Peers sind nur Vorschläge in `Ctrl+B s n` (`suggestions`, `Places::netbird`, Wahl →
+  `reach_suggested` merkt die NetBird-Adresse). Stattdessen `register.json`: `Entry` (Name =
+  `machine_name` des Rechners, `id` = `machine_id`, Adresse, User, `at`, `removed`), Schlüssel
+  `Entry::key` (id, vorher `name:NAME`). `merge` = Vereinigung, je Schlüssel gewinnt das neuere
+  `at` (Umbenennung, neue IP); ein Eintrag nur mit Namen weicht dem mit id gleichen Namens (ist er
+  neuer, übergibt er vorher removed/Adresse). `change_register` unter flock (`register.lock`).
+  Reist beim minütlichen `ls --json` (`remote_sessions_asking(host, true)`): Fragender schickt sein
+  Register als JSON in `HOSTS_ENV` + seine id in `CALLER_ENV` (`remote_command_with`, alte imkr
+  ignorieren Umgebungsvariablen), Gefragter (`tell_hosts`) mischt, trägt die Adresse aus
+  `SSH_CONNECTION` ein (`note_address`: VPN-Adresse ersetzt, andere füllen nur Lücken) und gibt
+  `machine`/`machine_id`/`machines` auf dem ersten `SessionInfo` zurück (bei leerer Liste ein
+  Stand-in); `learn_from` mischt beim Fragenden. Nie neue Flags/Requests. `note_self`: eigener
+  Eintrag neu nur bei geändertem Namen/User — ein Löschvermerk für sich selbst bleibt stehen.
+  `settle` (minütlich in `watch_places`, `found_at`): removed → `drop_host` (alle Namen hier, auch
+  per `ids.json` gleiche id), umbenannt → neuer Name (nur `HostId::from_register`, von Hand
+  hinzugefügte behalten ihren Namen), unbekannt → `reach` (ssh BatchMode + `ls --json`, je Eintrag
+  höchstens alle `TRY_AGAIN` 10 min, `tried.json`) → `take` erst nach Antwort. `hosts add` →
+  `register_add` (hebt den Vermerk auf), `hosts rm` → `register_remove` (Vermerk mit Zeit). Adresse
+  ohne ssh-config: `host-routes.json` (`Route`), `hosts` bleibt eine Zeile je Name (alte Binaries);
   **jeder** ssh-Aufruf nimmt `machines::ssh_to(host)` statt `"--", host` (Name, wenn `ssh -G` ihn
   umbenennt oder er auflöst, sonst Adresse; `accept-new` + eigenes `machines/known_hosts` nur für
-  100.64.0.0/10). `hosts rm` → `forgotten`, sonst brächte das Finden ihn zurück. Test: drei Welten,
-  Fake-`ssh` nach Adresse 127.0.0.1–3 (lokaler sshd lässt Port 22 offen, setzt `SSH_CONNECTION`,
-  `-G` gibt den Namen unverändert), Fake-`netbird` nur in Welt alpha, kurze `XDG_RUNTIME_DIR`.
+  100.64.0.0/10). Test: drei Welten, Fake-`ssh` nach Adresse 127.0.0.1–3 (setzt `SSH_CONNECTION`,
+  `-G` gibt den Namen unverändert), Fake-`netbird` nur in Welt alpha, kurze `XDG_RUNTIME_DIR`,
+  Server in allen drei Welten (ohne Server kein `settle`), Umbenennen per `name` in der Config.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe
-  „Tailscale“), `imkr hosts vpn` (alias `tailnet`, mit NetBird). Test: Fake-`tailscale` im Scratchpad-bin.
+  „Tailscale“), `imkr hosts vpn` (alias `tailnet`, mit NetBird, probiert nichts). Test: Fake-`tailscale` im Scratchpad-bin.
 - Verteilen: `imkr update`/`upgrade` stellen jede laufende Session des Rechners um (`-s` nur eine,
   eigenes `IMKR_SOCKET` außerhalb des Runtime-Verzeichnisses nur diesen). `imkr hosts sync`
   (`cli::hosts_sync`, parallel je Host): `client::installed_on` → `install_on` (install.sh per

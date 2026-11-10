@@ -36,28 +36,33 @@ where it is missing, upgraded with all its running sessions everywhere else. Wit
 Tailscale, the machines of your tailnet that are online and not used yet show as suggestions when
 you start a session on another machine (`Ctrl+B s n`), by their MagicDNS name.
 
-### Machines that find each other
+### Machines that know of each other
 
-You do not have to list every machine everywhere. imkr finds them in three ways, and shows a
-machine only once imkr answered there:
+You add a machine once, by hand, on any of your machines (`imkr hosts add NAME [ADDRESS]
+[--user USER]`, or `imkr --host NAME`), and the others learn of it. Every machine keeps a
+register of your machines: name, machine id, address, login, and when that was last true. Once a
+minute, when the machines ask each other for their sessions anyway, each sends its register and
+gets the other's back; both join them, and for one machine the newer entry wins. So a machine that
+got a new name or a new address in your VPN is known by it everywhere, and if A knows B and B
+knows C, A learns of C. Whoever reaches a machine is in its register too, at the address its ssh
+connection came from, so a new laptop that reaches the desktop shows up on the desktop as well.
 
-- **NetBird.** Once a minute imkr reads `netbird status --json` and tries the peers that are
-  online, a handful per round: first whether ssh's port is open (a phone or a laptop without sshd
-  costs one refused connection and nothing in anyone's logs), then ssh without prompting and
-  `imkr ls --json`. A machine where imkr answers becomes a host under the name it gives itself
-  (`desktop`, not `archlinux-henneberg-desktop`). One where ssh gets in but imkr is missing shows
-  as a suggestion in the group *NetBird* when you start a session elsewhere. Everything else (a
-  colleague's laptop, no key there) is left alone for a day. `imkr hosts vpn` lists the peers of
-  both networks and what came out for each (`imkr hosts tailnet` still works).
-- **The machines the others know.** Once a minute every machine asked also tells the machines it
-  knows, with their addresses. If A knows B and B knows C, A tries C and keeps it if imkr answers.
-- **The way back.** Whoever reaches a machine is tried from there too, at the address its ssh
-  connection came from. So a new laptop that reaches the desktop shows up on the desktop as well.
+A machine from the register shows as a host once ssh got in from here, without prompting, and
+imkr answered there; until then `imkr hosts` lists it as *in the register, not reached yet*, and
+it is tried again every ten minutes. imkr does not search your network: it never knocks at a
+peer of your NetBird or Tailscale network that no machine of yours named.
 
-`imkr hosts rm NAME` takes a found machine out for good: finding it again does not bring it back,
-`imkr hosts add NAME` does.
+`imkr hosts rm NAME` takes a machine out everywhere: it leaves a removal with its time in the
+register, which travels like any entry, so the machine does not come back over the others.
+`imkr hosts add NAME`, on any machine, takes it back.
 
-**Without `~/.ssh/config`.** imkr notes the address and login of every machine it found
+**NetBird and Tailscale.** The peers of your networks that are online and not used yet show as
+suggestions when you start a session on another machine (`Ctrl+B s n`, groups *NetBird* and
+*Tailscale*); picking one connects to it by ssh, a NetBird one at its NetBird address. `imkr hosts
+vpn` lists the peers of both networks and what imkr knows of each (`imkr hosts tailnet` still
+works).
+
+**Without `~/.ssh/config`.** imkr notes the address and login of every machine it reached
 (`~/.local/state/imkr/host-routes.json`; `imkr hosts` shows them, `imkr hosts add NAME ADDRESS
 [--user USER]` sets one by hand). ssh is called with the name as long as ssh knows it (an entry in
 `~/.ssh/config`, or a name that resolves), else with that address. Host keys: for an address of

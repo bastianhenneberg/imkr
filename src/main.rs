@@ -109,7 +109,8 @@ Commands:
                 start session SESSION (default: the template's name) from it
   hosts [add NAME [ADDRESS] [--user USER] | rm NAME]
                 the other machines shown, from the settings, remembered and
-                found; ADDRESS for one ssh does not know by its name
+                from the register the machines share; ADDRESS for one ssh
+                does not know by its name; rm takes it out on all of them
   hosts sync    the latest release on every one of them: installed where
                 imkr is missing, upgraded with its sessions elsewhere
   hosts vpn     the machines of your Tailscale and NetBird networks, and

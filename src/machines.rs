@@ -1,29 +1,32 @@
-//! How the machines find each other (#9648): the peers of a NetBird
-//! network (`netbird status --json`), the machines the known ones know,
-//! and the way back to the one that called. And how ssh reaches a machine
-//! without an entry in `~/.ssh/config`: by the address imkr noted for it.
+//! The register of the user's machines (#9648), and how ssh reaches a
+//! machine without an entry in `~/.ssh/config`.
 //!
-//! Nothing is shown as a machine before imkr answered there: a NetBird
-//! network holds colleagues' laptops and phones, and a machine that one
-//! host can reach need not be reachable from here. Every candidate is
-//! tried once with ssh in batch mode (`probe`) and what came out is kept
-//! (`checked.json`), so a machine without imkr is not asked again for a
-//! day.
+//! Machines do not search for each other: every machine keeps a register
+//! of the machines it knows of (name, id, address, login, when that was
+//! last true), and the register travels on the `imkr ls --json` exchange
+//! the servers run anyway, both ways (`HOSTS_ENV`). The registers are
+//! joined, the newer entry of one machine id wins (a new name, a new
+//! address). `imkr hosts rm` leaves a removal with its time, which travels
+//! as well, so a machine taken out does not come back over the others;
+//! `imkr hosts add` takes it back. The start is one `imkr hosts add` by
+//! hand. A machine from the register becomes a host here once ssh got in
+//! and imkr answered: nothing is shown as unreachable for good, and
+//! nothing is guessed — no peer of a VPN is tried that no machine of the
+//! user's named.
 //!
 //! Files in the state directory, next to `hosts` (which stays one name a
 //! line, as older versions read it):
 //! - `host-routes.json`: name → address and user, for ssh;
-//! - `machines/checked.json`: what trying an address gave, and when;
-//! - `machines/candidates.json`: machines heard of, not tried yet;
-//! - `machines/forgotten`: names `imkr hosts rm` took out, which finding
-//!   them again must not bring back;
+//! - `machines/register.json`: the register;
+//! - `machines/ids.json`: the id behind each host name here;
+//! - `machines/tried.json`: when a machine of the register was last tried;
 //! - `machines/known_hosts`: host keys of machines reached by address.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -39,22 +42,13 @@ pub struct Route {
     pub user: String,
 }
 
-/// A machine another one knows, as `imkr ls --json` passes it on when
-/// asked with `HOSTS_ENV`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HostInfo {
-    pub name: String,
-    #[serde(default)]
-    pub address: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub user: String,
-}
-
 /// Set on `imkr ls --json` by a machine that wants this one's name and
-/// the machines it knows along with the sessions.
+/// id and its register along with the sessions; the value is the asking
+/// machine's register, as JSON, so both learn from one exchange. Older
+/// versions ignore it.
 pub const HOSTS_ENV: &str = "IMKR_HOSTS_TOO";
-/// Set on `imkr ls --json` by the machine asking: its name and login,
-/// `NAME USER`, so the one asked can find its way back.
+/// Set along with `HOSTS_ENV`: the asking machine's id, so the one asked
+/// notes the address that machine came from.
 pub const CALLER_ENV: &str = "IMKR_CALLER";
 
 /// A machine of a NetBird network.
@@ -282,368 +276,296 @@ fn route_of(host: &str) -> Route {
     }
 }
 
-/// The machines this one knows, for another that asked with `HOSTS_ENV`.
-pub fn host_infos() -> Vec<HostInfo> {
-    crate::client::known_hosts()
-        .into_iter()
-        .map(|name| {
-            let route = route_of(&name);
-            HostInfo {
-                name,
-                address: route.address,
-                user: route.user,
-            }
-        })
-        .collect()
-}
-
-/// A machine heard of, to be tried.
+/// One machine of the register.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Candidate {
-    /// What it is called where it was heard of; replaced by the name imkr
-    /// there gives itself.
+pub struct Entry {
+    /// The name the machine gives itself (`machine_name`), or the one it
+    /// was added by.
     pub name: String,
+    /// Its `machine_id`; empty while only added by hand and not reached.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    /// Where ssh reaches it; empty while no machine reached it yet.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub address: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub user: String,
-}
-
-fn candidates_file() -> Result<PathBuf> {
-    Ok(dir()?.join("candidates.json"))
-}
-
-/// Notes machines to try, for the next round of `discover`.
-pub fn note_candidates(found: impl IntoIterator<Item = Candidate>) {
-    let mut all: Vec<Candidate> = read_json(candidates_file());
-    let before = all.len();
-    for candidate in found {
-        if candidate.address.is_empty() || all.iter().any(|c| c.address == candidate.address) {
-            continue;
-        }
-        all.push(candidate);
-    }
-    if all.len() != before {
-        let _ = write_json(candidates_file(), &all);
-    }
-}
-
-/// For `imkr ls --json` started by another machine through ssh with
-/// `CALLER_ENV`: that machine as a candidate, at the address ssh says it
-/// came from. The way back: whoever reaches this machine is shown here
-/// too, once this one reached it.
-pub fn note_caller() {
-    let Ok(caller) = std::env::var(CALLER_ENV) else {
-        return;
-    };
-    let mut words = caller.split_whitespace();
-    let (Some(name), user) = (words.next(), words.next().unwrap_or_default()) else {
-        return;
-    };
-    let Some(address) = std::env::var("SSH_CONNECTION")
-        .ok()
-        .and_then(|c| c.split_whitespace().next().map(str::to_owned))
-        .filter(|a| a.parse::<IpAddr>().is_ok())
-    else {
-        return;
-    };
-    if crate::client::known_hosts().iter().any(|h| h == name)
-        || forgotten().contains(&name.to_owned())
-    {
-        return;
-    }
-    note_candidates([Candidate {
-        name: name.to_owned(),
-        address,
-        user: user.to_owned(),
-    }]);
-}
-
-/// The value for `CALLER_ENV`: this machine's name and login.
-pub fn caller() -> String {
-    let user = std::env::var("USER").unwrap_or_default();
-    format!("{} {user}", crate::protocol::machine_name())
-}
-
-/// From the sessions `host` listed with `HOSTS_ENV`: the machines it
-/// knows, as candidates. Itself, and the stand-in for a machine without a
-/// session, are no machines to try.
-pub fn learn_from(host: &str, sessions: &[crate::protocol::SessionInfo]) {
-    let Some(first) = sessions.first() else {
-        return;
-    };
-    let known = crate::client::known_hosts();
-    let here = crate::protocol::machine_name();
-    note_candidates(
-        first
-            .hosts
-            .iter()
-            .filter(|h| h.name != here && h.name != host && !known.contains(&h.name))
-            .map(|h| Candidate {
-                name: h.name.clone(),
-                address: h.address.clone(),
-                user: h.user.clone(),
-            }),
-    );
-}
-
-fn forgotten_file() -> Result<PathBuf> {
-    Ok(dir()?.join("forgotten"))
-}
-
-/// The names `imkr hosts rm` took out.
-pub fn forgotten() -> Vec<String> {
-    forgotten_file()
-        .and_then(|p| Ok(std::fs::read_to_string(p)?))
-        .map(|t| t.lines().map(str::to_owned).collect())
-        .unwrap_or_default()
-}
-
-/// Notes that `name` is not to come back by being found (`forget`), or
-/// may again (`!forget`, from `imkr hosts add`).
-pub fn set_forgotten(name: &str, forget: bool) {
-    let mut names = forgotten();
-    let had = names.iter().any(|n| n == name);
-    if had == forget {
-        return;
-    }
-    names.retain(|n| n != name);
-    if forget {
-        names.push(name.to_owned());
-    }
-    if let Ok(path) = forgotten_file() {
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let text: String = names.iter().map(|n| format!("{n}\n")).collect();
-        let _ = std::fs::write(path, text);
-    }
-}
-
-/// What trying an address gave.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Checked {
-    /// Seconds since 1970.
+    /// When this entry was last true, in seconds since 1970: the newer of
+    /// two entries of one machine wins.
     pub at: u64,
-    /// The name it was heard of by.
-    pub name: String,
-    /// ssh got in.
-    pub ssh: bool,
-    /// The name imkr there gave itself; empty without imkr.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub imkr: String,
-    /// It is this machine.
+    /// Taken out with `imkr hosts rm`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub own: bool,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub user: String,
+    pub removed: bool,
 }
 
-fn checked_file() -> Result<PathBuf> {
-    Ok(dir()?.join("checked.json"))
-}
-
-/// What trying each address gave, by address.
-pub fn checked() -> BTreeMap<String, Checked> {
-    read_json(checked_file())
-}
-
-/// How long a machine without imkr (or without a way in) is left alone.
-const CHECK_AGAIN: u64 = 24 * 3600;
-/// How many machines one round tries, at once.
-const PROBES_AT_ONCE: usize = 6;
-
-/// Whether `address` is to be tried (again) now.
-fn due(checked: &BTreeMap<String, Checked>, address: &str, now: u64) -> bool {
-    checked
-        .get(address)
-        .is_none_or(|c| !c.own && c.imkr.is_empty() && now.saturating_sub(c.at) >= CHECK_AGAIN)
-}
-
-/// One round of finding machines, from the server's places thread every
-/// minute: the NetBird peers that are online and the candidates heard of,
-/// those not known and due tried at once (a handful per round), the ones
-/// with imkr remembered as hosts with their route. Returns the machines
-/// ssh reached that have no imkr yet, as suggestions: name and network.
-///
-/// Only one server of this machine does it at a time: two sessions
-/// trying the same addresses doubles the ssh connections for nothing.
-pub fn discover() -> Vec<(String, &'static str)> {
-    let Some(_lock) = lock() else {
-        return suggestions();
-    };
-    let now = crate::persist::now();
-    let known = crate::client::known_hosts();
-    let forgotten = forgotten();
-    let checked = checked();
-    let peers = netbird_peers();
-    // Addresses of machines known already: no reason to try them again.
-    let routes = routes();
-    let known_addresses: Vec<String> = known
-        .iter()
-        .filter_map(|h| routes.get(h).map(|r| r.address.clone()))
-        .collect();
-    let mut todo: Vec<Candidate> = Vec::new();
-    let heard: Vec<Candidate> = read_json(candidates_file());
-    for candidate in heard
-        .iter()
-        .cloned()
-        .chain(peers.iter().filter(|p| p.online).map(|p| Candidate {
-            name: p.name.clone(),
-            address: p.address.clone(),
-            user: String::new(),
-        }))
-    {
-        let skip = known.contains(&candidate.name)
-            || forgotten.contains(&candidate.name)
-            || known_addresses.contains(&candidate.address)
-            || !due(&checked, &candidate.address, now)
-            || todo.iter().any(|t| t.address == candidate.address);
-        if !skip {
-            todo.push(candidate);
-        }
-        if todo.len() == PROBES_AT_ONCE {
-            break;
+impl Entry {
+    /// Which machine the entry is about: its id, or its name before the id
+    /// is known.
+    fn key(&self) -> String {
+        if self.id.is_empty() {
+            format!("name:{}", self.name)
+        } else {
+            self.id.clone()
         }
     }
-    let threads: Vec<_> = todo
-        .into_iter()
-        .map(|candidate| std::thread::spawn(move || (probe(&candidate), candidate)))
-        .collect();
-    let mut checked = checked;
-    for thread in threads {
-        let Ok((result, candidate)) = thread.join() else {
+
+    /// Whether this entry is to replace `other`, of the same machine.
+    fn beats(&self, other: &Entry) -> bool {
+        self.at > other.at
+            || (self.at == other.at && other.address.is_empty() && !self.address.is_empty())
+    }
+}
+
+/// Joins `theirs` into `mine`: every machine of both, the newer entry of
+/// each. An entry known only by name gives way to one with an id under
+/// that name, after handing it what it says if it is the newer (a removal
+/// by hand before the id was known still removes). True if `mine`
+/// changed.
+pub fn merge(mine: &mut Vec<Entry>, theirs: &[Entry]) -> bool {
+    let before = mine.clone();
+    for entry in theirs.iter().filter(|e| !e.name.is_empty()) {
+        match mine.iter_mut().find(|m| m.key() == entry.key()) {
+            Some(m) if entry.beats(m) => *m = entry.clone(),
+            Some(_) => {}
+            None => mine.push(entry.clone()),
+        }
+    }
+    let by_name: Vec<Entry> = mine.iter().filter(|e| e.id.is_empty()).cloned().collect();
+    for named in by_name {
+        let Some(with_id) = mine
+            .iter_mut()
+            .find(|e| !e.id.is_empty() && e.name == named.name)
+        else {
             continue;
         };
-        if !result.imkr.is_empty() && !result.own {
-            take(&result.imkr, &candidate, &forgotten);
+        if named.at > with_id.at {
+            with_id.removed = named.removed;
+            with_id.at = named.at;
+            if !named.address.is_empty() {
+                with_id.address = named.address.clone();
+            }
+            if !named.user.is_empty() {
+                with_id.user = named.user.clone();
+            }
         }
-        checked.insert(candidate.address.clone(), result);
+        mine.retain(|e| e.key() != named.key());
     }
-    let _ = write_json(checked_file(), &checked);
-    // Tried ones leave the candidates, whatever came out.
-    let left: Vec<Candidate> = heard
-        .into_iter()
-        .filter(|c| !checked.contains_key(&c.address))
-        .collect();
-    let _ = write_json(candidates_file(), &left);
-    suggestions()
+    mine.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
+    *mine != before
 }
 
-/// Makes `name`, found at `candidate`'s address, a host of this machine,
-/// with the address noted where ssh does not know the name.
-fn take(name: &str, candidate: &Candidate, forgotten: &[String]) {
-    if forgotten.iter().any(|n| n == name) || name == crate::protocol::machine_name() {
+fn register_file() -> Result<PathBuf> {
+    Ok(dir()?.join("register.json"))
+}
+
+/// The machines of the register, removed ones included.
+pub fn register() -> Vec<Entry> {
+    read_json(register_file())
+}
+
+/// Changes the register under a lock: servers and `imkr ls --json` started
+/// by other machines write it at the same time.
+fn change_register(change: impl FnOnce(&mut Vec<Entry>)) -> Vec<Entry> {
+    use std::os::fd::AsRawFd;
+    let lock = dir().ok().and_then(|dir| {
+        std::fs::create_dir_all(&dir).ok()?;
+        std::fs::File::create(dir.join("register.lock")).ok()
+    });
+    if let Some(file) = &lock {
+        // SAFETY: flock on a descriptor we own; released when it closes.
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    }
+    let mut entries = register();
+    let before = entries.clone();
+    change(&mut entries);
+    if entries != before {
+        let _ = write_json(register_file(), &entries);
+    }
+    entries
+}
+
+/// This machine's own entry, made new when its name or login changed.
+/// Its removal stays as long as nothing changed: a machine taken out
+/// does not put itself back.
+fn note_self(entries: &mut Vec<Entry>) {
+    let id = crate::protocol::machine_id();
+    let name = crate::protocol::machine_name();
+    let user = std::env::var("USER").unwrap_or_default();
+    let now = crate::persist::now();
+    match entries.iter_mut().find(|e| e.id == id) {
+        Some(own) if own.name == name && own.user == user => {}
+        Some(own) => {
+            own.name = name;
+            own.user = user;
+            own.at = now;
+        }
+        None => {
+            merge(
+                entries,
+                &[Entry {
+                    name,
+                    id,
+                    user,
+                    at: now,
+                    ..Entry::default()
+                }],
+            );
+        }
+    }
+}
+
+/// Notes that the machine `id` was reached at `address`: an address of the
+/// own VPN is the same from every machine and replaces an old one (a new
+/// IP), any other only fills a gap.
+fn note_address(entries: &mut [Entry], id: &str, address: &str) {
+    let Some(entry) = entries.iter_mut().find(|e| e.id == id && !id.is_empty()) else {
+        return;
+    };
+    if address.is_empty() || entry.address == address {
         return;
     }
-    if !ssh_knows(name) {
-        remember_route(
-            name,
-            Route {
-                address: candidate.address.clone(),
-                user: candidate.user.clone(),
-            },
-        );
-    }
-    if !crate::client::known_hosts().iter().any(|h| h == name) {
-        crate::client::remember_host(name);
+    if entry.address.is_empty() || in_vpn(address) {
+        entry.address = address.to_owned();
+        entry.at = crate::persist::now();
     }
 }
 
-/// Machines ssh reached that have no imkr, with the network they are in.
-pub fn suggestions() -> Vec<(String, &'static str)> {
-    let known = crate::client::known_hosts();
-    let mut found: Vec<(String, &'static str)> = checked()
-        .into_values()
-        .filter(|c| c.ssh && c.imkr.is_empty() && !c.own && !known.contains(&c.name))
-        .map(|c| (c.name, "NetBird"))
-        .collect();
-    found.sort();
-    found.dedup();
+/// The register to send along with `imkr ls --json`, with this machine's
+/// own entry made current.
+pub fn register_to_send() -> String {
+    serde_json::to_string(&change_register(note_self)).unwrap_or_default()
+}
+
+/// What `imkr hosts add NAME` does to the register: the machine is in
+/// again, newer than its removal, at `route` if one is given.
+pub fn register_add(name: &str, route: &Route) {
+    let id = host_ids()
+        .get(name)
+        .map(|h| h.id.clone())
+        .unwrap_or_default();
+    change_register(|entries| {
+        let now = crate::persist::now();
+        let mut found = false;
+        for entry in entries
+            .iter_mut()
+            .filter(|e| e.name == name || (!id.is_empty() && e.id == id))
+        {
+            found = true;
+            entry.removed = false;
+            entry.at = now;
+            if !route.address.is_empty() {
+                entry.address = route.address.clone();
+                entry.user = route.user.clone();
+            }
+        }
+        if !found {
+            merge(
+                entries,
+                &[Entry {
+                    name: name.to_owned(),
+                    id,
+                    address: route.address.clone(),
+                    user: route.user.clone(),
+                    at: now,
+                    removed: false,
+                }],
+            );
+        }
+    });
+}
+
+/// What `imkr hosts rm NAME` does to the register: a removal with the
+/// time, which travels to the other machines. False if the register did
+/// not know `name`.
+pub fn register_remove(name: &str) -> bool {
+    let id = host_ids()
+        .get(name)
+        .map(|h| h.id.clone())
+        .unwrap_or_default();
+    let mut found = false;
+    change_register(|entries| {
+        let now = crate::persist::now();
+        for entry in entries
+            .iter_mut()
+            .filter(|e| e.name == name || (!id.is_empty() && e.id == id))
+        {
+            found = true;
+            entry.removed = true;
+            entry.at = now;
+        }
+        if !found {
+            entries.push(Entry {
+                name: name.to_owned(),
+                id: id.clone(),
+                at: now,
+                removed: true,
+                ..Entry::default()
+            });
+        }
+    });
     found
 }
 
-/// The lock of the machine's finding round; `None` while another server
-/// holds it.
-fn lock() -> Option<std::fs::File> {
-    use std::os::fd::AsRawFd;
-    let path = dir().ok()?.join("discover.lock");
-    std::fs::create_dir_all(path.parent()?).ok()?;
-    let file = std::fs::File::create(path).ok()?;
-    // SAFETY: flock on a descriptor we own; released when `file` closes.
-    (unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0).then_some(file)
+/// What a host name here stands for.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostId {
+    pub id: String,
+    /// Taken from the register (not added by hand or with `--host`): it
+    /// follows the machine's new name.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_register: bool,
 }
 
-/// Tries `candidate`: is ssh's port open, does ssh get in without asking,
-/// and does imkr answer there, with its name. The port first, so a phone
-/// or a laptop without sshd costs one refused connection and nothing in
-/// anyone's logs.
-fn probe(candidate: &Candidate) -> Checked {
-    let mut result = Checked {
-        at: crate::persist::now(),
-        name: candidate.name.clone(),
-        user: candidate.user.clone(),
-        ..Checked::default()
-    };
-    let port_open = candidate
-        .address
-        .parse::<IpAddr>()
-        .map(|ip| vec![SocketAddr::new(ip, 22)])
-        .or_else(|_| {
-            (candidate.address.as_str(), 22)
-                .to_socket_addrs()
-                .map(|a| a.collect())
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .any(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok());
-    if !port_open {
-        return result;
-    }
-    let route = Route {
-        address: candidate.address.clone(),
-        user: candidate.user.clone(),
-    };
-    let output = Command::new("ssh")
-        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
-        .args(by_address(&route))
-        .arg(crate::client::remote_command_with(
-            &[(HOSTS_ENV, "1"), (CALLER_ENV, &caller())],
-            &["ls", "--json"],
-        ))
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let Ok(output) = output else {
-        return result;
-    };
-    match output.status.code() {
-        Some(0) => {
-            result.ssh = true;
-            let sessions: Vec<crate::protocol::SessionInfo> =
-                serde_json::from_slice(&output.stdout).unwrap_or_default();
-            let first = sessions.first();
-            result.own = first.is_some_and(|s| s.machine_id == crate::protocol::machine_id());
-            result.imkr = first
-                .map(|s| s.machine.clone())
-                .filter(|m| !m.is_empty())
-                // An imkr from before #9648 does not say its name.
-                .unwrap_or_else(|| candidate.name.clone());
-        }
-        Some(255) | None => {}
-        // In, but the shell found no imkr (127) or it failed.
-        Some(_) => result.ssh = true,
-    }
-    result
+fn ids_file() -> Result<PathBuf> {
+    Ok(dir()?.join("ids.json"))
 }
 
-/// For `imkr ls --json` asked with `HOSTS_ENV`: this machine's name and id
-/// and the machines it knows, on the first entry — on a stand-in when no
-/// session runs, as the asking side makes one up for an empty list anyway.
+/// The machine id behind each host name here, from the last answer.
+pub fn host_ids() -> BTreeMap<String, HostId> {
+    read_json(ids_file())
+}
+
+fn note_id(host: &str, id: &str, from_register: bool) {
+    let mut ids = host_ids();
+    let from_register = from_register || ids.get(host).is_some_and(|h| h.from_register);
+    let entry = HostId {
+        id: id.to_owned(),
+        from_register,
+    };
+    if ids.get(host) != Some(&entry) {
+        ids.insert(host.to_owned(), entry);
+        let _ = write_json(ids_file(), &ids);
+    }
+}
+
+fn forget_id(host: &str) {
+    let mut ids = host_ids();
+    if ids.remove(host).is_some() {
+        let _ = write_json(ids_file(), &ids);
+    }
+}
+
+/// For `imkr ls --json` asked with `HOSTS_ENV` by another machine: joins
+/// its register into this one's, notes the address it came from, and
+/// hands back this machine's name and id and the joined register on the
+/// first entry — on a stand-in when no session runs, as the asking side
+/// makes one up for an empty list anyway.
 pub fn tell_hosts(sessions: &mut Vec<crate::protocol::SessionInfo>) {
-    note_caller();
-    if std::env::var_os(HOSTS_ENV).is_none() {
+    let Some(theirs) = std::env::var_os(HOSTS_ENV) else {
         return;
-    }
+    };
+    let theirs: Vec<Entry> = serde_json::from_str(&theirs.to_string_lossy()).unwrap_or_default();
+    let caller = std::env::var(CALLER_ENV).unwrap_or_default();
+    let came_from = std::env::var("SSH_CONNECTION")
+        .ok()
+        .and_then(|c| c.split_whitespace().next().map(str::to_owned))
+        .filter(|a| a.parse::<IpAddr>().is_ok())
+        .unwrap_or_default();
+    let entries = change_register(|entries| {
+        note_self(entries);
+        merge(entries, &theirs);
+        note_address(entries, &caller, &came_from);
+    });
     if sessions.is_empty() {
         sessions.push(crate::protocol::SessionInfo {
             name: crate::protocol::DEFAULT_SESSION.to_owned(),
@@ -653,11 +575,219 @@ pub fn tell_hosts(sessions: &mut Vec<crate::protocol::SessionInfo>) {
     let first = &mut sessions[0];
     first.machine = crate::protocol::machine_name();
     first.machine_id = crate::protocol::machine_id();
-    first.hosts = host_infos();
+    first.machines = entries;
+}
+
+/// From the sessions `host` listed with `HOSTS_ENV`: its id, its register
+/// joined into this one's, and the address it was reached at.
+pub fn learn_from(host: &str, sessions: &[crate::protocol::SessionInfo]) {
+    let Some(first) = sessions.first().filter(|s| !s.machine_id.is_empty()) else {
+        return;
+    };
+    note_id(host, &first.machine_id, false);
+    let address = route_of(host).address;
+    change_register(|entries| {
+        merge(entries, &first.machines);
+        note_address(entries, &first.machine_id, &address);
+    });
+}
+
+fn tried_file() -> Result<PathBuf> {
+    Ok(dir()?.join("tried.json"))
+}
+
+/// How long a machine of the register that ssh did not reach is left
+/// before it is tried again: it may be off, or not let this one in.
+const TRY_AGAIN: u64 = 10 * 60;
+
+/// One round of acting on the register, from the server's places thread
+/// every minute: removed machines leave the hosts, renamed ones follow
+/// their new name, and the machines not shown yet are tried (ssh in batch
+/// mode, `imkr ls --json`) and become hosts once imkr answers there.
+/// Returns the NetBird peers to suggest.
+pub fn settle() -> Vec<Suggestion> {
+    let entries = register();
+    let own_id = crate::protocol::machine_id();
+    let here = crate::protocol::machine_name();
+    let ids = host_ids();
+    let remembered = crate::client::remembered_hosts();
+    let mut tried: BTreeMap<String, u64> = read_json(tried_file());
+    let now = crate::persist::now();
+    let mut to_try = Vec::new();
+    for entry in entries
+        .iter()
+        .filter(|e| e.id != own_id && e.name != here && !e.name.is_empty())
+    {
+        // The names this machine is known by here: its own, and the ones
+        // the same id answered under.
+        let same =
+            |n: &String| !entry.id.is_empty() && ids.get(n).is_some_and(|h| h.id == entry.id);
+        if entry.removed {
+            for name in remembered.iter().filter(|n| **n == entry.name || same(n)) {
+                drop_host(name);
+            }
+            continue;
+        }
+        // Renamed: the same machine under its new name, no need to try.
+        // Only names taken from the register; one added by hand stays.
+        for old in remembered.iter().filter(|n| {
+            **n != entry.name && same(n) && ids.get(*n).is_some_and(|h| h.from_register)
+        }) {
+            drop_host(old);
+            take(entry, true);
+        }
+        let known = crate::client::known_hosts();
+        if known.contains(&entry.name) {
+            // The register's address, where ssh does not know the name.
+            if !entry.address.is_empty() && !ssh_knows(&entry.name) {
+                remember_route(
+                    &entry.name,
+                    Route {
+                        address: entry.address.clone(),
+                        user: entry.user.clone(),
+                    },
+                );
+            }
+            continue;
+        }
+        // Shown already under another name (added by hand).
+        if known.iter().any(same) {
+            continue;
+        }
+        let reachable = !entry.address.is_empty() || ssh_knows(&entry.name);
+        let due = tried
+            .get(&entry.key())
+            .is_none_or(|at| now.saturating_sub(*at) >= TRY_AGAIN);
+        if reachable && due {
+            tried.insert(entry.key(), now);
+            to_try.push(entry.clone());
+        }
+    }
+    if !to_try.is_empty() {
+        let _ = write_json(tried_file(), &tried);
+    }
+    let threads: Vec<_> = to_try
+        .into_iter()
+        .map(|entry| std::thread::spawn(move || (reach(&entry), entry)))
+        .collect();
+    for thread in threads {
+        if let Ok((Some(sessions), entry)) = thread.join() {
+            take(&entry, true);
+            tried.remove(&entry.key());
+            learn_from(&entry.name, &sessions);
+        }
+    }
+    let _ = write_json(tried_file(), &tried);
+    suggestions()
+}
+
+/// Makes `entry` a host here, with its address where ssh does not know
+/// the name.
+fn take(entry: &Entry, from_register: bool) {
+    if !ssh_knows(&entry.name) && !entry.address.is_empty() {
+        remember_route(
+            &entry.name,
+            Route {
+                address: entry.address.clone(),
+                user: entry.user.clone(),
+            },
+        );
+    }
+    crate::client::remember_host(&entry.name);
+    if !entry.id.is_empty() {
+        note_id(&entry.name, &entry.id, from_register);
+    }
+}
+
+/// Takes `name` out of the hosts here, with its address, without a new
+/// removal in the register (it came from there).
+fn drop_host(name: &str) {
+    crate::client::forget_host(name);
+    forget_id(name);
+}
+
+/// Asks the machine of `entry` for its sessions, along with the registers;
+/// `None` if ssh did not get in or imkr did not answer.
+fn reach(entry: &Entry) -> Option<Vec<crate::protocol::SessionInfo>> {
+    let target = if ssh_knows(&entry.name) {
+        vec!["--".to_owned(), entry.name.clone()]
+    } else {
+        by_address(&Route {
+            address: entry.address.clone(),
+            user: entry.user.clone(),
+        })
+    };
+    let output = Command::new("ssh")
+        .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
+        .args(target)
+        .arg(crate::client::remote_command_with(
+            &[
+                (HOSTS_ENV, &register_to_send()),
+                (CALLER_ENV, &crate::protocol::machine_id()),
+            ],
+            &["ls", "--json"],
+        ))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sessions: Vec<crate::protocol::SessionInfo> =
+        serde_json::from_slice(&output.stdout).ok()?;
+    // An imkr from before the register does not say who it is.
+    sessions
+        .first()
+        .is_some_and(|s| entry.id.is_empty() || s.machine_id.is_empty() || s.machine_id == entry.id)
+        .then_some(sessions)
+}
+
+/// A NetBird peer to offer when a session starts elsewhere, with the
+/// address to reach it at once the user picks it. imkr never tries it by
+/// itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Suggestion {
+    pub name: String,
+    pub address: String,
+}
+
+/// The NetBird peers that are online and neither a host here nor in the
+/// register (where they are tried, or were taken out).
+pub fn suggestions() -> Vec<Suggestion> {
+    let known = crate::client::known_hosts();
+    let entries = register();
+    netbird_peers()
+        .into_iter()
+        .filter(|p| p.online && !known.contains(&p.name))
+        .filter(|p| {
+            !entries
+                .iter()
+                .any(|e| e.name == p.name || e.address == p.address)
+        })
+        .map(|p| Suggestion {
+            name: p.name,
+            address: p.address,
+        })
+        .collect()
+}
+
+/// The user picked `suggestion` to start a session on: ssh is to reach it
+/// at its NetBird address unless it knows the name.
+pub fn reach_suggested(suggestion: &Suggestion) {
+    if !ssh_knows(&suggestion.name) && !routes().contains_key(&suggestion.name) {
+        remember_route(
+            &suggestion.name,
+            Route {
+                address: suggestion.address.clone(),
+                user: String::new(),
+            },
+        );
+    }
 }
 
 /// `imkr hosts vpn`: the machines of the Tailscale and NetBird networks,
-/// and what imkr knows of each.
+/// and what imkr knows of each. None of them is tried.
 pub fn print_vpn() -> Result<()> {
     let tailnet = crate::client::tailnet_peers();
     let netbird = netbird_peers();
@@ -668,6 +798,7 @@ pub fn print_vpn() -> Result<()> {
         );
     }
     let known = crate::client::known_hosts();
+    let entries = register();
     let mut out = std::io::stdout().lock();
     for peer in tailnet {
         let what = match (known.contains(&peer.name), peer.online) {
@@ -677,17 +808,16 @@ pub fn print_vpn() -> Result<()> {
         };
         writeln!(out, "{:<24} tailscale {:<8} {what}", peer.name, peer.os)?;
     }
-    let checked = checked();
     for peer in netbird {
-        let what = match checked.get(&peer.address) {
-            Some(c) if c.own => "this machine".to_owned(),
-            Some(c) if !c.imkr.is_empty() && known.contains(&c.imkr) => {
-                format!("used with imkr as {}", c.imkr)
-            }
-            Some(c) if !c.imkr.is_empty() => format!("imkr as {}, taken out", c.imkr),
-            Some(c) if c.ssh => "ssh works, no imkr · `imkr hosts sync` after adding".into(),
-            Some(_) => "no way in by ssh (key, or no sshd)".into(),
-            None if peer.online => "not tried yet".into(),
+        let entry = entries
+            .iter()
+            .find(|e| e.address == peer.address || e.name == peer.name);
+        let what = match entry {
+            Some(e) if e.removed => format!("taken out as {}", e.name),
+            Some(e) if known.contains(&e.name) => format!("used with imkr as {}", e.name),
+            Some(e) => format!("in the register as {}, not reached yet", e.name),
+            None if known.contains(&peer.name) => "used with imkr".into(),
+            None if peer.online => "online · `imkr hosts add NAME ADDRESS` uses it".into(),
             None => "offline".into(),
         };
         writeln!(
@@ -756,21 +886,74 @@ mod tests {
         assert_eq!(lan, ["--", "192.168.1.23"]);
     }
 
+    fn entry(name: &str, id: &str, at: u64) -> Entry {
+        Entry {
+            name: name.into(),
+            id: id.into(),
+            at,
+            ..Entry::default()
+        }
+    }
+
     #[test]
-    fn a_machine_without_imkr_waits_a_day_one_with_it_is_never_tried_again() {
-        let mut checked = BTreeMap::new();
-        assert!(due(&checked, "100.97.1.1", 1000));
-        checked.insert(
-            "100.97.1.1".to_owned(),
-            Checked {
-                at: 1000,
-                ssh: true,
-                ..Checked::default()
-            },
-        );
-        assert!(!due(&checked, "100.97.1.1", 1000 + CHECK_AGAIN - 1));
-        assert!(due(&checked, "100.97.1.1", 1000 + CHECK_AGAIN));
-        checked.get_mut("100.97.1.1").unwrap().imkr = "pi".into();
-        assert!(!due(&checked, "100.97.1.1", 1000 + 10 * CHECK_AGAIN));
+    fn the_newer_entry_of_a_machine_id_wins_a_new_name_or_address() {
+        let mut mine = vec![entry("gamma", "g1", 10), entry("beta", "b1", 10)];
+        let mut renamed = entry("gamma2", "g1", 20);
+        renamed.address = "100.97.0.3".into();
+        assert!(merge(&mut mine, &[renamed.clone(), entry("beta", "b1", 5)]));
+        assert_eq!(mine, [entry("beta", "b1", 10), renamed.clone()]);
+        // An older word on it changes nothing, and joining twice neither.
+        assert!(!merge(&mut mine, &[entry("gamma", "g1", 15)]));
+        assert!(!merge(&mut mine, &[renamed]));
+    }
+
+    #[test]
+    fn a_removal_travels_until_the_machine_is_added_again() {
+        let mut here = vec![entry("gamma", "g1", 10)];
+        let mut there = here.clone();
+        let mut removed = entry("gamma", "g1", 20);
+        removed.removed = true;
+        merge(&mut here, std::slice::from_ref(&removed));
+        // Their older entry does not bring it back, the removal goes there.
+        assert!(!merge(&mut here, &there));
+        assert!(here[0].removed);
+        merge(&mut there, &here);
+        assert!(there[0].removed);
+        // Added again by hand: newer than the removal.
+        let again = entry("gamma", "g1", 30);
+        merge(&mut there, std::slice::from_ref(&again));
+        merge(&mut here, &there);
+        assert_eq!(here, [again]);
+    }
+
+    #[test]
+    fn an_entry_by_name_gives_way_to_the_machine_with_an_id() {
+        // Added by hand, before anyone reached it.
+        let mut added = entry("beta", "", 10);
+        added.address = "100.97.0.2".into();
+        let mut mine = vec![added];
+        merge(&mut mine, &[entry("beta", "b1", 20)]);
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].id, "b1");
+        // A removal by name newer than what the machine said removes it.
+        let mut gone = entry("beta", "", 30);
+        gone.removed = true;
+        merge(&mut mine, &[gone]);
+        assert_eq!(mine.len(), 1);
+        assert!(mine[0].removed && mine[0].id == "b1" && mine[0].at == 30);
+    }
+
+    #[test]
+    fn an_address_of_the_vpn_replaces_others_only_fill_a_gap() {
+        let mut entries = vec![entry("beta", "b1", 10)];
+        note_address(&mut entries, "b1", "192.168.1.5");
+        assert_eq!(entries[0].address, "192.168.1.5");
+        note_address(&mut entries, "b1", "10.0.0.5");
+        assert_eq!(entries[0].address, "192.168.1.5");
+        note_address(&mut entries, "b1", "100.97.0.2");
+        assert_eq!(entries[0].address, "100.97.0.2");
+        assert!(entries[0].at > 10);
+        note_address(&mut entries, "nobody", "100.97.0.9");
+        assert_eq!(entries.len(), 1);
     }
 }

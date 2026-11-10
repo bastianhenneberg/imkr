@@ -4166,10 +4166,42 @@ pub fn hosts(args: &[String]) -> Result<()> {
             for host in &config {
                 println!("{host:<24} settings{}", via(host));
             }
-            for host in client::remembered_hosts() {
-                if !config.contains(&host) {
-                    println!("{host:<24} remembered{}", via(&host));
+            let remembered = client::remembered_hosts();
+            for host in &remembered {
+                if !config.contains(host) {
+                    println!("{host:<24} remembered{}", via(host));
                 }
+            }
+            // The rest of the register: not reached from here yet, or
+            // taken out.
+            let here = crate::protocol::machine_id();
+            let ids = crate::machines::host_ids();
+            // Shown above under the name it was added by.
+            let shown = |id: &str| {
+                !id.is_empty()
+                    && ids.iter().any(|(name, h)| {
+                        h.id == id && (config.contains(name) || remembered.contains(name))
+                    })
+            };
+            for entry in crate::machines::register() {
+                if entry.id == here
+                    || shown(&entry.id)
+                    || config.contains(&entry.name)
+                    || remembered.contains(&entry.name)
+                {
+                    continue;
+                }
+                let at = if entry.address.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · at {}", entry.address)
+                };
+                let what = if entry.removed {
+                    "taken out"
+                } else {
+                    "in the register, not reached yet"
+                };
+                println!("{:<24} {what}{at}", entry.name);
             }
             Ok(())
         }
@@ -4188,15 +4220,18 @@ pub fn hosts(args: &[String]) -> Result<()> {
                     _ => bail!("usage: imkr hosts add NAME [ADDRESS] [--user USER]"),
                 }
             }
+            crate::machines::register_add(name, &route);
             if !route.address.is_empty() {
                 crate::machines::remember_route(name, route);
             }
-            crate::machines::set_forgotten(name, false);
             client::remember_host(name);
             Ok(())
         }
         [cmd, name] if cmd == "rm" => {
-            if !client::forget_host(name) {
+            // Out of the register too, on every machine: finding it over
+            // another one must not bring it back.
+            let registered = crate::machines::register_remove(name);
+            if !client::forget_host(name) && !registered {
                 bail!("{name} is not remembered; hosts from the settings go there");
             }
             Ok(())

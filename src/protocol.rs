@@ -146,15 +146,15 @@ pub struct SessionInfo {
     /// A keeper's session (#9133). False from versions before.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keeper: bool,
-    /// The name and id of the machine, and the machines it knows: only on
-    /// the first entry of `imkr ls --json` asked with
+    /// The name and id of the machine, and its register of the user's
+    /// machines: only on the first entry of `imkr ls --json` asked with
     /// `machines::HOSTS_ENV` (#9648). Empty from versions before.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub machine: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub machine_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub hosts: Vec<crate::machines::HostInfo>,
+    pub machines: Vec<crate::machines::Entry>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -341,8 +341,14 @@ pub fn machine_name() -> String {
 }
 
 /// What tells this machine apart from every other: `/etc/machine-id`, or
-/// `$IMKR_HOSTNAME` where tests play several machines on one.
+/// `$IMKR_HOSTNAME` where tests play several machines on one
+/// (`$IMKR_MACHINE_ID` keeps it while a test renames the machine).
 pub fn machine_id() -> String {
+    if let Ok(id) = std::env::var("IMKR_MACHINE_ID")
+        && !id.is_empty()
+    {
+        return id;
+    }
     if let Ok(name) = std::env::var("IMKR_HOSTNAME")
         && !name.is_empty()
     {

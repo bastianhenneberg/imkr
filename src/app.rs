@@ -507,7 +507,7 @@ struct Places {
     tailnet: Vec<String>,
     /// Machines of the NetBird network ssh reached, without imkr yet, as
     /// suggestions (#9648).
-    netbird: Vec<String>,
+    netbird: Vec<crate::machines::Suggestion>,
     /// The devices that have `imkr web` of this machine open.
     web: Vec<crate::web::Seen>,
     /// Whether the thread has filled this in once. Before it has, an
@@ -8516,17 +8516,17 @@ impl App {
         let first_suggested = machines.len();
         machines.extend(suggested.into_iter().map(Some));
         // Those of the NetBird network ssh reached, which have no imkr yet.
-        let netbird: Vec<String> = self
+        let netbird: Vec<crate::machines::Suggestion> = self
             .places
             .lock()
             .unwrap()
             .netbird
             .iter()
-            .filter(|peer| !machines.contains(&Some((*peer).clone())))
+            .filter(|peer| !machines.contains(&Some(peer.name.clone())))
             .cloned()
             .collect();
         let first_netbird = machines.len();
-        machines.extend(netbird.into_iter().map(Some));
+        machines.extend(netbird.iter().map(|peer| Some(peer.name.clone())));
         let items = machines
             .iter()
             .enumerate()
@@ -8540,7 +8540,7 @@ impl App {
                     hint: if host.is_none() {
                         "this machine".into()
                     } else if i >= first_netbird {
-                        "in your NetBird network, imkr not installed yet".into()
+                        "in your NetBird network, not tried: picking it connects by ssh".into()
                     } else if i >= first_suggested {
                         "in your tailnet, not used with imkr yet".into()
                     } else {
@@ -8908,6 +8908,12 @@ impl App {
             KeyCode::Char(c @ '1'..='9') => c as usize - '1' as usize,
             _ => return,
         };
+        if let Some(Some(host)) = machines.get(pick) {
+            let suggested = self.places.lock().unwrap().netbird.clone();
+            if let Some(peer) = suggested.iter().find(|p| &p.name == host) {
+                crate::machines::reach_suggested(peer);
+            }
+        }
         match machines.get(pick).cloned() {
             Some(host) if self.hosting => {
                 self.mode = Mode::Normal;
@@ -15328,10 +15334,7 @@ fn watch_places(places: Arc<Mutex<Places>>, hosts: Arc<Mutex<Vec<String>>>) {
                 found_at = Some(Instant::now());
                 // Machines found since, through NetBird or the others,
                 // become hosts here; the next round asks them.
-                let suggested = crate::machines::discover()
-                    .into_iter()
-                    .map(|(name, _)| name)
-                    .collect();
+                let suggested = crate::machines::settle();
                 places.lock().unwrap().netbird = suggested;
             }
             if hosts_at.is_none_or(|at| at.elapsed() >= HOSTS_EVERY) {

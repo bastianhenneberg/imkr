@@ -451,11 +451,10 @@ pub fn remember_host(host: &str) {
     }
 }
 
-/// Forgets `host` again, with its address, and so that finding it again
-/// does not bring it back. False if it was not remembered.
+/// Forgets `host` again, with its address. False if it was not
+/// remembered.
 pub fn forget_host(host: &str) -> bool {
     crate::machines::forget_route(host);
-    crate::machines::set_forgotten(host, true);
     let mut hosts = remembered_hosts();
     let before = hosts.len();
     hosts.retain(|h| h != host);
@@ -586,15 +585,18 @@ pub fn remote_sessions(host: &str) -> Result<Vec<SessionInfo>> {
     remote_sessions_asking(host, false)
 }
 
-/// `remote_sessions`, with `hosts` also the machine's name and the
-/// machines it knows on the first entry (#9648). Either way it hears who
-/// asks, for its way back here.
+/// `remote_sessions`, with `hosts` also the machine's name and id and its
+/// register on the first entry, this machine's register going along
+/// (#9648).
 pub fn remote_sessions_asking(host: &str, hosts: bool) -> Result<Vec<SessionInfo>> {
     use crate::machines::{CALLER_ENV, HOSTS_ENV};
-    let caller = crate::machines::caller();
-    let mut env = vec![(CALLER_ENV, caller.as_str())];
+    let (register, id);
+    let mut env = Vec::new();
     if hosts {
-        env.push((HOSTS_ENV, "1"));
+        register = crate::machines::register_to_send();
+        id = crate::protocol::machine_id();
+        env.push((HOSTS_ENV, register.as_str()));
+        env.push((CALLER_ENV, id.as_str()));
     }
     let output = Command::new("ssh")
         .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
