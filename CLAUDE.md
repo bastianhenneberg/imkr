@@ -648,7 +648,7 @@ Projekt-Slug: `imkr`
   `register_add` (hebt den Vermerk auf), `hosts rm` → `register_remove` (Vermerk mit Zeit). Adresse
   ohne ssh-config: `host-routes.json` (`Route`), `hosts` bleibt eine Zeile je Name (alte Binaries);
   **jeder** ssh-Aufruf nimmt `machines::ssh_to(host)` statt `"--", host` (Name, wenn `ssh -G` ihn
-  umbenennt oder er auflöst, sonst Adresse; `accept-new` + eigenes `machines/known_hosts` nur für
+  umbenennt, sonst Adresse + User + `-i ~/.ssh/imkr` — Auflösen allein reicht nicht, NetBird-DNS löst jeden Peer auf; `accept-new` + eigenes `machines/known_hosts` nur für
   100.64.0.0/10). Test: drei Welten, Fake-`ssh` nach Adresse 127.0.0.1–3 (setzt `SSH_CONNECTION`,
   `-G` gibt den Namen unverändert), Fake-`netbird` nur in Welt alpha, kurze `XDG_RUNTIME_DIR`,
   Server in allen drei Welten (ohne Server kein `settle`), Umbenennen per `name` in der Config.

@@ -221,7 +221,9 @@ const SSH_KNOWS_FOR: Duration = Duration::from_secs(300);
 static SSH_KNOWS: Mutex<BTreeMap<String, (Instant, bool)>> = Mutex::new(BTreeMap::new());
 
 /// Whether ssh reaches `host` by its name: `~/.ssh/config` gives it
-/// another host name, or the name resolves.
+/// another host name. A name that only resolves (NetBird's DNS does that
+/// for every peer) is not enough: ssh would log in as the user here, with
+/// no key for that machine, where the register knows user and address.
 fn ssh_knows(host: &str) -> bool {
     if let Some((at, knows)) = SSH_KNOWS.lock().unwrap().get(host)
         && at.elapsed() < SSH_KNOWS_FOR
@@ -231,10 +233,7 @@ fn ssh_knows(host: &str) -> bool {
     let (hostname, _) = ssh_config(host);
     let knows = hostname
         .as_deref()
-        .is_some_and(|h| !h.eq_ignore_ascii_case(host))
-        || (host, 22)
-            .to_socket_addrs()
-            .is_ok_and(|mut a| a.next().is_some());
+        .is_some_and(|h| !h.eq_ignore_ascii_case(host));
     SSH_KNOWS
         .lock()
         .unwrap()
