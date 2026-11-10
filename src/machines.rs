@@ -668,12 +668,23 @@ pub fn learn_from(host: &str, sessions: &[crate::protocol::SessionInfo]) {
     };
     note_id(host, &first.machine_id, false);
     let address = route_of(host).address;
-    // Without keys: that it answered does not prove it may get in here.
+    // Without the keys it passes on for others: that it answered does not
+    // prove they may get in here. Its own key stays — ssh has just checked
+    // its host key, so this is that machine speaking for itself, and one
+    // that runs no session never asks the others and would hand its key
+    // to nobody (#1376). Not for one taken out here: an answer must not
+    // bring it back in.
+    let own_id = first.machine_id.clone();
+    let removed_here = register().iter().any(|e| e.id == own_id && e.removed);
     let theirs: Vec<Entry> = first
         .machines
         .iter()
         .map(|e| Entry {
-            key: String::new(),
+            key: if e.id == own_id && !removed_here {
+                e.key.clone()
+            } else {
+                String::new()
+            },
             ..e.clone()
         })
         .collect();

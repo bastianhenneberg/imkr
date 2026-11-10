@@ -672,7 +672,10 @@ Projekt-Slug: `imkr`
   ein Server, auf den man nur per Hand-Login kommt, fasst `authorized_keys` nie an (auch kein
   Backup). Test: Welt `server` in `tests/pairing.py`. **Wer Schlüssel weitergeben darf:**
   `tell_hosts` (gefragte Seite) behält sie — der Aufrufer ist gerade hereingekommen;
-  `learn_from` (fragende Seite) streift sie ab. `change_register` ruft unter der Register-Sperre
+  `learn_from` (fragende Seite) streift sie ab — bis auf den **eigenen** Schlüssel des Antwortenden
+  (ssh hat gerade seinen Host-Key geprüft), nicht bei einem hier entfernten. Sonst verteilt ein
+  Rechner ohne laufende Session (kein Server, fragt nie) seinen Schlüssel nie (#1376, Welt `quiet`).
+  `change_register` ruft unter der Register-Sperre
   `pairing::sync_keys`: `authorized_keys` bekommt für jeden Eintrag mit Schlüssel eine Zeile
   `restrict,pty,command="<imkr> gate <id>" KEY imkr:<id> NAME`, entfernte verlieren sie; nur
   Zeilen mit `imkr:` werden angefasst (`apply`, Test: fremde byte-gleich), Schlüssel schon in

@@ -11,6 +11,8 @@ other through `imkr gate`; `hosts rm gamma` on beta takes gamma's key out
 on beta and on alpha; lines nobody of imkr wrote stay byte for byte.
 `server` is never paired, alpha reaches it by a line set up by hand: it
 never stores a key of another machine nor touches its authorized_keys.
+`quiet` has its own key (`hosts key`) but runs no session, so it never
+asks anyone: its key reaches alpha only in its answers (#1376).
 
 Guard (CLAUDE.md, Test-Abschirmung): notifications off, fake notify-send
 first in PATH, DBus on missing sockets, no DISPLAY/WAYLAND, own runtime/
@@ -22,7 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 # Outside the repo; short, for the socket paths of the runtime dirs.
 BASE = tempfile.mkdtemp(prefix="imkr-pairing-")
-WORLD_ADDR = {"gamma": "127.0.0.1", "alpha": "127.0.0.2", "beta": "127.0.0.3", "server": "127.0.0.4"}
+WORLD_ADDR = {"gamma": "127.0.0.1", "alpha": "127.0.0.2", "beta": "127.0.0.3", "server": "127.0.0.4",
+              "quiet": "127.0.0.5"}
 FOREIGN = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQforeignforeignforeign someone@else\n"
 PORT = 47581
 
@@ -115,6 +118,7 @@ def main():
         "beta": "# hand-written\n" + shared + FOREIGN.rstrip("\n"),  # no newline at the end
         "gamma": FOREIGN,
         "server": "# server, by hand\n" + shared + FOREIGN,
+        "quiet": shared + FOREIGN,
     }
     for name, text in hand.items():
         path = os.path.join(worlds[name]["home"], ".ssh/authorized_keys")
@@ -123,7 +127,13 @@ def main():
     run(worlds, "alpha", "imkr", "hosts", "add", "beta", "127.0.0.3", "--user", "bastian")
     run(worlds, "beta", "imkr", "hosts", "add", "alpha", "127.0.0.2", "--user", "bastian")
     run(worlds, "alpha", "imkr", "hosts", "add", "server", "127.0.0.4", "--user", "bastian")
+    run(worlds, "alpha", "imkr", "hosts", "add", "quiet", "127.0.0.5", "--user", "bastian")
+    # quiet: paired by its own key, but no session, so no server that asks.
+    r = run(worlds, "quiet", "imkr", "hosts", "key")
+    log("quiet hosts key:", r.stdout.strip().replace("\n", " | ")[:120])
     for name in worlds:
+        if name == "quiet":
+            continue
         run(worlds, name, "imkr", "new", "--start", "--window", "0", "--", "sleep", "100000", check=False)
     time.sleep(2)
     for name in worlds:
@@ -249,6 +259,15 @@ def main():
     log("without the copied key: alpha and beta reach each other by their own keys only")
     for name in worlds:
         log(f"{name} authorized_keys:\n" + ak(worlds, name))
+    # quiet never asked anyone, yet alpha lets it in: its own key came
+    # with its answers to alpha (#1376).
+    wait_for("alpha lets quiet in, though quiet runs no session",
+             lambda: "imkr:id-quiet" in ak(worlds, "alpha"))
+    log_lines = [json.loads(l) for l in open(os.path.join(BASE, "ssh.log"))]
+    assert not [a for a in log_lines if a["from"] == "127.0.0.5" and "IMKR_HOSTS_TOO" in a["cmd"]], \
+        "quiet asked someone: it was meant to run no server"
+    assert "imkr:id-alpha" in ak(worlds, "quiet"), "quiet does not let alpha in"
+    log("quiet: no session, never asked, still let in by alpha and letting alpha in")
     # The server: alpha's imkr asked it every minute (`ls --json` with its
     # register, keys included), as for any host.
     asked = [json.loads(l) for l in open(os.path.join(BASE, "ssh.log"))]

@@ -88,8 +88,9 @@ of others and never touches its `authorized_keys`, not even for a backup, howeve
 machines ask it for its sessions. Keys are taken
 only from a machine that may hand them on: on the machine that is asked, the asking one has just
 logged in (by a key you set by hand it has a shell there anyway; by a key of imkr's it was paired);
-on the asking side, what comes back loses its keys, because answering does not prove a machine may
-get in. `imkr hosts` says for each machine *paired* (imkr lets it in) or *key by hand* (a line you
+on the asking side, what comes back loses the keys it passes on for others, because answering does
+not prove those may get in. The answering machine's own key stays: ssh has just checked its host
+key, so a machine that runs no session (and so never asks anyone) still gets its key to the others. `imkr hosts` says for each machine *paired* (imkr lets it in) or *key by hand* (a line you
 wrote lets it in).
 
 **One key per machine.** imkr pairs with `~/.ssh/imkr-<machine id>`, not with `~/.ssh/imkr`: that

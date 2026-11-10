@@ -266,8 +266,9 @@ of others and never touches its <code>authorized_keys</code>, not even for a bac
 machines ask it for its sessions. Keys are taken
 only from a machine that may hand them on: on the machine that is asked, the asking one has just
 logged in (by a key you set by hand it has a shell there anyway; by a key of imkr's it was paired);
-on the asking side, what comes back loses its keys, because answering does not prove a machine may
-get in. <code>imkr hosts</code> says for each machine <em>paired</em> (imkr lets it in) or <em>key by hand</em> (a line you
+on the asking side, what comes back loses the keys it passes on for others, because answering does
+not prove those may get in. The answering machine's own key stays: ssh has just checked its host
+key, so a machine that runs no session (and so never asks anyone) still gets its key to the others. <code>imkr hosts</code> says for each machine <em>paired</em> (imkr lets it in) or <em>key by hand</em> (a line you
 wrote lets it in).</p>
 <p><strong>One key per machine.</strong> imkr pairs with <code>~/.ssh/imkr-&lt;machine id&gt;</code>, not with <code>~/.ssh/imkr</code>: that
 one may be the same file on several machines (copied by a dotfile manager such as chezmoi), and a
