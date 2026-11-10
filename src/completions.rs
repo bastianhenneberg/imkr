@@ -180,6 +180,9 @@ const COMMANDS: &[Command] = &[
         &[
             sub("add", Hosts),
             sub("rm", Hosts),
+            sub("pair", Nothing),
+            sub("join", Nothing),
+            sub("key", Nothing),
             sub("sync", Nothing),
             sub("vpn", Nothing),
             sub("tailnet", Nothing),
@@ -440,6 +443,7 @@ const COMMANDS: &[Command] = &[
         &[
             sub("invite", Nothing),
             sub("join", Nothing),
+            sub("key", Nothing),
             sub("brain", Nothing),
             sub("fetch", Nothing),
             sub("inbox", Nothing),
@@ -771,6 +775,8 @@ mod tests {
         // The far end of `App::tell_sender` over ssh, like `status` for the
         // hooks: imkr calls it, people do not (#1307).
         "overdue",
+        // What imkr's lines in authorized_keys run (#605).
+        "gate",
         "--skill",
     ];
 

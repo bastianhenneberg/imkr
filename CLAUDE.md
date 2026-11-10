@@ -652,6 +652,39 @@ Projekt-Slug: `imkr`
   100.64.0.0/10). Test: drei Welten, Fake-`ssh` nach Adresse 127.0.0.1–3 (setzt `SSH_CONNECTION`,
   `-G` gibt den Namen unverändert), Fake-`netbird` nur in Welt alpha, kurze `XDG_RUNTIME_DIR`,
   Server in allen drei Welten (ohne Server kein `settle`), Umbenennen per `name` in der Config.
+- Kopplung per Code (#605, Task #9681): `src/pairing.rs`. `imkr hosts pair [--listen]` lauscht
+  10 min nur auf VPN-Adresse/127.0.0.1 (`PORT` 4658, eigener `TcpListener`, `web::read_request`/
+  `Response`), `hosts join ADR CODE` POSTet `/machine/join` (`contacts::post`) mit `Hello`
+  (Name, id, User, eigener Schlüssel, Register, ssh-Host-Keys);
+  beide Seiten → `machines::take_paired` (Register samt Schlüsseln, Eintrag neu = auch nach
+  `rm`, Host-Keys nach `machines/known_hosts`, Host). Schlüssel reisen als `Entry::key`
+  (`note_self` liest den eigenen; `merge` lässt einen Schlüssel nie durch einen neueren Eintrag
+  ohne fallen — alte Versionen kennen das Feld nicht; gleich alter Eintrag füllt die Lücke).
+  **Eigener Schlüssel je Rechner** (Nachtrag desktop:update): `pairing::key_file` =
+  `~/.ssh/imkr-<machine-id, 12 Zeichen>`, immer von imkr selbst erzeugt (`ensure_key`, auch
+  `imkr hosts key` für die Migration). `~/.ssh/imkr` war auf desktop/laptop/codingmachine
+  **dieselbe** Datei (chezmoi) — Widerruf je Rechner unmöglich. Er wird nie angekündigt, nur
+  noch nach dem eigenen angeboten (`pairing::offered_keys` in `by_address`; `by_name` gibt nur
+  den eigenen dazu). Ein Schlüssel, den das Register bei >1 id zeigt, lässt keinen herein
+  (`to_let_in` → Zeilen weg). **Wer Schlüssel weitergeben darf:**
+  `tell_hosts` (gefragte Seite) behält sie — der Aufrufer ist gerade hereingekommen;
+  `learn_from` (fragende Seite) streift sie ab. `change_register` ruft unter der Register-Sperre
+  `pairing::sync_keys`: `authorized_keys` bekommt für jeden Eintrag mit Schlüssel eine Zeile
+  `restrict,pty,command="<imkr> gate <id>" KEY imkr:<id> NAME`, entfernte verlieren sie; nur
+  Zeilen mit `imkr:` werden angefasst (`apply`, Test: fremde byte-gleich), Schlüssel schon in
+  einer fremden Zeile → keine zweite (`by_hand`), Backup `authorized_keys.imkr-backup`, atomar,
+  0600. Unit-Tests bekommen nie die echte Datei (`authorized_keys()` → None unter `cfg(test)`,
+  sonst `IMKR_AUTHORIZED_KEYS`). `imkr gate ID` (`pairing::allowed`): nur
+  `client::remote_command_with`-Form (per Neubau verglichen) oder `INSTALLED_CHECK`, ohne
+  `hosts` außer add, `account`, `connect`, `web pair…`, `screen allow|refuse`; setzt
+  `IMKR_GATED` → `tell_hosts` nimmt das als Aufrufer und lässt ihn seine eigene Entfernung nicht
+  aufheben. Ehrlich: `send`/`run`/`new --` = Shell-gleich, die Beschränkung hält Shell, scp,
+  Tunnel und Kopplung weiterer Rechner ab, ist keine Sandbox. Installieren per `hosts sync`
+  braucht weiter den eigenen Login. `imkr hosts` zeigt „paired“/„key by hand“
+  (`pairing::access`). E2E ohne sshd: Fake-ssh, das `authorized_keys` der Zielwelt wie sshd
+  auswertet (erste Zeile mit dem Schlüssel, `command=` mit `SSH_ORIGINAL_COMMAND`); Falle: der
+  Gekoppelte wird unter der **Absenderadresse** der Verbindung eingetragen — im Test landet
+  jede Verbindung von 127.0.0.1, also die neue Welt auf 127.0.0.1 legen.
 - Tailscale: `client::tailnet_peers` (`tailscale status --json`, MagicDNS-Name, nur linux/macOS),
   `Places::tailnet` (minütlich in `watch_places`), Vorschläge in `machine_choices` (Gruppe
   „Tailscale“), `imkr hosts vpn` (alias `tailnet`, mit NetBird, probiert nichts). Test: Fake-`tailscale` im Scratchpad-bin.

@@ -617,18 +617,18 @@ fn pair(code: &str, name: &str) -> Result<(String, String), &'static str> {
 
 // --- HTTP ---
 
-struct HttpRequest {
+pub(crate) struct HttpRequest {
     /// Who asked, by address.
-    peer: String,
-    method: String,
-    path: String,
+    pub(crate) peer: String,
+    pub(crate) method: String,
+    pub(crate) path: String,
     query: HashMap<String, String>,
     headers: HashMap<String, String>,
-    body: Vec<u8>,
+    pub(crate) body: Vec<u8>,
 }
 
 impl HttpRequest {
-    fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(name).map(String::as_str)
     }
 
@@ -659,7 +659,7 @@ impl HttpRequest {
 }
 
 /// The request coming in, `None` when the connection closes before it.
-fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<HttpRequest>> {
+pub(crate) fn read_request(reader: &mut BufReader<TcpStream>) -> Result<Option<HttpRequest>> {
     let mut head = Vec::new();
     loop {
         let before = head.len();
@@ -743,7 +743,7 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-struct Response {
+pub(crate) struct Response {
     status: &'static str,
     kind: &'static str,
     headers: Vec<(&'static str, String)>,
@@ -769,11 +769,11 @@ impl Response {
         self
     }
 
-    fn json(value: &serde_json::Value) -> Self {
+    pub(crate) fn json(value: &serde_json::Value) -> Self {
         Self::new("200 OK", "application/json", value.to_string())
     }
 
-    fn error(status: &'static str, message: &str) -> Self {
+    pub(crate) fn error(status: &'static str, message: &str) -> Self {
         Self::new(
             status,
             "application/json",
@@ -787,7 +787,7 @@ impl Response {
         self
     }
 
-    fn write_to(self, stream: &mut TcpStream) -> std::io::Result<()> {
+    pub(crate) fn write_to(self, stream: &mut TcpStream) -> std::io::Result<()> {
         let mut head = format!(
             "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\
              X-Content-Type-Options: nosniff\r\nReferrer-Policy: same-origin\r\n\

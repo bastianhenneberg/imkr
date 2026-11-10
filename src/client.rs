@@ -229,13 +229,17 @@ pub fn install_on(host: &str, show: bool) -> Result<()> {
     Ok(())
 }
 
+/// What `installed_on` runs there; `imkr gate` lets it through as it is.
+pub const INSTALLED_CHECK: &str =
+    "exec \"${SHELL:-sh}\" -lc 'PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH; command -v imkr'";
+
 /// Whether `host` has imkr, without prompting; an error if it cannot be
 /// reached.
 pub fn installed_on(host: &str) -> Result<bool> {
     let status = Command::new("ssh")
         .args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"])
         .args(crate::machines::ssh_to(host))
-        .arg("exec \"${SHELL:-sh}\" -lc 'PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH; command -v imkr'")
+        .arg(INSTALLED_CHECK)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

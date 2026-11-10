@@ -4158,10 +4158,29 @@ pub fn hosts(args: &[String]) -> Result<()> {
         [] => {
             let config = crate::config::Config::load().0.hosts;
             let routes = crate::machines::routes();
-            let via = |host: &str| match routes.get(host) {
-                Some(r) if r.user.is_empty() => format!(" · at {}", r.address),
-                Some(r) => format!(" · at {} as {}", r.address, r.user),
-                None => String::new(),
+            let register = crate::machines::register();
+            let ids = crate::machines::host_ids();
+            let access = crate::pairing::access();
+            // Whether imkr lets the machine in here (#605).
+            let lets_in = |host: &str| {
+                let id = ids.get(host).map_or("", |h| h.id.as_str());
+                let key = register
+                    .iter()
+                    .find(|e| (!id.is_empty() && e.id == id) || (id.is_empty() && e.name == host))
+                    .map_or("", |e| e.key.as_str());
+                match access(id, key) {
+                    crate::pairing::Access::Paired => " · paired",
+                    crate::pairing::Access::ByHand => " · key by hand",
+                    crate::pairing::Access::None => "",
+                }
+            };
+            let via = |host: &str| {
+                let at = match routes.get(host) {
+                    Some(r) if r.user.is_empty() => format!(" · at {}", r.address),
+                    Some(r) => format!(" · at {} as {}", r.address, r.user),
+                    None => String::new(),
+                };
+                format!("{at}{}", lets_in(host))
             };
             for host in &config {
                 println!("{host:<24} settings{}", via(host));
@@ -4175,7 +4194,6 @@ pub fn hosts(args: &[String]) -> Result<()> {
             // The rest of the register: not reached from here yet, or
             // taken out.
             let here = crate::protocol::machine_id();
-            let ids = crate::machines::host_ids();
             // Shown above under the name it was added by.
             let shown = |id: &str| {
                 !id.is_empty()
@@ -4183,7 +4201,7 @@ pub fn hosts(args: &[String]) -> Result<()> {
                         h.id == id && (config.contains(name) || remembered.contains(name))
                     })
             };
-            for entry in crate::machines::register() {
+            for entry in register.iter() {
                 if entry.id == here
                     || shown(&entry.id)
                     || config.contains(&entry.name)
@@ -4201,7 +4219,16 @@ pub fn hosts(args: &[String]) -> Result<()> {
                 } else {
                     "in the register, not reached yet"
                 };
-                println!("{:<24} {what}{at}", entry.name);
+                let paired = if entry.removed {
+                    ""
+                } else {
+                    match access(&entry.id, &entry.key) {
+                        crate::pairing::Access::Paired => " · paired",
+                        crate::pairing::Access::ByHand => " · key by hand",
+                        crate::pairing::Access::None => "",
+                    }
+                };
+                println!("{:<24} {what}{at}{paired}", entry.name);
             }
             Ok(())
         }
@@ -4230,15 +4257,44 @@ pub fn hosts(args: &[String]) -> Result<()> {
         [cmd, name] if cmd == "rm" => {
             // Out of the register too, on every machine: finding it over
             // another one must not bring it back.
-            let registered = crate::machines::register_remove(name);
+            let (registered, changes) = crate::machines::register_remove(name);
             if !client::forget_host(name) && !registered {
                 bail!("{name} is not remembered; hosts from the settings go there");
             }
+            if !changes.removed.is_empty() {
+                println!(
+                    "{name} is no longer let in here; the other machines take its key out \
+                     once the register reaches them."
+                );
+            }
+            if crate::pairing::access()(
+                &crate::machines::host_ids()
+                    .get(name.as_str())
+                    .map(|h| h.id.clone())
+                    .unwrap_or_default(),
+                &crate::machines::register()
+                    .iter()
+                    .find(|e| e.name == *name)
+                    .map(|e| e.key.clone())
+                    .unwrap_or_default(),
+            ) == crate::pairing::Access::ByHand
+            {
+                println!(
+                    "Its key is also in ~/.ssh/authorized_keys by a line someone wrote: \
+                     imkr leaves that line alone."
+                );
+            }
             Ok(())
         }
+        [cmd] if cmd == "key" => crate::pairing::key_command(),
+        [cmd, rest @ ..] if cmd == "pair" => crate::pairing::pair(rest),
+        [cmd, rest @ ..] if cmd == "join" => crate::pairing::join(rest),
         [cmd] if cmd == "sync" => hosts_sync(),
         [cmd] if cmd == "vpn" || cmd == "tailnet" => crate::machines::print_vpn(),
-        _ => bail!("usage: imkr hosts [add NAME [ADDRESS] [--user USER] | rm NAME | sync | vpn]"),
+        _ => bail!(
+            "usage: imkr hosts [add NAME [ADDRESS] [--user USER] | rm NAME | pair [--listen ADDR] \
+             | join ADDRESS CODE | key | sync | vpn]"
+        ),
     }
 }
 

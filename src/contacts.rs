@@ -763,7 +763,7 @@ fn notify(text: &str) {
 }
 
 /// POSTs `body` as JSON to `path` of the imkr at `url`; its JSON answer.
-fn post(
+pub(crate) fn post(
     url: &str,
     path: &str,
     token: Option<&str>,
@@ -807,7 +807,7 @@ fn post(
         .context("no HTTP status")?;
     let value: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
     if status == 404 {
-        bail!("imkr there is too old for contacts, it needs `imkr update`");
+        bail!("imkr there does not know {path} yet, it needs `imkr update`");
     }
     if !(200..300).contains(&status) {
         let reason = value["error"].as_str().unwrap_or(body.trim());

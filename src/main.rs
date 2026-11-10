@@ -24,6 +24,7 @@ mod machines;
 mod mcp;
 mod menu;
 mod mouse;
+mod pairing;
 mod pane;
 mod persist;
 mod plugin;
@@ -111,6 +112,16 @@ Commands:
                 the other machines shown, from the settings, remembered and
                 from the register the machines share; ADDRESS for one ssh
                 does not know by its name; rm takes it out on all of them
+  hosts pair [--listen ADDR[:PORT]]
+                let a new machine in: shows a code for 10 minutes and waits
+                on the VPN address (or 127.0.0.1) for `hosts join`
+  hosts join ADDRESS CODE
+                on the new machine: pair with the one showing CODE; both
+                let each other in with their own key ~/.ssh/imkr-ID (made
+                if missing), and the key travels with the register to all
+                your machines; `hosts rm` takes it out everywhere again
+  hosts key     make this machine's own key and send it with the register,
+                for machines set up by hand before pairing existed
   hosts sync    the latest release on every one of them: installed where
                 imkr is missing, upgraded with its sessions elsewhere
   hosts vpn     the machines of your Tailscale and NetBird networks, and
@@ -469,6 +480,7 @@ fn main() -> Result<()> {
         ["move-window", ..] => cli::move_window(&args[1..]),
         ["popup", ..] => cli::popup(&args[1..]),
         ["hosts", ..] => cli::hosts(&args[1..]),
+        ["gate", ..] => pairing::gate(&args[1..]),
         ["settings", ..] => cli::settings(&args[1..]),
         ["plugins"] | ["plugin"] | ["plugin", "ls"] => cli::plugins(),
         ["plugin", ..] => cli::plugin(&args[1..]),

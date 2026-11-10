@@ -239,6 +239,78 @@ peer of your NetBird or Tailscale network that no machine of yours named.</p>
 <p><code>imkr hosts rm NAME</code> takes a machine out everywhere: it leaves a removal with its time in the
 register, which travels like any entry, so the machine does not come back over the others.
 <code>imkr hosts add NAME</code>, on any machine, takes it back.</p>
+<h3 id="pairing-a-new-machine">Pairing a new machine</h3>
+<p>A machine imkr finds in the register still needs ssh to let it in. Instead of copying keys into
+<code>authorized_keys</code> by hand, pair the new machine with <strong>one</strong> of yours, with a code:</p>
+<pre><code class="language-bash"># on a machine you already have (it shows the code and waits 10 minutes)
+imkr hosts pair
+# on the new machine, with what the first one showed
+imkr hosts join 100.96.1.2 ABCD-EFGH
+</code></pre>
+<p><code>hosts pair</code> listens on this machine's VPN address (100.64.0.0/10, Tailscale or NetBird), or on
+127.0.0.1 without one, on port 4658 (<code>--listen ADDR[:PORT]</code> for another); it never listens
+anywhere else, so no one outside your own network sees it. The code is good for ten minutes and
+five wrong tries. Typing it on the new machine is the confirmation: whoever knows it sits at both.
+Both sides then let each other in with their own machine key <code>~/.ssh/imkr-&lt;machine id&gt;</code> (ed25519,
+comment <code>imkr@NAME</code>, made by imkr on that machine where it is missing, so it was never anywhere
+else), take each other's register and ssh host keys (into
+<code>~/.local/state/imkr/machines/known_hosts</code>, so the first ssh does not take a key unseen), and
+become hosts of each other. Nothing else asks first: there is no searching of the VPN, and no key
+gets written without a code.</p>
+<p><strong>Once is enough.</strong> The register entry of a machine carries its key, and every machine that gets
+the entry lets that machine in. Within a minute or two, as the machines ask each other for their
+sessions, the new one's key reaches all your other machines and theirs reach it. Keys are taken
+only from a machine that may hand them on: on the machine that is asked, the asking one has just
+logged in (by a key you set by hand it has a shell there anyway; by a key of imkr's it was paired);
+on the asking side, what comes back loses its keys, because answering does not prove a machine may
+get in. <code>imkr hosts</code> says for each machine <em>paired</em> (imkr lets it in) or <em>key by hand</em> (a line you
+wrote lets it in).</p>
+<p><strong>One key per machine.</strong> imkr pairs with <code>~/.ssh/imkr-&lt;machine id&gt;</code>, not with <code>~/.ssh/imkr</code>: that
+one may be the same file on several machines (copied by a dotfile manager such as chezmoi), and a
+key that several machines hold cannot be taken from one of them. A key that the register shows
+for more than one machine lets in none of them (imkr removes its lines for it). ssh is offered the
+own key first and <code>~/.ssh/imkr</code> after it, so lines you set up by hand keep working.</p>
+<p><strong>Revoking.</strong> <code>imkr hosts rm NAME</code> takes the machine's key out of <code>authorized_keys</code> here, and the
+removal travels with the register, so every other machine takes it out too. A machine whose key
+imkr removed cannot bring itself back: <code>imkr gate</code> knows which machine logged in, and that one's
+word does not undo its own removal. A key you also put in by hand stays; imkr says so.</p>
+<p><strong>Only its own lines.</strong> imkr writes and removes only lines that end in <code>imkr:&lt;machine id&gt; NAME</code>.
+Every other line of <code>authorized_keys</code> stays byte for byte. Before the first change the file is
+copied to <code>~/.ssh/authorized_keys.imkr-backup</code>; it is written whole through a file beside it, mode
+0600. If a machine's key is already in a line of yours, imkr adds none (ssh takes the first line
+with a key, so a second, restricted one would change nothing).</p>
+<p><strong>What the restriction protects, and what not.</strong> imkr's lines look like</p>
+<pre><code>restrict,pty,command=&quot;/home/you/.local/bin/imkr gate MACHINE-ID&quot; ssh-ed25519 AAAA… imkr:MACHINE-ID laptop
+</code></pre>
+<p><code>restrict</code> turns off port, agent and X11 forwarding and the user's <code>~/.ssh/rc</code>; <code>pty</code> is allowed
+again because hosted windows (<code>imkr --host H new</code>) attach with a terminal. <code>imkr gate</code> runs a
+command only if it is exactly in the form imkr itself sends over ssh (a login shell running
+<code>imkr …</code> with the variables imkr sets), checked by building it again, and refuses the few
+commands that change who gets in or hand out logins (<code>hosts</code> other than <code>add</code>, <code>account</code>,
+<code>connect</code>, <code>web pair|devices|forget</code>, <code>screen allow|refuse</code>, <code>gate</code>). So a paired machine gets no
+shell, no <code>scp</code>/<code>sftp</code>, no tunnel into your network through this one, and cannot pair further
+machines here. It is <strong>not</strong> a sandbox: <code>imkr send</code>, <code>imkr run</code> and <code>imkr new -- CMD</code> type into
+panes and start programs, which is what imkr is for, so a paired machine can do what you can do
+in a pane. Pair only machines that are yours. A machine that was taken over before you revoked it
+may have handed on keys of its own in the meantime: check <code>imkr hosts</code> afterwards.</p>
+<p><strong>Machines set up by hand before.</strong> They keep working as they are. To move them to keys of their
+own, so each can be revoked alone:</p>
+<ol>
+<li>On each machine, once: <code>imkr hosts key</code> makes <code>~/.ssh/imkr-&lt;machine id&gt;</code> and puts it in the
+   register. (A pairing does the same.) Over the next minute or two every machine that already
+   reaches it by the old key takes the new key in, as an imkr line.</li>
+<li>Wait until <code>imkr hosts</code> on every machine says <em>paired</em> for all the others.</li>
+<li>Then remove the lines with the old, copied key from <code>~/.ssh/authorized_keys</code> on each machine,
+   take <code>~/.ssh/imkr</code> out of the dotfile manager and delete it. From then on <code>imkr hosts rm NAME</code>
+   shuts that one machine out everywhere.</li>
+</ol>
+<p>Until step 3 a removed machine still gets in by the copied key: imkr does not touch lines it did not
+write, and it cannot tell which machines hold a copied key.</p>
+<p>Over a paired key, everything imkr does between machines works: sessions, switching, hosted
+windows, messages, hives, archive, <code>settings sync</code>, <code>hosts sync</code> upgrading imkr. Installing imkr
+on a machine that does not have it (<code>hosts sync</code>, <code>imkr --host</code>) needs your own login there; a
+paired machine always has imkr. Older versions of imkr ignore the keys in the register; they need
+<code>imkr update</code> to take part.</p>
 <p><strong>NetBird and Tailscale.</strong> The peers of your networks that are online and not used yet show as
 suggestions when you start a session on another machine (<code>Ctrl+B s n</code>, groups <em>NetBird</em> and
 <em>Tailscale</em>); picking one connects to it by ssh, a NetBird one at its NetBird address. <code>imkr hosts
@@ -251,8 +323,8 @@ works).</p>
 your own VPN (100.64.0.0/10, where Tailscale and NetBird give theirs) imkr passes
 <code>StrictHostKeyChecking=accept-new</code>, so a machine seen for the first time is taken and kept in
 <code>~/.local/state/imkr/machines/known_hosts</code>; a key that <strong>changed</strong> still stops ssh. Any other
-address keeps ssh's own rules. imkr never puts keys into another machine's <code>authorized_keys</code>:
-ssh must already let you in.</p>
+address keeps ssh's own rules. imkr puts keys into <code>authorized_keys</code> only after a pairing with a
+code (see <em>Pairing a new machine</em>); otherwise ssh must already let you in.</p>
 <p><code>imkr settings sync</code> keeps the settings the same on all known machines: the config (without
 what belongs to one machine: <code>name</code>, <code>hosts</code>, <code>web</code>, <code>web_listen</code>), session templates, saved
 layouts, the list of accounts (without their logins) and your own plugins (not the ones installed with <code>imkr plugin add</code>, every machine gets

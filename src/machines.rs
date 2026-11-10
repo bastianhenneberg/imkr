@@ -175,8 +175,29 @@ pub fn ssh_to(host: &str) -> Vec<String> {
     let route = routes().remove(host).filter(|_| !ssh_knows(host));
     match route {
         Some(route) => by_address(&route),
-        None => vec!["--".to_owned(), host.to_owned()],
+        None => by_name(host),
     }
+}
+
+/// ssh's arguments for a name ssh knows: the machine's own key (once it
+/// has one) offered along with what the config names, so it still gets in
+/// once the lines of a key copied to several machines are gone (#605).
+/// `~/.ssh/imkr` is left to the config here, as before.
+fn by_name(host: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(key) = crate::pairing::key_file().filter(|key| key.is_file()) {
+        args.extend(["-i".to_owned(), key.display().to_string()]);
+    }
+    args.extend(["--".to_owned(), host.to_owned()]);
+    args
+}
+
+/// `-i KEY` for each machine key there is (`pairing::offered_keys`).
+fn offered_keys() -> Vec<String> {
+    crate::pairing::offered_keys()
+        .into_iter()
+        .flat_map(|key| ["-i".to_owned(), key.display().to_string()])
+        .collect()
 }
 
 /// ssh's arguments for reaching `route`.
@@ -200,13 +221,8 @@ fn by_address(route: &Route) -> Vec<String> {
         }
     }
     // No ~/.ssh/config entry names a key for a bare address: offer the
-    // machine key `imkr` too, next to ssh's own defaults.
-    if let Some(key) = std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(".ssh/imkr"))
-        .filter(|key| key.is_file())
-    {
-        args.extend(["-i".to_owned(), key.display().to_string()]);
-    }
+    // machine keys too, next to ssh's own defaults.
+    args.extend(offered_keys());
     if !route.user.is_empty() {
         args.extend(["-l".to_owned(), route.user.clone()]);
     }
@@ -303,6 +319,12 @@ pub struct Entry {
     /// Taken out with `imkr hosts rm`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removed: bool,
+    /// Its machine key (`~/.ssh/imkr.pub`, `TYPE BASE64`), which every
+    /// machine with this entry lets in (#605). Only taken from a machine
+    /// that may hand on keys (see `pairing`), never dropped by a newer
+    /// entry without one: older versions do not know the field.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
 }
 
 impl Entry {
@@ -332,7 +354,16 @@ pub fn merge(mine: &mut Vec<Entry>, theirs: &[Entry]) -> bool {
     let before = mine.clone();
     for entry in theirs.iter().filter(|e| !e.name.is_empty()) {
         match mine.iter_mut().find(|m| m.key() == entry.key()) {
-            Some(m) if entry.beats(m) => *m = entry.clone(),
+            Some(m) if entry.beats(m) => {
+                let key = std::mem::take(&mut m.key);
+                *m = entry.clone();
+                if m.key.is_empty() {
+                    m.key = key;
+                }
+            }
+            // Not newer, but a key where there was none: a gap, like an
+            // address (the machine's own entry has it from the start).
+            Some(m) if m.key.is_empty() => m.key.clone_from(&entry.key),
             Some(_) => {}
             None => mine.push(entry.clone()),
         }
@@ -345,6 +376,9 @@ pub fn merge(mine: &mut Vec<Entry>, theirs: &[Entry]) -> bool {
         else {
             continue;
         };
+        if with_id.key.is_empty() {
+            with_id.key = named.key.clone();
+        }
         if named.at > with_id.at {
             with_id.removed = named.removed;
             with_id.at = named.at;
@@ -373,6 +407,13 @@ pub fn register() -> Vec<Entry> {
 /// Changes the register under a lock: servers and `imkr ls --json` started
 /// by other machines write it at the same time.
 fn change_register(change: impl FnOnce(&mut Vec<Entry>)) -> Vec<Entry> {
+    change_register_noting(change).0
+}
+
+/// `change_register`, with what that did to `authorized_keys`.
+fn change_register_noting(
+    change: impl FnOnce(&mut Vec<Entry>),
+) -> (Vec<Entry>, crate::pairing::Changes) {
     use std::os::fd::AsRawFd;
     let lock = dir().ok().and_then(|dir| {
         std::fs::create_dir_all(&dir).ok()?;
@@ -385,10 +426,14 @@ fn change_register(change: impl FnOnce(&mut Vec<Entry>)) -> Vec<Entry> {
     let mut entries = register();
     let before = entries.clone();
     change(&mut entries);
+    let mut changes = crate::pairing::Changes::default();
     if entries != before {
         let _ = write_json(register_file(), &entries);
+        // Under the lock still: two writers of authorized_keys at once
+        // would lose a line.
+        changes = crate::pairing::sync_keys(&entries);
     }
-    entries
+    (entries, changes)
 }
 
 /// This machine's own entry, made new when its name or login changed.
@@ -398,12 +443,14 @@ fn note_self(entries: &mut Vec<Entry>) {
     let id = crate::protocol::machine_id();
     let name = crate::protocol::machine_name();
     let user = std::env::var("USER").unwrap_or_default();
+    let key = crate::pairing::own_key().unwrap_or_default();
     let now = crate::persist::now();
     match entries.iter_mut().find(|e| e.id == id) {
-        Some(own) if own.name == name && own.user == user => {}
+        Some(own) if own.name == name && own.user == user && own.key == key => {}
         Some(own) => {
             own.name = name;
             own.user = user;
+            own.key = key;
             own.at = now;
         }
         None => {
@@ -413,6 +460,7 @@ fn note_self(entries: &mut Vec<Entry>) {
                     name,
                     id,
                     user,
+                    key,
                     at: now,
                     ..Entry::default()
                 }],
@@ -475,6 +523,7 @@ pub fn register_add(name: &str, route: &Route) {
                     user: route.user.clone(),
                     at: now,
                     removed: false,
+                    key: String::new(),
                 }],
             );
         }
@@ -484,13 +533,13 @@ pub fn register_add(name: &str, route: &Route) {
 /// What `imkr hosts rm NAME` does to the register: a removal with the
 /// time, which travels to the other machines. False if the register did
 /// not know `name`.
-pub fn register_remove(name: &str) -> bool {
+pub fn register_remove(name: &str) -> (bool, crate::pairing::Changes) {
     let id = host_ids()
         .get(name)
         .map(|h| h.id.clone())
         .unwrap_or_default();
     let mut found = false;
-    change_register(|entries| {
+    let (_, changes) = change_register_noting(|entries| {
         let now = crate::persist::now();
         for entry in entries
             .iter_mut()
@@ -510,7 +559,7 @@ pub fn register_remove(name: &str) -> bool {
             });
         }
     });
-    found
+    (found, changes)
 }
 
 /// What a host name here stands for.
@@ -532,7 +581,7 @@ pub fn host_ids() -> BTreeMap<String, HostId> {
     read_json(ids_file())
 }
 
-fn note_id(host: &str, id: &str, from_register: bool) {
+pub fn note_id(host: &str, id: &str, from_register: bool) {
     let mut ids = host_ids();
     let from_register = from_register || ids.get(host).is_some_and(|h| h.from_register);
     let entry = HostId {
@@ -561,8 +610,24 @@ pub fn tell_hosts(sessions: &mut Vec<crate::protocol::SessionInfo>) {
     let Some(theirs) = std::env::var_os(HOSTS_ENV) else {
         return;
     };
-    let theirs: Vec<Entry> = serde_json::from_str(&theirs.to_string_lossy()).unwrap_or_default();
-    let caller = std::env::var(CALLER_ENV).unwrap_or_default();
+    let mut theirs: Vec<Entry> =
+        serde_json::from_str(&theirs.to_string_lossy()).unwrap_or_default();
+    // Keys stay: the caller logged in here. By a key of imkr's, `imkr
+    // gate` says which machine it is, and that one does not take back
+    // its own removal; by a key set by hand it has a shell anyway.
+    let gated = std::env::var(crate::pairing::GATED_ENV).ok();
+    let caller = gated
+        .clone()
+        .or_else(|| std::env::var(CALLER_ENV).ok())
+        .unwrap_or_default();
+    if let Some(gated) = &gated {
+        let removed: Vec<String> = register()
+            .into_iter()
+            .filter(|e| e.removed && e.id == *gated)
+            .map(|e| e.id)
+            .collect();
+        theirs.retain(|e| !removed.contains(&e.id));
+    }
     let came_from = std::env::var("SSH_CONNECTION")
         .ok()
         .and_then(|c| c.split_whitespace().next().map(str::to_owned))
@@ -593,8 +658,17 @@ pub fn learn_from(host: &str, sessions: &[crate::protocol::SessionInfo]) {
     };
     note_id(host, &first.machine_id, false);
     let address = route_of(host).address;
+    // Without keys: that it answered does not prove it may get in here.
+    let theirs: Vec<Entry> = first
+        .machines
+        .iter()
+        .map(|e| Entry {
+            key: String::new(),
+            ..e.clone()
+        })
+        .collect();
     change_register(|entries| {
-        merge(entries, &first.machines);
+        merge(entries, &theirs);
         note_address(entries, &first.machine_id, &address);
     });
 }
@@ -706,6 +780,67 @@ fn take(entry: &Entry, from_register: bool) {
     }
 }
 
+/// What `imkr hosts pair` and `join` do with the other side once the code
+/// was right: its register joined in with its keys, itself in again at
+/// the address it was reached at, its host keys in imkr's `known_hosts`,
+/// and a host here. What `authorized_keys` changed.
+pub fn take_paired(
+    entry: Entry,
+    register: &[Entry],
+    host_keys: &[String],
+) -> crate::pairing::Changes {
+    let name = entry.name.clone();
+    let own = crate::protocol::machine_id();
+    // Its word about this machine does not count: this one knows itself.
+    let theirs: Vec<Entry> = register
+        .iter()
+        .filter(|e| e.id != own && e.id != entry.id)
+        .cloned()
+        .collect();
+    let (_, changes) = change_register_noting(|entries| {
+        merge(entries, &theirs);
+        // Paired on purpose: in again, newer than any removal.
+        entries.retain(|e| e.id != entry.id && !(e.id.is_empty() && e.name == name));
+        entries.push(entry.clone());
+        entries.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
+    });
+    if in_vpn(&entry.address) || is_loopback(&entry.address) {
+        note_host_keys(&entry.address, host_keys);
+    }
+    take(&entry, false);
+    crate::client::remember_host(&name);
+    changes
+}
+
+fn is_loopback(address: &str) -> bool {
+    address.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Adds the host keys of `address` to imkr's own `known_hosts`, where ssh
+/// by address looks (`by_address`).
+fn note_host_keys(address: &str, keys: &[String]) {
+    let Ok(dir) = dir() else {
+        return;
+    };
+    let file = dir.join("known_hosts");
+    let mut text = std::fs::read_to_string(&file).unwrap_or_default();
+    let before = text.len();
+    for key in keys {
+        let line = format!("{address} {key}");
+        if !text.lines().any(|l| l.trim() == line) {
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    if text.len() != before {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(&file, text);
+    }
+}
+
 /// Takes `name` out of the hosts here, with its address, without a new
 /// removal in the register (it came from there).
 fn drop_host(name: &str) {
@@ -717,7 +852,7 @@ fn drop_host(name: &str) {
 /// `None` if ssh did not get in or imkr did not answer.
 fn reach(entry: &Entry) -> Option<Vec<crate::protocol::SessionInfo>> {
     let target = if ssh_knows(&entry.name) {
-        vec!["--".to_owned(), entry.name.clone()]
+        by_name(&entry.name)
     } else {
         by_address(&Route {
             address: entry.address.clone(),
@@ -901,6 +1036,22 @@ mod tests {
             at,
             ..Entry::default()
         }
+    }
+
+    #[test]
+    fn a_key_is_never_lost_to_an_entry_without_one() {
+        let key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIkkkkkkkkkkkkkk";
+        let mut mine = vec![entry("beta", "b1", 10)];
+        let mut with_key = entry("beta", "b1", 10);
+        with_key.key = key.into();
+        // As old: the key fills the gap.
+        assert!(merge(&mut mine, &[with_key]));
+        assert_eq!(mine[0].key, key);
+        // Newer, from a version without keys: the key stays.
+        let mut moved = entry("beta", "b1", 20);
+        moved.address = "100.97.0.9".into();
+        assert!(merge(&mut mine, &[moved]));
+        assert_eq!((mine[0].key.as_str(), mine[0].at), (key, 20));
     }
 
     #[test]
