@@ -199,6 +199,14 @@ fn by_address(route: &Route) -> Vec<String> {
             ]);
         }
     }
+    // No ~/.ssh/config entry names a key for a bare address: offer the
+    // machine key `imkr` too, next to ssh's own defaults.
+    if let Some(key) = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".ssh/imkr"))
+        .filter(|key| key.is_file())
+    {
+        args.extend(["-i".to_owned(), key.display().to_string()]);
+    }
     if !route.user.is_empty() {
         args.extend(["-l".to_owned(), route.user.clone()]);
     }
@@ -883,7 +891,8 @@ mod tests {
             address: "192.168.1.23".into(),
             user: String::new(),
         });
-        assert_eq!(lan, ["--", "192.168.1.23"]);
+        assert!(lan.ends_with(&["--".into(), "192.168.1.23".into()]));
+        assert!(!lan.iter().any(|a| a.starts_with("StrictHostKeyChecking")));
     }
 
     fn entry(name: &str, id: &str, at: u64) -> Entry {
