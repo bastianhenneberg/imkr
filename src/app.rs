@@ -16593,10 +16593,12 @@ mod tests {
         // A pane here, with and without its session named.
         assert_eq!(place("claude@imker/0"), Some((None, "imker".into(), 0)));
         assert_eq!(place("3"), Some((None, "default".into(), 3)));
-        // A pane on another machine: the notice goes there over ssh.
+        // A pane on another machine: the notice goes there over ssh. Not
+        // `laptop`: run on the laptop, that is this machine and rightly None
+        // (#1371).
         assert_eq!(
-            place("claude@laptop:imker/7"),
-            Some((Some("laptop".into()), "imker".into(), 7))
+            place("claude@elsewhere:imker/7"),
+            Some((Some("elsewhere".into()), "imker".into(), 7))
         );
         // Nobody to tell.
         assert_eq!(place("the user at codingmachine"), None);
