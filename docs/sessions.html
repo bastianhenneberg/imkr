@@ -216,7 +216,10 @@ others. <code>Ctrl+B D</code> does the same from inside: it detaches every other
 sit at sets the size again (handy after the session was shown on a smaller screen elsewhere).
 Their sessions keep running.</p>
 <p>Sessions are separate servers with their own panes, socket and saved layout. <code>imkr -s NAME</code>
-(or <code>attach -t NAME</code>) picks one, <code>Ctrl+B S</code> switches between them without leaving the terminal,
+(or <code>attach -t NAME</code>) picks one. Without a name, <code>imkr</code> goes back to the session used last.
+If there is none, it (like <code>imkr --host H</code>) goes to one that runs there, with the session list
+open, and if none runs, it asks for the name of a new one (this directory's name offered). It
+never starts a session called <code>default</code> of its own accord. <code>Ctrl+B S</code> switches between them without leaving the terminal,
 and named sessions show their name in the control bar. In that menu <code>n</code> starts a new session (on
 which machine, if others are known, is asked first),
 <code>x</code> ends the selected one, <code>r</code> renames it (like <code>imkr rename-session NAME</code>, <code>-s OLD</code> for

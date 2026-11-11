@@ -55,7 +55,8 @@ use anyhow::{Result, bail};
 const USAGE: &str = "\
 Usage: imkr [-s NAME] [command]
 
--s NAME picks a session other than `default`, e.g. `imkr -s work`.
+-s NAME picks a session, e.g. `imkr -s work`. Without it imkr goes to the
+session used last, else to one that runs there, else asks for a name.
 
 Commands:
   (none)        attach to the session, or start it

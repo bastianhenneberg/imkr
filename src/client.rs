@@ -380,6 +380,75 @@ fn last_place() -> Option<(Option<String>, String)> {
     Some((host.map(str::to_owned), name.to_owned()))
 }
 
+/// The session for a client that named none, on `host` (`None`: here):
+/// one that runs there, and whether it was one — or a new one, named by
+/// the user. Plain `imkr` and `imkr --host H` used to start `default`,
+/// which then stood in every list.
+fn unnamed_session(host: Option<&str>) -> Result<(String, bool)> {
+    let sessions = match host {
+        Some(host) => remote_sessions(host)?,
+        None => local_sessions(),
+    };
+    if let Some(running) = sessions.into_iter().find(SessionInfo::runs) {
+        return Ok((running.name, true));
+    }
+    Ok((ask_session_name(host)?, false))
+}
+
+/// Asks in the terminal for the name of a new session on `host`; this
+/// directory's name is offered here. Without a terminal that offer is
+/// taken, or there is nothing to go on.
+fn ask_session_name(host: Option<&str>) -> Result<String> {
+    use std::io::{BufRead, IsTerminal};
+    let place = host.unwrap_or("this machine");
+    let offer = host.is_none().then(dir_session_name).flatten();
+    if !io::stdin().is_terminal() {
+        return offer.with_context(|| format!("no session runs on {place}: name one with -s NAME"));
+    }
+    let shown = offer
+        .as_ref()
+        .map(|o| format!(" [{o}]"))
+        .unwrap_or_default();
+    loop {
+        eprint!("No session runs on {place} yet. Name for a new one{shown}: ");
+        let mut line = String::new();
+        if io::stdin().lock().read_line(&mut line)? == 0 {
+            bail!("no session name given");
+        }
+        let name = match line.trim() {
+            "" => match &offer {
+                Some(offer) => offer.clone(),
+                None => continue,
+            },
+            name => name.to_owned(),
+        };
+        if crate::protocol::valid_session_name(&name) {
+            return Ok(name);
+        }
+        eprintln!("{name:?}: letters, digits, - and _ only, up to 32");
+    }
+}
+
+/// This directory's name as a session name, or `None` when nothing fits.
+fn dir_session_name() -> Option<String> {
+    let dir = std::env::current_dir().ok()?;
+    let name: String = dir
+        .file_name()?
+        .to_string_lossy()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(32)
+        .collect();
+    let name = name.trim_matches('-').to_owned();
+    crate::protocol::valid_session_name(&name).then_some(name)
+}
+
 /// Forgets where the client was: that session is gone.
 fn forget_place() {
     if let Ok(path) = last_file() {
@@ -655,6 +724,26 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
             None => unsafe { std::env::set_var("IMKR_SESSION", last_name) },
         }
     }
+    // No session named and none to go back to: one that runs there, with
+    // the session list open, or a new one under a name asked for — never
+    // a `default` of its own accord.
+    let mut chose = false;
+    if start {
+        match &mut remote {
+            Some(r) if r.session.is_none() => {
+                let (name, running) = unnamed_session(Some(&r.host))?;
+                r.session = Some(name);
+                chose = running;
+            }
+            None if last && std::env::var_os("IMKR_SESSION").is_none() => {
+                let (name, running) = unnamed_session(None)?;
+                // SAFETY: as above.
+                unsafe { std::env::set_var("IMKR_SESSION", name) };
+                chose = running;
+            }
+            _ => {}
+        }
+    }
     // Where the client is now: the host (`None` here) and the session.
     let mut host = remote.as_ref().map(|r| r.host.clone());
     let mut name = remote
@@ -673,7 +762,10 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
             // The last session was elsewhere and is out of reach: here then.
             Err(e) if last => {
                 flash = Some(format!("{e:#}"));
-                (host, name) = (None, crate::protocol::DEFAULT_SESSION.to_owned());
+                let running;
+                (name, running) = unnamed_session(None)?;
+                chose |= running;
+                host = None;
                 *SHOWN_HOST.lock().unwrap() = None;
                 connect(None, &name)?
             }
@@ -767,8 +859,8 @@ pub fn run(start: bool, alone: bool, remote: Option<Remote>, last: bool) -> Resu
 
     let mut conn = conn;
     // The setting of this machine, wherever the session is.
-    let pick = last && crate::config::Config::load().0.sessions_on_start;
-    let mut hello = last.then_some((pick, flash));
+    let pick = chose || (last && crate::config::Config::load().0.sessions_on_start);
+    let mut hello = (last || chose).then_some((pick, flash));
     let mut reveal = None;
     let mut window = false;
     let mut banner = None;

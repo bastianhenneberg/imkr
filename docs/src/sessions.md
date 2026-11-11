@@ -26,7 +26,10 @@ sit at sets the size again (handy after the session was shown on a smaller scree
 Their sessions keep running.
 
 Sessions are separate servers with their own panes, socket and saved layout. `imkr -s NAME`
-(or `attach -t NAME`) picks one, `Ctrl+B S` switches between them without leaving the terminal,
+(or `attach -t NAME`) picks one. Without a name, `imkr` goes back to the session used last.
+If there is none, it (like `imkr --host H`) goes to one that runs there, with the session list
+open, and if none runs, it asks for the name of a new one (this directory's name offered). It
+never starts a session called `default` of its own accord. `Ctrl+B S` switches between them without leaving the terminal,
 and named sessions show their name in the control bar. In that menu `n` starts a new session (on
 which machine, if others are known, is asked first),
 `x` ends the selected one, `r` renames it (like `imkr rename-session NAME`, `-s OLD` for
