@@ -22,6 +22,8 @@ pub enum Command {
     ToggleFloat,
     NewFloat,
     Detach,
+    /// Detach every other client, so this one sets the size again.
+    DetachOthers,
     SessionMenu,
     Settings,
     Workspace(u8),
@@ -603,6 +605,12 @@ pub const BINDINGS: &[Binding] = &[
         description: "detach",
         group: Group::Session,
         keys: &[(Key::plain(Char('d')), C::Detach)],
+    },
+    Binding {
+        label: "D",
+        description: "detach others",
+        group: Group::More,
+        keys: &[(Key::plain(Char('D')), C::DetachOthers)],
     },
     Binding {
         label: "s",

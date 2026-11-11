@@ -21,7 +21,9 @@ one (the rest of a larger terminal is filled with dots), and the control bar say
 attached. Each terminal shows its own window: switching windows in one leaves the others where
 they are (setting *Own window per attached terminal*, off for tmux's behaviour, where all show
 the same). `Ctrl+B d` detaches only the terminal it was pressed in, `imkr attach -d` detaches all
-others.
+others. `Ctrl+B D` does the same from inside: it detaches every other terminal, so the one you
+sit at sets the size again (handy after the session was shown on a smaller screen elsewhere).
+Their sessions keep running.
 
 Sessions are separate servers with their own panes, socket and saved layout. `imkr -s NAME`
 (or `attach -t NAME`) picks one, `Ctrl+B S` switches between them without leaving the terminal,

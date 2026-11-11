@@ -2726,6 +2726,26 @@ impl App {
         }
     }
 
+    /// Detaches every client but the one whose input is handled now, like
+    /// `imkr attach -d` from inside: the session shows at this terminal's size
+    /// again instead of the smallest one's. The others' sessions keep running.
+    fn detach_others(&mut self) {
+        let others: Vec<ClientId> = self
+            .clients
+            .iter()
+            .map(|c| c.id)
+            .filter(|&id| Some(id) != self.active)
+            .collect();
+        for &id in &others {
+            self.detach(id);
+        }
+        self.flash = Some(match others.len() {
+            0 => "no other terminal attached".to_string(),
+            1 => "detached 1 other terminal, this one sets the size".to_string(),
+            n => format!("detached {n} other terminals, this one sets the size"),
+        });
+    }
+
     fn client_mut(&mut self, id: ClientId) -> Option<&mut Client> {
         self.clients.iter_mut().find(|c| c.id == id)
     }
@@ -7160,6 +7180,7 @@ impl App {
                 self.copy_scroll(page);
             }
             Command::Detach => self.detach_active(),
+            Command::DetachOthers => self.detach_others(),
             Command::Quit => self.mode = Mode::Confirm(Action::KillServer),
             Command::Help => self.mode = Mode::Help(0),
             Command::SessionMenu => self.mode = Mode::Menu(0),

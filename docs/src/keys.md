@@ -114,6 +114,7 @@ Plugins (Ctrl+B, p, then)
   Esc            cancel
 
 More
+  D              detach others
   S              session list
   H              hives
   Ctrl/Alt ←↑↓→  resize
