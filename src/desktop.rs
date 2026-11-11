@@ -42,6 +42,7 @@ pub fn event(
         "done" => "finished its turn",
         "blocked" if what == "needs you" => "is waiting for your answer",
         "failed" => "stopped with an error",
+        "delivery" => "message delivery delayed",
         _ => what,
     };
     let title = format!("{agent} · {}", label(action, "needs attention"));
@@ -50,10 +51,30 @@ pub fn event(
         .map(|n| label(n, "bee"))
         .unwrap_or_else(|| format!("{} / bee {pane}", label(session, "imkr")));
     let mut body = format!("{} · {identity}", label(project.unwrap_or(""), "imkr"));
-    if kind == "failed" && what != "stopped with an error" {
+    if matches!(kind, "failed" | "delivery") && what != "stopped with an error" {
         body.push_str(&format!(" · {}", label(what, "error")));
     }
     (title, body)
+}
+
+/// The existing transferred mail log is enough to suppress a desktop replay
+/// after live update, without changing delivery, sender feedback, push or OSC.
+/// `Again` records a deliberate new attempt and must permit a fresh warning.
+pub fn delivery_warning_is_new(notes: &[crate::protocol::MailNote], pane: usize, seq: u64) -> bool {
+    use crate::protocol::MailWhat;
+    if seq == 0 {
+        return true;
+    } // No reliable identity: preserve attention.
+    notes
+        .iter()
+        .rev()
+        .filter(|note| !note.sent && note.pane == pane && note.about == Some(seq))
+        .find_map(|note| match note.what {
+            MailWhat::Overdue => Some(false),
+            MailWhat::Again => Some(true),
+            _ => None,
+        })
+        .unwrap_or(true)
 }
 
 /// Selection markers and wrapping are presentation changes, not new questions.
@@ -148,7 +169,7 @@ impl Queue {
         self.delivered.insert(key, alert.detail.clone());
         let rank = match alert.kind.as_str() {
             "failed" => 0,
-            "blocked" => 1,
+            "blocked" | "delivery" => 1,
             "account" => 2,
             _ => 3,
         };
@@ -197,6 +218,7 @@ impl Queue {
                                 "failed" => "stopped with an error",
                                 "blocked" => "need your attention",
                                 "done" => "finished their turns",
+                                "delivery" => "have delivery delays",
                                 _ => "have account updates",
                             };
                             format!("{} bees {action}", chunk.len())
@@ -562,5 +584,56 @@ mod tests {
         let notices = queue.finish(now);
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].urgency, "critical");
+    }
+    #[test]
+    fn overdue_desktop_replay_uses_message_identity_and_explicit_redelivery_episode() {
+        use crate::protocol::{MailNote, MailWhat};
+        let note = |pane, about, what| MailNote {
+            at: 1000,
+            seq: 50,
+            pane,
+            peer: String::new(),
+            sent: false,
+            text: String::new(),
+            what,
+            about: Some(about),
+            why: None,
+        };
+        let mut notes = vec![note(0, 7, MailWhat::Overdue)];
+        assert!(!delivery_warning_is_new(&notes, 0, 7));
+        assert!(delivery_warning_is_new(&notes, 0, 8));
+        assert!(delivery_warning_is_new(&notes, 1, 7));
+        // A fresh Held note after update is not a new delivery episode.
+        notes.push(note(0, 7, MailWhat::Held));
+        assert!(!delivery_warning_is_new(&notes, 0, 7));
+        notes.push(note(0, 7, MailWhat::Again));
+        assert!(delivery_warning_is_new(&notes, 0, 7));
+        notes.push(note(0, 7, MailWhat::Overdue));
+        assert!(!delivery_warning_is_new(&notes, 0, 7));
+        assert!(delivery_warning_is_new(&[], 0, 7));
+        assert!(delivery_warning_is_new(&notes, 0, 0));
+    }
+
+    #[test]
+    fn delivery_warning_is_an_actual_delay_not_a_question_for_the_user() {
+        let (title, body) = event(
+            "delivery",
+            "working",
+            Some("codex"),
+            Some("worker"),
+            Some("imkr"),
+            "review",
+            0,
+        );
+        assert_eq!(title, "Codex · message delivery delayed");
+        assert_eq!(body, "imkr · worker · working");
+        let now = std::time::Instant::now();
+        let mut queue = Queue::default();
+        for seq in [7, 8] {
+            let mut warning = alert(0, "delivery");
+            warning.detail = format!("mail:{seq}");
+            queue.submit(warning, now + BURST * (seq - 7));
+            assert_eq!(queue.drain(now + BURST * (seq - 6)).len(), 1);
+        }
     }
 }

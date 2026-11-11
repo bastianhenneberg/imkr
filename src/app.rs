@@ -3482,6 +3482,10 @@ impl App {
     /// of its own, which would queue behind the very message it is about
     /// (#1307).
     fn say_overdue(&mut self, pane: PaneId, seq: u64, why: &str, from: &str, text: &str) {
+        // The mail log survives an update; mail_told does not. Only desktop
+        // presentation uses this proof: other transports and lifecycle notes
+        // must retain the original per-message behavior.
+        let desktop_new = crate::desktop::delivery_warning_is_new(&self.mail_log, pane, seq);
         self.note_became(pane, protocol::MailWhat::Overdue, Some(why), seq);
         let who = self
             .pane_who(pane)
@@ -3493,7 +3497,11 @@ impl App {
         // never arrived needs one exactly that way. A kind of its own would
         // reach nobody until everyone edited their config — silence is the
         // very thing this notice exists to end.
-        self.notify(pane, "blocked", &what);
+        self.notify_with_desktop(pane, "blocked", &what, false);
+        if self.config.notifications == Notifications::System && desktop_new {
+            let identity = format!("overdue:{seq}:{}", self.mail_seq);
+            self.notify_desktop_identified(pane, "delivery", why, &identity);
+        }
         // The sender gets the message's own text back, not this notice: on
         // their side the notice is about what they sent.
         self.tell_sender(pane, from, text, why);
@@ -5111,6 +5119,10 @@ impl App {
     /// phone when `[push]` wants `kind` (`blocked`, `failed`, `account`,
     /// `done`).
     fn notify(&mut self, id: PaneId, kind: &str, what: &str) {
+        self.notify_with_desktop(id, kind, what, true);
+    }
+
+    fn notify_with_desktop(&mut self, id: PaneId, kind: &str, what: &str, emit_system: bool) {
         let Some(who) = self.pane_who(id) else {
             return;
         };
@@ -5122,13 +5134,19 @@ impl App {
             _ => String::new(),
         };
         if self.config.notifications == Notifications::System {
-            self.notify_desktop(id, kind, what);
+            if emit_system {
+                self.notify_desktop(id, kind, what);
+            }
         } else {
             self.send_notification(&format!("{who} {what}"), &place);
         }
     }
 
     fn notify_desktop(&mut self, id: PaneId, kind: &str, what: &str) {
+        self.notify_desktop_identified(id, kind, what, what);
+    }
+
+    fn notify_desktop_identified(&mut self, id: PaneId, kind: &str, what: &str, identity: &str) {
         let Some(pane) = self.panes.get(&id) else {
             return;
         };
@@ -5149,7 +5167,7 @@ impl App {
                     pane: id,
                 },
                 kind: kind.into(),
-                detail: what.into(),
+                detail: identity.into(),
                 title,
                 body,
             },
