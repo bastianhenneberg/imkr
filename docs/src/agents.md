@@ -10,6 +10,15 @@ is quiet for 5 seconds with an error like „usage limit“ or „API Error“ a
 while you look elsewhere or are detached: through `notify-send`, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting `notifications = "system" | "terminal" | "off"`).
 
+A desktop notification says what happened and to whom: the tool in the title (*Codex · finished
+its turn*, *Claude · is waiting for your answer*, *Agent* when imkr does not know which), the
+project, window and bee in the text — never the terminal title or a piece of the screen. Events
+that come within a second for the same session and kind become one notification (*15 bees need
+your attention*, each bee named in the text), questions and errors first. Agents on other
+machines are announced by one imkr on this machine, not once per session you have open here.
+A message that did not arrive in ten minutes gives one *message delivery delayed*, and an
+`imkr update` does not repeat it.
+
 imkr recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen,
 kilo and pi. It guesses from their output and from questions on the screen. Other agents and
 their questions go into the config (`extra_agents = ["my-agent"]`,

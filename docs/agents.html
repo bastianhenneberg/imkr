@@ -203,6 +203,14 @@ Claude Code before 2.1.78, which <code>imkr hooks --install</code> leaves the ho
 is quiet for 5 seconds with an error like „usage limit“ or „API Error“ at the bottom of its screen. You also get a desktop notification when an agent waits or finishes
 while you look elsewhere or are detached: through <code>notify-send</code>, or as OSC 9 for terminals like
 Ghostty and WezTerm, or not at all (setting <code>notifications = "system" | "terminal" | "off"</code>).</p>
+<p>A desktop notification says what happened and to whom: the tool in the title (<em>Codex · finished
+its turn</em>, <em>Claude · is waiting for your answer</em>, <em>Agent</em> when imkr does not know which), the
+project, window and bee in the text — never the terminal title or a piece of the screen. Events
+that come within a second for the same session and kind become one notification (<em>15 bees need
+your attention</em>, each bee named in the text), questions and errors first. Agents on other
+machines are announced by one imkr on this machine, not once per session you have open here.
+A message that did not arrive in ten minutes gives one <em>message delivery delayed</em>, and an
+<code>imkr update</code> does not repeat it.</p>
 <p>imkr recognises claude, codex, opencode, aider, gemini, crush, goose, amp, cursor-agent, qwen,
 kilo and pi. It guesses from their output and from questions on the screen. Other agents and
 their questions go into the config (<code>extra_agents = ["my-agent"]</code>,

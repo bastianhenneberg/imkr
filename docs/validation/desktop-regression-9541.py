@@ -22,6 +22,23 @@ import threading
 import re
 
 
+def isolate_desktop(env, root):
+    """Test shield (CLAUDE.md): no inherited desktop or DBus. These probes need
+    notifications = "system", so the fake notify-send in front of PATH is the
+    only receiver; check_guard proves it before any imkr process starts."""
+    for k in [k for k in env if k.startswith('DBUS_') or k in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY')]:
+        del env[k]
+    env['DBUS_SESSION_BUS_ADDRESS'] = 'unix:path=' + str(root / 'no-session-bus')
+    env['DBUS_SYSTEM_BUS_ADDRESS'] = 'unix:path=' + str(root / 'no-system-bus')
+
+
+def check_guard(env, fake):
+    import shutil
+    found = shutil.which('notify-send', path=env['PATH'])
+    assert found and pathlib.Path(found).resolve() == fake.resolve(), found
+    assert not any(k in env for k in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY'))
+
+
 def spawn(binary, world, age):
     """Exec the server in the same process that created its PTY child."""
     listener = socket.socket(socket.AF_UNIX)
@@ -82,6 +99,7 @@ env.update(HOME=str(world/'home'), XDG_CONFIG_HOME=str(world/'home/config'),
            IMKR_CONFIG=str(world/'config.toml'), IMKR_SOCKET=str(world/'session.sock'),
            IMKR_SESSION='regression', IMKR_HOSTNAME='private-regression',
            REGRESSION_WORLD=str(world))
+isolate_desktop(env, world)
 (world/'config.toml').write_text(('notifications = "terminal"\n' if args.terminal else 'notifications = "system"\n') + 'brain_inbox = false\nweb = false\n'
                                'checkpoints = false\nrevive_sessions = false\nhosts = []\n')
 
@@ -109,6 +127,8 @@ osc = (r'\033]0;Claude title JT $(touch OSC_EXECUTED)\007'
        r'\033]777;notify;terminal title;terminal body\007')
 executable('codex', '#!/bin/bash\nwhile read -r line; do\n'
            ' if [[ "$line" == "emit-oscs" ]]; then printf "%b" '+shlex.quote(osc)+'; fi\ndone\n')
+
+check_guard(env, world/'bin'/'notify-send')
 
 
 def read_exact(conn, n):

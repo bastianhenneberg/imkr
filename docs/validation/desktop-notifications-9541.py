@@ -15,6 +15,23 @@ import signal
 import subprocess
 import tempfile
 import time
+
+def isolate_desktop(env, root):
+    """Test shield (CLAUDE.md): no inherited desktop or DBus. These probes need
+    notifications = "system", so the fake notify-send in front of PATH is the
+    only receiver; check_guard proves it before any imkr process starts."""
+    for k in [k for k in env if k.startswith('DBUS_') or k in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY')]:
+        del env[k]
+    env['DBUS_SESSION_BUS_ADDRESS'] = 'unix:path=' + str(root / 'no-session-bus')
+    env['DBUS_SYSTEM_BUS_ADDRESS'] = 'unix:path=' + str(root / 'no-system-bus')
+
+
+def check_guard(env, fake):
+    import shutil
+    found = shutil.which('notify-send', path=env['PATH'])
+    assert found and pathlib.Path(found).resolve() == fake.resolve(), found
+    assert not any(k in env for k in ('DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY'))
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('binary', type=pathlib.Path)
 parser.add_argument('label')
@@ -32,6 +49,7 @@ for d in ['home', 'state', 'runtime', 'bin']:
     (w / d).mkdir(exist_ok=True)
 env = {k: v for k, v in os.environ.items() if not k.startswith(('IMKR', 'CLAUDE', 'CODEX', 'SSH', 'AI_BRAIN'))}
 env.update(HOME=str(w / 'home'), XDG_STATE_HOME=str(w / 'state'), XDG_RUNTIME_DIR=str(w / 'runtime'), XDG_CONFIG_HOME=str(w / 'home/config'), SHELL='/bin/bash', PATH=str(w / 'bin') + ':/usr/bin:/bin', CHECK_WORLD=str(w), IMKR_HOSTNAME='isolated-desktop')
+isolate_desktop(env, w)
 
 def executable(name, text):
     p = w / 'bin' / name
@@ -43,6 +61,7 @@ for name in ['curl', 'tailscale', 'ai-brain-cli', 'ai-brain-harness']:
     executable(name, '#!/bin/sh\nexit 1\n')
 for name in ['codex', 'claude']:
     executable(name, '#!/bin/bash\nwhile :; do read -r line; done\n')
+check_guard(env, w / 'bin' / 'notify-send')
 servers = []
 
 def write_remote(data):

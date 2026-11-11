@@ -470,6 +470,20 @@ Projekt-Slug: `imkr`
   nahm den erstbesten SMB-Share). Kein SETTINGS-Eintrag: `Setting::step` muss ohne Seitenwirkung
   umkehrbar sein, sonst schreibt der Test `stepping_back_undoes_stepping_forward` in das echte
   `~/.config`.
+- Desktop-Benachrichtigungen (#9541): nur `notifications = "system"`, `src/desktop.rs`. Text aus
+  `desktop::event` (Werkzeug im Titel, Projekt/Window/Biene im Text, `label` filtert Steuerzeichen,
+  escaped Markup, 64 Zeichen) — **nie** Terminal-Titel oder Bildschirmauszug. `Queue`: `observe`
+  feuert nur bei echtem Wechsel (Fragen über `question_identity`, Markierung/Umbruch zählt nicht),
+  `submit`/`drain` bündeln je (Rechner, Session, Art) `BURST` = 1 s, Rang failed > blocked/delivery
+  > account > done, Gruppen zu je 15. Remote: ein Server je Rechner und Host meldet
+  (`remote_owner`, `flock` in `<state>/desktop-notifiers/`; Fehler → melden statt schweigen) —
+  vorher meldete jede lokale Session jeden Remote-Wechsel (n Sessions = n Popups, seit `628b4f6`).
+  Overdue: `say_overdue` → `notify_with_desktop(…, false)` + eigenes `delivery`-Popup nur, wenn
+  `delivery_warning_is_new` (letzter Vermerk im übergebenen `mail_log` für Pane+seq ist nicht
+  `Overdue`; `Again` öffnet neu) — sonst wiederholt jedes `imkr update` die Warnung. OSC 9, Push,
+  AI Brain bleiben bewusst unverändert. Proben: `docs/validation/desktop-notifications-9541.py`
+  (mehrere Server, Remote je Ereignis genau 1) und `desktop-regression-9541.py` (Overdue über
+  Live-Update, `--redelivery`, `--terminal`); beide mit `isolate_desktop`/`check_guard`.
 - Push (#8566): `src/push.rs` (`[push]`: ntfy-Themenadresse → JSON an die Server-Wurzel,
   webhook → `push::Event` als JSON, per `curl` im Thread). `App::notify(id, kind, what)` ruft
   `App::push`: `wants(kind)`, nicht wenn ein Client in `quiet` s getippt hat (`user_at`), je
