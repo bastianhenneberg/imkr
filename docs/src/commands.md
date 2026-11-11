@@ -180,8 +180,9 @@ For scripts and agents:
                 N agents (3, claude) on the same prompt, each in a worktree
                 window NAME-1 …; `fleet NAME --diff` compares what they did
   worktree NAME [-- command]
-                a new window in git worktree <repo>--NAME on branch NAME,
-                next to the repository here, running command or a shell;
+                a new window in git worktree .worktrees/<repo>/NAME on
+                branch NAME, beside the repository here (or [worktree]
+                dir), running command or a shell;
                 [worktree] in the config and .imkr.toml copy files over
   worktree ls [--json] | merge NAME | rm NAME [--force]
                 the worktrees with what is not merged; merge into the

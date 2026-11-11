@@ -233,11 +233,21 @@ server over its socket. The window keeps its name and, if free, its number. Agen
 reporting to the session they came from, which passes it on while it runs; after that their
 state comes from what imkr sees on the screen.</p>
 <p><code>Ctrl+B w t</code> asks for a branch and opens a window of that name in a git worktree of the focused
-pane's repository: <code>&lt;repo&gt;--&lt;branch&gt;</code> next to it, a new branch from the current commit or the
-existing one, or the worktree made before. So agents work side by side without touching each
-other's files. From a shell, also with what to run in it:</p>
-<pre><code class="language-bash">imkr worktree fix-login -- '&lt;claude&gt;'  # window &quot;fix-login&quot; in ../api--fix-login, running claude
+pane's repository: <code>.worktrees/&lt;repo&gt;/&lt;branch&gt;</code> in the folder the repository is in, a new branch
+from the current commit or the existing one, or the worktree made before. So agents work side by
+side without touching each other's files, and the folder with your projects shows only projects.
+From a shell, also with what to run in it:</p>
+<pre><code class="language-bash">imkr worktree fix-login -- '&lt;claude&gt;'  # window &quot;fix-login&quot; in ../.worktrees/api/fix-login, running claude
 </code></pre>
+<p><code>.worktrees</code> is hidden but stays below the folder with your projects on purpose: Claude Code
+trusts a worktree through the folders above it or through its main checkout, so a repository
+trusted only through <code>~/Development</code> keeps that trust for its worktrees. Elsewhere, set the folder
+in the config; Claude Code then asks once per repository that is not trusted itself:</p>
+<pre><code class="language-toml">[worktree]
+dir = &quot;~/.local/share/imkr/worktrees&quot;   # worktrees go to &lt;dir&gt;/&lt;repo&gt;/&lt;branch&gt;
+</code></pre>
+<p>Worktrees made before next to the repository (<code>&lt;repo&gt;--&lt;branch&gt;</code>) are still found by <code>ls</code>,
+<code>merge</code>, <code>rm</code>, fleets and <code>Ctrl+B w t</code>; new ones go to the new place.</p>
 <p>Worktrees stay when the window closes. When the work is done:</p>
 <pre><code class="language-bash">imkr worktree ls              # each with what is uncommitted or not merged yet
 imkr worktree merge fix-login # merge into the branch checked out here, then remove it
@@ -254,7 +264,8 @@ symlink = [&quot;storage/app/public&quot;]     # linked to the main checkout's
 post_create = [&quot;composer install&quot;]   # run in the new window before its program
 pre_remove = []                      # run before merge or rm removes it; failing stops that
 </code></pre>
-<p>A list in <code>.imkr.toml</code> replaces the config's, unless it holds <code>"&lt;global&gt;"</code>, which brings the
+<p><code>dir</code> belongs to the config only: where things go on your disk is not a project's to say. A
+list in <code>.imkr.toml</code> replaces the config's, unless it holds <code>"&lt;global&gt;"</code>, which brings the
 config's in at that place: <code>copy = ["&lt;global&gt;", "storage/*.key"]</code>. Careful with <code>symlink</code>:
 whatever writes into a linked directory writes into the main checkout, so link nothing a build
 or <code>composer install</code> changes (<code>vendor</code>, <code>node_modules</code>) unless that is what you want.</p>

@@ -1,5 +1,5 @@
 //! Git worktrees for windows of their own: an agent works on its own
-//! branch in its own directory, next to the others.
+//! branch in its own directory, out of sight of the projects (#9784).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,11 +19,35 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
 }
 
-/// Where the worktree `name` of the repository at `top` goes: next to it,
-/// `<repo>--<name>`, with `/` in the name as `-`.
-pub fn dir_for(top: &Path, name: &str) -> Option<PathBuf> {
-    let repo = top.file_name()?.to_string_lossy();
-    Some(top.with_file_name(format!("{repo}--{}", name.replace('/', "-"))))
+/// The folder worktrees of `<parent>/<repo>` go in without `dir`:
+/// `<parent>/.worktrees`, hidden from the projects beside it. Not in
+/// `~/.local/share`: Claude Code lets a worktree inherit trust from the
+/// folders above *its own* path or from its main checkout, not from the
+/// folders above that, so out there every bee of a repository trusted only
+/// through `~/Development` would stop at the trust question (#9784).
+pub const HIDDEN: &str = ".worktrees";
+
+/// The folder the worktrees of the repository at `top` go in: `setup.dir`
+/// (`~` for the home), else [`HIDDEN`] beside the repository.
+pub fn base_for(top: &Path, setup: &Setup) -> Option<PathBuf> {
+    match setup.dir.as_deref().filter(|d| !d.trim().is_empty()) {
+        Some(dir) => Some(crate::template::home_dir(Path::new(dir.trim()))),
+        None => Some(top.parent()?.join(HIDDEN)),
+    }
+}
+
+/// Where the worktree `name` of the repository at `top` goes:
+/// `<base>/<repo>/<name>`, with `/` in the name as `-`.
+pub fn dir_for(top: &Path, name: &str, base: &Path) -> Option<PathBuf> {
+    let repo = top.file_name()?;
+    Some(base.join(repo).join(name.replace('/', "-")))
+}
+
+/// Where worktrees went before #9784, next to the repository as
+/// `<repo>--<name>`: still found by name, made there no more.
+fn old_name<'a>(main: &Path, dir: &'a str) -> Option<&'a str> {
+    let repo = main.file_name()?.to_str()?;
+    dir.strip_prefix(repo)?.strip_prefix("--")
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
@@ -55,17 +79,30 @@ pub fn main_root(from: &Path) -> Result<PathBuf> {
         .unwrap_or(top))
 }
 
-/// The worktree `name` of the repository `from` is in: made on branch
-/// `name` (new, from the current commit, or the one there is), or the one
-/// made before.
-pub fn create(from: &Path, name: &str) -> Result<PathBuf> {
+/// The worktree `name` of the repository `from` is in, and whether it is
+/// new: made on branch `name` (new, from the current commit, or the one
+/// there is) where `setup` says, or the one made before, wherever it is.
+pub fn create(from: &Path, name: &str, setup: &Setup) -> Result<(PathBuf, bool)> {
     if !valid_name(name) {
         bail!("{name:?} is no branch name: letters, digits, - _ . and /");
     }
     let main = main_root(from)?;
-    let dir = dir_for(&main, name).context("the repository has no name")?;
-    if dir.join(".git").exists() {
-        return Ok(dir);
+    if let Ok(made) = find(&main, name) {
+        return Ok((made.dir, false));
+    }
+    let base = base_for(&main, setup).context("the repository has no folder above it")?;
+    let dir = dir_for(&main, name, &base).context("the repository has no name")?;
+    if dir.symlink_metadata().is_ok() {
+        // Two repositories of one name share a `dir` of their own.
+        bail!(
+            "{} is there already and no worktree of {}: remove it, or set [worktree] dir",
+            dir.display(),
+            main.display()
+        );
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot make {}", parent.display()))?;
     }
     let path = dir.to_string_lossy().into_owned();
     let branch_exists = git(
@@ -83,7 +120,7 @@ pub fn create(from: &Path, name: &str) -> Result<PathBuf> {
     } else {
         git(&main, &["worktree", "add", "-b", name, &path])?;
     }
-    Ok(dir)
+    Ok((dir, true))
 }
 
 /// What a new worktree gets besides its checkout (#8567), from `[worktree]`
@@ -91,6 +128,11 @@ pub fn create(from: &Path, name: &str) -> Result<PathBuf> {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Setup {
+    /// The folder new worktrees go in, as `<dir>/<repo>/<name>`; without
+    /// it [`HIDDEN`] beside the repository. Only in imkr's config: where
+    /// things go on this disk is not the project's to say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
     /// Paths (globs with `*`, `?`) copied over from the main checkout, e.g.
     /// `.env`: what git does not carry.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -165,6 +207,7 @@ pub fn setup_for(main: &Path, global: &Setup) -> Result<Setup> {
         Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
     };
     Ok(Setup {
+        dir: global.dir.clone(),
         copy: merged(project.copy, &global.copy),
         symlink: merged(project.symlink, &global.symlink),
         post_create: merged(project.post_create, &global.post_create),
@@ -315,17 +358,10 @@ pub fn list(from: &Path) -> Result<Vec<Info>> {
                 .unwrap_or(0);
             (ahead, ahead == 0)
         };
-        let repo = main.file_name().map(|n| n.to_string_lossy().into_owned());
         let name = dir
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
-            .map(|n| match &repo {
-                Some(repo) => n
-                    .strip_prefix(&format!("{repo}--"))
-                    .map(str::to_owned)
-                    .unwrap_or(n),
-                None => n,
-            })
+            .map(|n| old_name(&main, &n).map(str::to_owned).unwrap_or(n))
             .unwrap_or_default();
         out.push(Info {
             name: if branch.is_empty() {
@@ -397,6 +433,17 @@ pub fn remove(from: &Path, name: &str, setup: &Setup, force: bool) -> Result<Inf
             &["branch", if force { "-D" } else { "-d" }, &info.branch],
         )?;
     }
+    // The repository's folder of them, and `.worktrees`, once empty; the
+    // folder above an old `<repo>--<name>` is the projects' own.
+    if let Some(base) = base_for(&main, setup)
+        && let Some(repo) = main.file_name()
+        && info.dir.parent() == Some(&base.join(repo))
+    {
+        let _ = std::fs::remove_dir(base.join(repo));
+        if setup.dir.is_none() {
+            let _ = std::fs::remove_dir(&base);
+        }
+    }
     Ok(info)
 }
 
@@ -439,14 +486,29 @@ mod tests {
         assert!(!valid_name("-rf"));
         assert!(!valid_name("a b"));
         assert!(!valid_name("../x"));
+        let base = base_for(Path::new("/src/api"), &Setup::default()).unwrap();
+        assert_eq!(base, PathBuf::from("/src/.worktrees"));
         assert_eq!(
-            dir_for(Path::new("/src/api"), "fix/login"),
-            Some(PathBuf::from("/src/api--fix-login"))
+            dir_for(Path::new("/src/api"), "fix/login", &base),
+            Some(PathBuf::from("/src/.worktrees/api/fix-login"))
         );
+        let own = Setup {
+            dir: Some("/var/wt".into()),
+            ..Setup::default()
+        };
+        assert_eq!(
+            base_for(Path::new("/src/api"), &own),
+            Some(PathBuf::from("/var/wt"))
+        );
+        assert_eq!(
+            old_name(Path::new("/src/api"), "api--fix-login"),
+            Some("fix-login")
+        );
+        assert_eq!(old_name(Path::new("/src/api"), "api-fix"), None);
     }
 
     #[test]
-    fn makes_a_worktree_next_to_the_repository_once() {
+    fn makes_a_worktree_out_of_the_projects_once() {
         let base = std::env::temp_dir().join(format!("imkr-wt-{}", std::process::id()));
         let repo = base.join("api");
         std::fs::create_dir_all(&repo).unwrap();
@@ -474,12 +536,66 @@ mod tests {
             "-m",
             "start",
         ]);
-        let dir = create(&repo.join("."), "feature").unwrap();
-        assert_eq!(dir, base.canonicalize().unwrap().join("api--feature"));
+        let setup = Setup::default();
+        let (dir, fresh) = create(&repo.join("."), "feature", &setup).unwrap();
+        assert!(fresh);
+        let base = base.canonicalize().unwrap();
+        assert_eq!(dir, base.join(".worktrees/api/feature"));
         assert!(dir.join(".git").exists());
         // Again, also from inside the worktree: the same one.
-        assert_eq!(create(&dir, "feature").unwrap(), dir);
-        assert!(create(&repo, "a b").is_err());
+        assert_eq!(
+            create(&dir, "feature", &setup).unwrap(),
+            (dir.clone(), false)
+        );
+        assert!(create(&repo, "a b", &setup).is_err());
+
+        // One made next to the repository before #9784 is still the one.
+        run(&["worktree", "add", "-q", "-b", "old", "../api--old"]);
+        let (old, fresh) = create(&repo, "old", &setup).unwrap();
+        assert_eq!((old.clone(), fresh), (base.join("api--old"), false));
+        let names: Vec<_> = list(&repo).unwrap().into_iter().map(|w| w.name).collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"old".to_owned()));
+
+        // An own folder: there, and a second repository of the same name
+        // is not handed the first one's worktree.
+        let own = Setup {
+            dir: Some(base.join("own").to_string_lossy().into_owned()),
+            ..Setup::default()
+        };
+        let (mine, _) = create(&repo, "mine", &own).unwrap();
+        assert_eq!(mine, base.join("own/api/mine"));
+        let other = base.join("elsewhere/api");
+        std::fs::create_dir_all(&other).unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "s",
+            ],
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&other)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let clash = create(&other, "mine", &own).unwrap_err();
+        assert!(
+            format!("{clash:#}").contains("is there already"),
+            "{clash:#}"
+        );
         let _ = std::fs::remove_dir_all(base);
     }
 
@@ -543,7 +659,8 @@ mod tests {
         };
         let setup = setup_for(&repo, &global).unwrap();
         assert_eq!(setup.copy, ["config/none", ".env*"]);
-        let dir = create(&repo, "feature").unwrap();
+        assert_eq!(setup.dir, None);
+        let (dir, _) = create(&repo, "feature", &setup).unwrap();
         let done = prepare(&repo, &dir, &setup).unwrap();
         assert_eq!(done, ["copied .env", "copied .env.local", "linked cache"]);
         assert_eq!(
@@ -566,6 +683,7 @@ mod tests {
         assert!(repo.join("new.txt").exists());
         remove(&repo, "feature", &Setup::default(), false).unwrap();
         assert!(!dir.exists());
+        assert!(!base.join(HIDDEN).exists(), "empty folders are left");
         assert!(list(&repo).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(base);
     }

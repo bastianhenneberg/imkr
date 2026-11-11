@@ -4624,8 +4624,8 @@ impl App {
         let main = crate::worktree::main_root(&from).map_err(|e| format!("{e:#}"))?;
         let setup = crate::worktree::setup_for(&main, &self.config.worktree)
             .map_err(|e| format!("{e:#}"))?;
-        let fresh = crate::worktree::dir_for(&main, name).is_some_and(|d| !d.join(".git").exists());
-        let dir = crate::worktree::create(&from, name).map_err(|e| format!("{e:#}"))?;
+        let (dir, fresh) =
+            crate::worktree::create(&from, name, &setup).map_err(|e| format!("{e:#}"))?;
         // A placeholder is filled in by `new_pane`, unless it is wrapped.
         let account = placeholder_account(command, &self.config.default_agent);
         let mut command = command.to_vec();

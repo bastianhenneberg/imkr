@@ -45,13 +45,27 @@ reporting to the session they came from, which passes it on while it runs; after
 state comes from what imkr sees on the screen.
 
 `Ctrl+B w t` asks for a branch and opens a window of that name in a git worktree of the focused
-pane's repository: `<repo>--<branch>` next to it, a new branch from the current commit or the
-existing one, or the worktree made before. So agents work side by side without touching each
-other's files. From a shell, also with what to run in it:
+pane's repository: `.worktrees/<repo>/<branch>` in the folder the repository is in, a new branch
+from the current commit or the existing one, or the worktree made before. So agents work side by
+side without touching each other's files, and the folder with your projects shows only projects.
+From a shell, also with what to run in it:
 
 ```bash
-imkr worktree fix-login -- '<claude>'  # window "fix-login" in ../api--fix-login, running claude
+imkr worktree fix-login -- '<claude>'  # window "fix-login" in ../.worktrees/api/fix-login, running claude
 ```
+
+`.worktrees` is hidden but stays below the folder with your projects on purpose: Claude Code
+trusts a worktree through the folders above it or through its main checkout, so a repository
+trusted only through `~/Development` keeps that trust for its worktrees. Elsewhere, set the folder
+in the config; Claude Code then asks once per repository that is not trusted itself:
+
+```toml
+[worktree]
+dir = "~/.local/share/imkr/worktrees"   # worktrees go to <dir>/<repo>/<branch>
+```
+
+Worktrees made before next to the repository (`<repo>--<branch>`) are still found by `ls`,
+`merge`, `rm`, fleets and `Ctrl+B w t`; new ones go to the new place.
 
 Worktrees stay when the window closes. When the work is done:
 
@@ -76,7 +90,8 @@ post_create = ["composer install"]   # run in the new window before its program
 pre_remove = []                      # run before merge or rm removes it; failing stops that
 ```
 
-A list in `.imkr.toml` replaces the config's, unless it holds `"<global>"`, which brings the
+`dir` belongs to the config only: where things go on your disk is not a project's to say. A
+list in `.imkr.toml` replaces the config's, unless it holds `"<global>"`, which brings the
 config's in at that place: `copy = ["<global>", "storage/*.key"]`. Careful with `symlink`:
 whatever writes into a linked directory writes into the main checkout, so link nothing a build
 or `composer install` changes (`vendor`, `node_modules`) unless that is what you want.

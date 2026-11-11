@@ -1793,7 +1793,8 @@ pub fn fleet(args: &[String]) -> Result<()> {
             .with_context(|| format!("no fleet {name} in this repository"))?;
         for i in 1.. {
             let member = format!("{name}-{i}");
-            let Some(dir) = crate::worktree::dir_for(&main, &member).filter(|d| d.exists()) else {
+            let Ok(crate::worktree::Info { dir, .. }) = crate::worktree::find(&main, &member)
+            else {
                 break;
             };
             println!("== {member}  ({})", dir.display());

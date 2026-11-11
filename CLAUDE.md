@@ -992,11 +992,22 @@ Projekt-Slug: `imkr`
 - Layouts: `src/shapes.rs` (`Shape` = Splits ohne Panes, `of`, `preset` wie tmux, `build` mit den
   Panes in Reihenfolge, gespeichert in `layouts.json` neben der Config), `App::layout`
   (`Request::Layout`, `Ctrl+B w l` → `Mode::Layouts`). `Ctrl+B w x` → `Action::CloseWorkspace` → `App::close_workspace` (alle Panes per `close`, Rückfrage). main-* nicht angleichen (60 % Hauptpane).
-- Worktrees: `src/worktree.rs` (`create`: neben dem Haupt-Repo `<repo>--<name>`, über
+- Worktrees: `src/worktree.rs` (`create(from, name, setup)` → `(dir, fresh)`: erst `find` (Zweig
+  hat schon einen Worktree, auch am alten Ort), sonst `dir_for` = `base_for`/`<repo>/<name>`;
+  Basis `[worktree] dir`, sonst `HIDDEN` = `<eltern des Repos>/.worktrees`; Haupt-Repo über
   `--git-common-dir` auch aus einem Worktree heraus), `App::worktree_window` (`Request::Worktree`,
   `Ctrl+B w t` per `PromptFor::Worktree`). Entfernen bleibt bei git.
+  Ort (#9784): früher `<repo>--<name>` neben dem Repo, das müllte `~/Development` zu (und AI
+  Brains Ordnerliste, die Punktordner überspringt). Gefunden werden alte weiter, weil `list` aus
+  `git worktree list` liest (`old_name` nimmt das `<repo>--` vom Namen). **Nicht** nach
+  `~/.local/share` als Standard: gemessen an Claude Code 2.1.304 erbt ein Worktree Vertrauen nur
+  von den Ordnern über **seinem** Pfad oder vom Haupt-Repo selbst (`projects[<repo>]`), nicht von
+  `~/Development` über dem Haupt-Repo — draußen stünde jede Biene eines nur so vertrauten Repos
+  an der Vertrauensfrage (`wait_ready` → Asking). imkr schreibt nie selbst Vertrauen. Gleich
+  benannte Repos mit gemeinsamem `dir`: `create` lehnt einen fremden Ordner ab statt ihn
+  zurückzugeben. `dir` gibt es nur in der Config, nicht in `.imkr.toml` (`ProjectSetup`).
   Fleets: `cli::fleet` (N× `Request::Worktree` `NAME-i` mit `[agent, prompt]`, Ausgangs-Commit in
-  `refs/imkr/fleets/NAME`, `--diff` vergleicht je Worktree dagegen), `worktree::main_root`.
+  `refs/imkr/fleets/NAME`, `--diff` vergleicht je Worktree dagegen, findet sie per `worktree::find`), `worktree::main_root`.
 - MCP: `src/mcp.rs` (`imkr mcp`, JSON-RPC je Zeile auf stdin/stdout, `handle`; jedes Werkzeug ruft
   das eigene Binary mit dem CLI-Befehl auf, `command_for`, Text per stdin). Test: Zeilen per Pipe
   mit `IMKR_SOCKET` der Testsession.
