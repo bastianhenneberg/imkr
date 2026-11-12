@@ -665,7 +665,7 @@ Projekt-Slug: `imkr`
   höchstens alle `TRY_AGAIN` 10 min, `tried.json`) → `take` erst nach Antwort. `hosts add` →
   `register_add` (hebt den Vermerk auf), `hosts rm` → `register_remove` (Vermerk mit Zeit). Adresse
   ohne ssh-config: `host-routes.json` (`Route`), `hosts` bleibt eine Zeile je Name (alte Binaries);
-  **jeder** ssh-Aufruf nimmt `machines::ssh_to(host)` statt `"--", host` (Name, wenn `ssh -G` ihn
+  **jeder** ssh-Aufruf nimmt `machines::ssh_to(host)` statt `"--", host` (mit eigenem ControlMaster `own_master` unter `<runtime>/imkr/ssh/%C`, #1420: im Master des Users machte imkrs gesperrter Schlüssel dessen `ssh host` zum Gate) (Name, wenn `ssh -G` ihn
   umbenennt, sonst Adresse + User + `-i ~/.ssh/imkr` — Auflösen allein reicht nicht, NetBird-DNS löst jeden Peer auf; `accept-new` + eigenes `machines/known_hosts` nur für
   100.64.0.0/10). Test: drei Welten, Fake-`ssh` nach Adresse 127.0.0.1–3 (setzt `SSH_CONNECTION`,
   `-G` gibt den Namen unverändert), Fake-`netbird` nur in Welt alpha, kurze `XDG_RUNTIME_DIR`,

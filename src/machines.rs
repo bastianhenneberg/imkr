@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::net::{IpAddr, ToSocketAddrs};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -121,10 +122,48 @@ pub fn forget_route(name: &str) {
 /// `known_hosts`; any other unknown key still stops ssh.
 pub fn ssh_to(host: &str) -> Vec<String> {
     let route = routes().remove(host).filter(|_| !ssh_knows(host));
-    match route {
+    let mut args = own_master();
+    args.extend(match route {
         Some(route) => by_address(&route),
         None => by_name(host),
-    }
+    });
+    args
+}
+
+/// How long imkr's own ssh master stays after its last connection.
+const MASTER_PERSISTS: &str = "300";
+
+/// ssh's options for a master of imkr's own (#1420). imkr offers its
+/// machine key first, and a gated machine lets that key run imkr's own
+/// commands only; in the user's `ControlMaster` of `~/.ssh/config` it
+/// would become the master the user's next `ssh host` goes through, and
+/// that ends at the gate ("this key is only for imkr's own commands"). The
+/// other way round imkr could run ungated in the user's master. Its own
+/// sockets keep the connections shared among imkr's calls; without a short
+/// enough place for them, no master at all.
+fn own_master() -> Vec<String> {
+    let dir = crate::protocol::runtime_dir().map(|d| d.join("ssh"));
+    let dir = dir.ok().filter(|dir| {
+        // %C is 40 characters; ssh adds a dot and 16 more while it binds.
+        dir.as_os_str().len() + 1 + 40 + 17 <= crate::protocol::MAX_SOCKET_PATH
+            && std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(dir)
+                .is_ok()
+    });
+    let options = match dir {
+        Some(dir) => vec![
+            format!("ControlPath={}/%C", dir.display()),
+            "ControlMaster=auto".to_owned(),
+            format!("ControlPersist={MASTER_PERSISTS}"),
+        ],
+        None => vec!["ControlPath=none".to_owned()],
+    };
+    options
+        .into_iter()
+        .flat_map(|option| ["-o".to_owned(), option])
+        .collect()
 }
 
 /// ssh's arguments for a name ssh knows: the machine's own key (once it
@@ -947,6 +986,23 @@ pub fn print_vpn() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imkr_never_shares_the_users_ssh_master() {
+        // #1420: in the user's master imkr's gated key locked the user out.
+        let args = ssh_to("some-host");
+        let path = args
+            .iter()
+            .find_map(|a| a.strip_prefix("ControlPath="))
+            .expect("a ControlPath of its own");
+        assert!(path == "none" || path.ends_with("/ssh/%C"), "{path}");
+        let at = args
+            .iter()
+            .position(|a| a.starts_with("ControlPath="))
+            .unwrap();
+        let end = args.iter().position(|a| a == "--").expect("--");
+        assert!(at < end, "options before the destination: {args:?}");
+    }
 
     #[test]
     fn no_module_asks_netbird_for_its_peers() {
