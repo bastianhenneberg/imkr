@@ -299,7 +299,7 @@ const COMMANDS: &[Command] = &[
     cmd(
         "operator",
         "the machine the user sits at",
-        &["--json"],
+        &["--json", "--here"],
         Nothing,
     ),
     with_subs(

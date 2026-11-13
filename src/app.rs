@@ -1163,6 +1163,11 @@ struct Client {
     resend_images: bool,
     /// The window this client shows, with `own_window_per_client`.
     workspace: u8,
+    /// When the user last typed, clicked or pasted here. A resize or focus
+    /// change says nothing: every client sends a resize when it attaches,
+    /// so a terminal reconnecting on an idle machine looked like the user
+    /// (#9900).
+    typed_at: Option<Instant>,
 }
 
 impl Client {
@@ -2417,7 +2422,11 @@ impl App {
             AppEvent::ClientMsg(id, ClientMsg::Event(event)) if self.client_mut(id).is_some() => {
                 self.active = Some(id);
                 if matches!(event, Event::Key(_) | Event::Mouse(_) | Event::Paste(_)) {
-                    self.user_at = Some(Instant::now());
+                    let now = Instant::now();
+                    self.user_at = Some(now);
+                    if let Some(client) = self.client_mut(id) {
+                        client.typed_at = Some(now);
+                    }
                 }
                 if let Some(n) = self.client_mut(id).map(|c| c.workspace) {
                     self.view(n);
@@ -2589,6 +2598,7 @@ impl App {
             shown_images: HashMap::new(),
             resend_images: true,
             workspace: self.workspace,
+            typed_at: None,
         });
         self.run_hooks("attach", Vec::new());
         if self.clients.len() == 1 && (!self.resume_later.is_empty() || self.resume_note.is_some())
@@ -3048,14 +3058,25 @@ impl App {
                 if self.clients.is_empty() {
                     return Err("nobody is attached to this session".into());
                 }
+                // The client the user last typed into, not the active one:
+                // that is also whichever attached or resized last (#9900).
+                let typed = self
+                    .clients
+                    .iter()
+                    .filter_map(|c| Some((c.typed_at?, c)))
+                    .max_by_key(|&(at, _)| at);
+                let (origin, idle) = match typed {
+                    Some((at, c)) => (c.caps.origin.clone(), Some(at.elapsed().as_secs())),
+                    None => (self.newest_origin(), None),
+                };
                 // A client on this machine tells no origin: the user sits here.
-                let origin = self.newest_origin();
                 Ok(serde_json::json!({
                     "machine": origin
                         .as_ref()
                         .map_or_else(protocol::machine_name, |o| o.host.clone()),
                     "via": origin.as_ref().and_then(|o| o.via.clone()),
                     "here": origin.is_none(),
+                    "idle": idle,
                 }))
             }
             Request::OpenSessions => {

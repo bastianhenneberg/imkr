@@ -317,8 +317,10 @@ For scripts and agents:
                 the active window's, or give it one; its programs run on
   explain [--pane N] [--json]
                 why a pane counts as the agent it is, in its state
-  operator [--json]
-                the machine the user sits at (and the name it reaches this one by)
+  operator [--json] [--here]
+                the machine the user sits at: where they last typed, asked
+                of the sessions here and of the other machines (`--here`:
+                only here); with `via`, the name it reaches this one by
   screen status [--json]
                 whether an agent may see and drive this machine's screen:
                 the backend, the screens with their logical size, the

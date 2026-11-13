@@ -1689,27 +1689,83 @@ pub fn layout(args: &[String]) -> Result<()> {
     }
 }
 
-/// `imkr explain [--pane N] [--json]`: why a pane counts as the agent it
-/// is, in its state.
-/// `imkr operator [--json]`: the machine the user sits at, as the client
-/// attached to this session tells, else to another session here. For
-/// agents that want to show something on the user's screen, e.g. a browser.
+/// `imkr operator [--json] [--here]`: the machine the user sits at, as
+/// the client they last typed into tells. Asks every session here and,
+/// without `--here`, the other machines too: the user may sit here while
+/// their terminal shows a session elsewhere (#9900). For agents that want
+/// to show something on the user's screen, e.g. a browser.
 pub fn operator(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let json = take_flag(&mut rest, "--json");
+    let here_only = take_flag(&mut rest, "--here");
     if let Some(extra) = rest.first() {
         bail!("unknown argument {extra}, see `imkr operator --json`");
     }
-    let own = client::request(Request::Operator);
-    let found = own.or_else(|first| {
+    // Asked only now, once per machine and all at once, while the sessions
+    // here answer.
+    let hosts = if here_only {
+        Vec::new()
+    } else {
+        client::known_hosts()
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    for host in hosts.clone() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let answer = client::remote_output(&host, &["operator", "--json", "--here"], "")
+                .and_then(|out| Ok(serde_json::from_str(&out)?));
+            let _ = tx.send((host, answer));
+        });
+    }
+    drop(tx);
+    let mut answers: Vec<serde_json::Value> =
+        client::request(Request::Operator).into_iter().collect();
+    answers.extend(
         crate::protocol::sessions()
             .iter()
             .filter_map(|name| crate::protocol::session_socket(name).ok())
-            .find_map(|path| client::request_at(&path, Request::Operator).ok())
-            .ok_or(first)
+            .filter_map(|path| client::request_at(&path, Request::Operator).ok()),
+    );
+    let deadline = std::time::Instant::now() + OPERATOR_WAIT;
+    let here = crate::protocol::machine_name();
+    let mut silent: std::collections::BTreeMap<String, String> = hosts
+        .into_iter()
+        .map(|h| (h, format!("no answer within {} s", OPERATOR_WAIT.as_secs())))
+        .collect();
+    while let Ok((host, answer)) =
+        rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+    {
+        match answer {
+            Ok(answer) => {
+                silent.remove(&host);
+                answers.push(seen_from_here(&host, answer, &here));
+            }
+            Err(e) => {
+                let why = format!("{e:#}");
+                let why = why.strip_prefix(&format!("{host}: ")).unwrap_or(&why);
+                let why = why.lines().last().unwrap_or("did not answer").trim();
+                silent.insert(host, why.to_owned());
+            }
+        }
+    }
+    // Nobody attached there is an answer too, not silence.
+    silent.retain(|_, why| !why.contains("nobody is attached"));
+    for (host, why) in &silent {
+        eprintln!("imkr operator: {host} did not tell: {why}");
+    }
+    let found = freshest(answers).context(if here_only {
+        "nobody is attached to an imkr session on this machine"
+    } else {
+        "nobody is attached to an imkr session, here or on the machines imkr knows"
     });
-    let found =
-        found.map_err(|_| anyhow!("nobody is attached to an imkr session on this machine"))?;
+    let mut found = found?;
+    if !here_only {
+        found["unanswered"] = silent
+            .iter()
+            .map(|(host, why)| serde_json::json!({ "host": host, "why": why }))
+            .collect::<Vec<_>>()
+            .into();
+    }
     if json {
         println!("{}", serde_json::to_string_pretty(&found)?);
     } else {
@@ -1718,6 +1774,35 @@ pub fn operator(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// How long `imkr operator` waits for the other machines.
+const OPERATOR_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// What `host` said about the user, as seen from `here`: a user at `host`
+/// sits at `host`, and one whose client is on this machine sits here. `via`
+/// is how the user's machine reaches `host`, not this one, so it goes.
+fn seen_from_here(host: &str, mut answer: serde_json::Value, here: &str) -> serde_json::Value {
+    let machine = if answer["here"].as_bool().unwrap_or(false) {
+        host.to_owned()
+    } else {
+        answer["machine"].as_str().unwrap_or_default().to_owned()
+    };
+    answer["here"] = (machine == here).into();
+    answer["machine"] = machine.into();
+    answer["via"] = serde_json::Value::Null;
+    answer
+}
+
+/// The answer whose user typed last. One that never typed comes after,
+/// and of equals the first: the sessions here are asked first.
+fn freshest(answers: Vec<serde_json::Value>) -> Option<serde_json::Value> {
+    answers
+        .into_iter()
+        .filter(|a| a["machine"].as_str().is_some_and(|m| !m.is_empty()))
+        .min_by_key(|a| a["idle"].as_u64().unwrap_or(u64::MAX))
+}
+
+/// `imkr explain [--pane N] [--json]`: why a pane counts as the agent it
+/// is, in its state.
 pub fn explain(args: &[String]) -> Result<()> {
     let mut rest = args.to_vec();
     let json = take_flag(&mut rest, "--json");
@@ -5276,6 +5361,46 @@ fn screen_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The user sits where they last typed, not where a terminal last
+    /// attached; whoever never typed counts only when nobody did (#9900).
+    #[test]
+    fn the_operator_is_where_the_user_last_typed() {
+        let answer = |machine: &str, idle: Option<u64>| serde_json::json!({ "machine": machine, "via": null, "here": false, "idle": idle });
+        let picked = freshest(vec![
+            answer("desktop", Some(600)),
+            answer("codingmachine", None),
+            answer("laptop", Some(3)),
+        ]);
+        assert_eq!(picked.unwrap()["machine"], "laptop");
+        let picked = freshest(vec![answer("desktop", None), answer("laptop", None)]);
+        assert_eq!(
+            picked.unwrap()["machine"],
+            "desktop",
+            "the sessions here come first"
+        );
+        assert!(freshest(vec![answer("", Some(1))]).is_none());
+    }
+
+    /// Another machine's answer, read from here: its own user sits at it,
+    /// a client from this machine means the user sits here.
+    #[test]
+    fn another_machines_operator_is_read_from_here() {
+        let there =
+            serde_json::json!({ "machine": "omarchy", "via": null, "here": true, "idle": 4 });
+        let seen = seen_from_here("codingmachine", there, "laptop");
+        assert_eq!(seen["machine"], "codingmachine");
+        assert_eq!(seen["here"], false);
+        assert_eq!(seen["idle"], 4);
+        let ours = serde_json::json!({ "machine": "laptop", "via": "codingmachine", "here": false, "idle": 2 });
+        let seen = seen_from_here("codingmachine", ours, "laptop");
+        assert_eq!(seen["machine"], "laptop");
+        assert_eq!(seen["here"], true);
+        assert!(
+            seen["via"].is_null(),
+            "via named the way to codingmachine, not here"
+        );
+    }
 
     /// Codex's hooks go in beside the ones already there (herdr's here),
     /// which keep their place: Codex trusts hooks by position (#9532).

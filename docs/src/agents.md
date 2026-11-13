@@ -700,17 +700,25 @@ without history that is still larger goes on as `out`.
 ### Where the user sits
 
 An agent on another machine sometimes wants to show you something on your own screen, a browser
-for example. `imkr operator` says which machine you sit at, as the terminal attached to the
-session tells it:
+for example. `imkr operator` says which machine you sit at: where you last typed, clicked or
+pasted into an imkr terminal.
 
 ```bash
 imkr operator          # laptop
-imkr operator --json   # {"machine": "laptop", "via": "codingmachine", "here": false}
+imkr operator --json   # {"machine": "laptop", "via": "codingmachine", "here": false, "idle": 4, "unanswered": []}
 ```
 
-`via` is the name your machine reaches this one by, e.g. for a tunnel back. If nobody is attached
-to the agent's session, it asks the other sessions on the machine; with nobody anywhere it fails.
-AI Brain's `agent-tunnel` uses it to open its browser where you are.
+It asks every session on this machine and, only then, each machine imkr knows, with one ssh call
+each and at most four seconds in all: your terminal may show a session elsewhere while the agent
+runs here. The answer with the most recent input wins. A terminal that just attached or changed
+its size does not count as you — every terminal does that when it reconnects, also on a machine
+nobody sits at. `idle` is how many seconds ago you typed (`null`: in no terminal yet).
+
+`via` is the name your machine reaches this one by, e.g. for a tunnel back; it is left out when
+the answer came from another machine. Machines that did not answer are named in `unanswered` and
+on stderr, never left out silently. `--here` asks only the sessions on this machine. With nobody
+attached anywhere it fails. AI Brain's `agent-tunnel` uses it to open its browser where you are;
+when you tell an agent where you sit, that comes first.
 
 ### Copying files
 

@@ -986,10 +986,18 @@ Projekt-Slug: `imkr`
   (Enter auf gewählter Notiz → `mailbox`, `y` OSC 52, `e` zurück in die Zeile, `x` weg),
   `draw_notes` je Einstellung `notes_at` (`NotesAt`: rechts volle Höhe, Mitte, unten; Höhe nach
   Umbruch), Rahmen `✎N` (offene). CLI `imkr note` → `Request::Note`.
-- Wo der User sitzt: `Request::Operator` (Client nötig; `newest_origin` → `machine`/`via`, ohne
-  Origin = lokaler Client → `here`), CLI `imkr operator [--json]` fragt die eigene Session, dann
-  die übrigen des Rechners. Für Agents, die etwas auf dem Bildschirm des Users zeigen wollen
-  (`agent-tunnel` aus chezmoi/AI-Brain-Harness).
+- Wo der User sitzt (#9900): `Request::Operator` (Client nötig) nimmt den Client mit der jüngsten
+  **Eingabe** (`Client::typed_at`, nur Key/Mouse/Paste) → `machine`/`via`/`here`/`idle`; ohne
+  Eingabe `newest_origin`. Nicht `App::active`: das setzt jedes Event, auch das Resize, das jeder
+  Client beim Attach schickt — ein sich neu verbindender desktop-Client stahl so die Rolle, während
+  Bastian am laptop tippte. CLI `imkr operator [--json] [--here]` fragt alle Sessions hier und
+  (ohne `--here`) jeden `known_hosts` per **einem** ssh-Aufruf `operator --json --here`, parallel,
+  `OPERATOR_WAIT` 4 s, nur beim Aufruf; `seen_from_here` liest die Antwort von hier aus (`via`
+  fällt weg), `freshest` nimmt die kleinste `idle`. Stumme Rechner stehen in `unanswered` und auf
+  stderr. Für Agents, die etwas auf Bastians Bildschirm zeigen wollen (`ai-brain-harness tunnel`);
+  seine Aussage im Chat geht vor. E2E: `cargo build && python3 tests/operator_where.py` (drei
+  Welten, ein tmux-Server je Welt — ein gemeinsamer startet jeden Client mit der Umgebung der
+  ersten Welt; gegen 0.21.110 fällt er).
 - Review `Ctrl+B v`: `src/review.rs` (`diff` liest nur: `git diff HEAD` plus `--no-index` je neuer
   Datei, nie `add -N`; `parse` nummeriert je Datei; `Note` hängt an Datei/Nummer/Code, nicht am
   Index; `prompt`). `App::review` (`Review`), `open_review`, `review_key`, `draw_review`, Notiz per
