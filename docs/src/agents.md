@@ -330,8 +330,11 @@ wait for the limit.
 #### Before the limit, not at it
 
 Waiting for the limit message means the agent has already stopped mid-work. So imkr also looks
-ahead: when the account of a **resting** agent (idle or done) has used *Account nearly used up:
-switch before, from* — 95 % by default — of its week or of its five hours, the agent moves to the
+ahead, from a **threshold**: `account_switch_at = 95` in `~/.config/imkr/config.toml`, in the
+settings (`Ctrl+B ,`) *Account nearly used up: switch before, from*, 95 % unless set, 0 switches
+it off. `imkr account ls` names the value and what it does on this machine in its last line.
+When the account of a **resting** agent (idle or done) has used that much of its week or of its
+five hours, the agent moves to the
 freest account that is below that in every window. The numbers are measured every five minutes
 while an agent of Claude or Codex rests, for all sessions of the machine together, and only the
 limits are asked (not the tokens). It goes the same way as the switch at the limit, a restart in
@@ -343,10 +346,14 @@ stays where it is and imkr says so once: *claude in stelljes is at 96 % 5h, and 
 is below 95 % — it stays there*. The setting steps through 80, 90, 95, 98 % and off
 (`account_switch_at = 95` in the config, 0 = off).
 
-New agents start freest too: `imkr spawn` and `imkr keeper` without `--account` take the freest
-logged-in account of the default agent (by the measured numbers, at most ten minutes old,
-otherwise measured first), the default on a tie or without numbers, and say which and why:
-*claude starts in department (12 % week): freer than the default stelljes (88 % week)*.
+New agents start where there is room: `imkr spawn` and `imkr keeper` without `--account` take
+the freest logged-in account of the default agent that is **below the threshold in every
+window** (by the measured numbers, at most ten minutes old, otherwise measured first), the
+default on a tie or without numbers, and say which and why: *claude starts in department (12 %
+week): freer than the default stelljes (88 % week)*. An account freest by its week but at 97 % of
+its five hours is passed over — the bee would be moved again after its first turn. Only when
+every account has reached the threshold does the bee start in the freest of them anyway, and the
+line says so.
 
 Limits belong to the subscription, not to the account's name. `imkr account` shows who each one
 is logged in as, and `add` and `login` warn when an account is logged in to a subscription that

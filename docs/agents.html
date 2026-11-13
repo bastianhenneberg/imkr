@@ -472,8 +472,11 @@ by the focus — and the one to press when an account is nearly full and you wou
 wait for the limit.</p>
 <h4 id="before-the-limit-not-at-it">Before the limit, not at it</h4>
 <p>Waiting for the limit message means the agent has already stopped mid-work. So imkr also looks
-ahead: when the account of a <strong>resting</strong> agent (idle or done) has used <em>Account nearly used up:
-switch before, from</em> — 95 % by default — of its week or of its five hours, the agent moves to the
+ahead, from a <strong>threshold</strong>: <code>account_switch_at = 95</code> in <code>~/.config/imkr/config.toml</code>, in the
+settings (<code>Ctrl+B ,</code>) <em>Account nearly used up: switch before, from</em>, 95 % unless set, 0 switches
+it off. <code>imkr account ls</code> names the value and what it does on this machine in its last line.
+When the account of a <strong>resting</strong> agent (idle or done) has used that much of its week or of its
+five hours, the agent moves to the
 freest account that is below that in every window. The numbers are measured every five minutes
 while an agent of Claude or Codex rests, for all sessions of the machine together, and only the
 limits are asked (not the tokens). It goes the same way as the switch at the limit, a restart in
@@ -484,10 +487,14 @@ for <code>Ctrl+B s C</code>, <code>off</code> does neither. When no other accoun
 stays where it is and imkr says so once: <em>claude in stelljes is at 96 % 5h, and no other account
 is below 95 % — it stays there</em>. The setting steps through 80, 90, 95, 98 % and off
 (<code>account_switch_at = 95</code> in the config, 0 = off).</p>
-<p>New agents start freest too: <code>imkr spawn</code> and <code>imkr keeper</code> without <code>--account</code> take the freest
-logged-in account of the default agent (by the measured numbers, at most ten minutes old,
-otherwise measured first), the default on a tie or without numbers, and say which and why:
-<em>claude starts in department (12 % week): freer than the default stelljes (88 % week)</em>.</p>
+<p>New agents start where there is room: <code>imkr spawn</code> and <code>imkr keeper</code> without <code>--account</code> take
+the freest logged-in account of the default agent that is <strong>below the threshold in every
+window</strong> (by the measured numbers, at most ten minutes old, otherwise measured first), the
+default on a tie or without numbers, and say which and why: <em>claude starts in department (12 %
+week): freer than the default stelljes (88 % week)</em>. An account freest by its week but at 97 % of
+its five hours is passed over — the bee would be moved again after its first turn. Only when
+every account has reached the threshold does the bee start in the freest of them anyway, and the
+line says so.</p>
 <p>Limits belong to the subscription, not to the account's name. <code>imkr account</code> shows who each one
 is logged in as, and <code>add</code> and <code>login</code> warn when an account is logged in to a subscription that
 has one already; nothing is removed for it. One used up counts for every account of the same

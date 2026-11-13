@@ -140,9 +140,24 @@ try:
     print('--- bee2 after ---\n' + '\n'.join(l for l in s2.splitlines() if not l.startswith('working'))[-400:])
     check('spare' not in s2 and 'standard' not in s2.split('fake claude in')[-1] and 'account run claude:' not in s2,
           'resting bee2 stays in work when no account is below 95 %')
+    # 5. A new bee passes over an account freest by its week but at the
+    #    threshold in its five hours.
+    usage({'standard': (80, 50), 'work': (40, 97), 'spare': (60, 5)})
+    r = cli('spawn', 'bee3', '--brief', str(brief), '--dir', str(repo))
+    print('spawn bee3 stderr:', r.stderr.strip())
+    check(r.returncode == 0 and 'claude starts in spare (60 % week)' in r.stderr,
+          'bee3 starts in spare, not in work at 97 % 5h')
+    usage({'standard': (96, 50), 'work': (40, 97), 'spare': (60, 99)})
+    r = cli('spawn', 'bee4', '--brief', str(brief), '--dir', str(repo))
+    print('spawn bee4 stderr:', r.stderr.strip())
+    check(r.returncode == 0 and 'every account is at 95 % or more' in r.stderr,
+          'bee4 says that every account is at the threshold')
+    ls = cli('account', 'ls').stdout
+    print('--- account ls ---\n' + ls)
+    check('account_switch_at = 95 in config.toml' in ls, 'account ls says where the threshold is')
     check(not notify_log.exists(), 'no notification escaped')
 finally:
-    for s in ('bee1', 'bee2'):
+    for s in ('bee1', 'bee2', 'bee3', 'bee4'):
         cli('-s', s, 'kill-server')
     print('world', root)
 print('ALL PASS' if ok else 'SOME FAILED')

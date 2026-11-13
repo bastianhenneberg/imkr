@@ -318,7 +318,10 @@ fn start_in(tool: &str) -> (String, String, Option<String>) {
     let numbers = crate::usage::cached(START_MEASURED)
         .or_else(|| crate::usage::limits().ok())
         .unwrap_or_default();
-    let Some((account, _)) = store.freest_to_start(tool, &numbers) else {
+    let (config, _) = crate::config::Config::load();
+    let at = config.account_switch_at;
+    let threshold = (at > 0).then_some(f64::from(at));
+    let Some(((account, _), below)) = store.freest_to_start(tool, &numbers, threshold) else {
         let note = format!("every {tool} account is used up: starting in the default one");
         return (tool.to_owned(), "<agent>".to_owned(), Some(note));
     };
@@ -328,13 +331,25 @@ fn start_in(tool: &str) -> (String, String, Option<String>) {
             .find(tool, name)
             .map(|a| crate::account::shown(&store, &a))
             .unwrap_or_else(|| name.to_owned());
-        match crate::usage::numbers_for(&numbers, tool, name).and_then(crate::usage::deciding) {
+        // The window that matters: the one at the threshold, else the week.
+        let window = crate::usage::numbers_for(&numbers, tool, name).and_then(|usage| {
+            match threshold.filter(|at| crate::usage::reaches(usage, *at)) {
+                Some(_) => crate::usage::fullest(usage),
+                None => crate::usage::deciding(usage),
+            }
+        });
+        match window {
             Some(window) => format!("{shown} ({})", crate::usage::window_label(window)),
             None => shown,
         }
     };
     let why = if numbers.is_empty() {
         "no usage measured, so by the list order".to_owned()
+    } else if !below {
+        format!(
+            "every account is at {} or more (account_switch_at), this is the freest of them",
+            crate::config::switch_at_word(at)
+        )
     } else if account.name == default {
         "the default account, and none is freer".to_owned()
     } else {

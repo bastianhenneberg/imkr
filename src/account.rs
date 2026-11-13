@@ -510,11 +510,40 @@ impl Store {
     /// (#9899, `imkr spawn` and `imkr keeper`): of those logged in and not
     /// used up, the freest by `numbers` — the default first, so that
     /// without numbers, or on a tie, nothing changes.
+    ///
+    /// With a threshold `at` (`Config::account_switch_at`) only accounts
+    /// below it in every window count, as long as there is one: a bee
+    /// started in an account at 97 % of its five hours would be moved
+    /// again after its first turn. The second value says whether one was
+    /// below it — `false` means every account had reached it, and the
+    /// freest of them was taken anyway.
     pub fn freest_to_start(
         &self,
         tool: &str,
         numbers: &[crate::usage::AccountUsage],
-    ) -> Option<(Account, Option<crate::usage::Window>)> {
+        at: Option<f64>,
+    ) -> Option<((Account, Option<crate::usage::Window>), bool)> {
+        let free = self.free_to_start(tool);
+        if let Some(at) = at.filter(|_| !numbers.is_empty()) {
+            let below: Vec<Account> = free
+                .iter()
+                .filter(|account| {
+                    crate::usage::numbers_for(numbers, tool, &account.name).is_some_and(|usage| {
+                        !usage.windows.is_empty() && !crate::usage::reaches(usage, at)
+                    })
+                })
+                .cloned()
+                .collect();
+            if let Some(found) = Self::freest_of(below, tool, numbers) {
+                return Some((found, true));
+            }
+            return Self::freest_of(free, tool, numbers).map(|found| (found, false));
+        }
+        Self::freest_of(free, tool, numbers).map(|found| (found, true))
+    }
+
+    /// Logged in and not used up, the default first.
+    fn free_to_start(&self, tool: &str) -> Vec<Account> {
         let default = self.default_of(tool);
         let used_up = self.used_up();
         let mut free: Vec<Account> = self
@@ -526,7 +555,7 @@ impl Store {
             let first = free.remove(at);
             free.insert(0, first);
         }
-        Self::freest_of(free, tool, numbers)
+        free
     }
 
     /// The first of `free` by `numbers`, see `freest`.
@@ -1385,7 +1414,12 @@ mod tests {
             note: None,
         };
         let start = |numbers: &[crate::usage::AccountUsage]| {
-            store.freest_to_start("claude", numbers).unwrap().0.name
+            store
+                .freest_to_start("claude", numbers, None)
+                .unwrap()
+                .0
+                .0
+                .name
         };
         // Without numbers, and on a tie, the default as before.
         assert_eq!(start(&[]), STANDARD);
@@ -1400,8 +1434,17 @@ mod tests {
             numbers("work", 40.0, 97.0),
             numbers("spare", 60.0, 5.0),
         ];
-        // The week decides where a new agent starts…
+        // The week alone would start a new agent in `work`…
         assert_eq!(start(&all), "work");
+        // …but with the threshold it takes one below it in every window,
+        // or says that none was.
+        let at = |numbers: &[crate::usage::AccountUsage], at: f64| {
+            let ((account, _), below) = store.freest_to_start("claude", numbers, Some(at)).unwrap();
+            (account.name, below)
+        };
+        assert_eq!(at(&all, 95.0), ("spare".to_owned(), true));
+        assert_eq!(at(&all, 50.0), ("work".to_owned(), false));
+        assert_eq!(at(&[], 95.0), (STANDARD.to_owned(), true));
         // …but moving ahead of the limit wants every window below it:
         // `work`'s five hours are at 97 %, so `spare` it is.
         assert!(crate::usage::reaches(&all[0], 95.0));

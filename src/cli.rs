@@ -3443,9 +3443,14 @@ pub fn account(args: &[String]) -> Result<()> {
             // What really happens, for the setting this machine has:
             // the old line described the fallback as a fact and was read
             // on a machine where it was switched off (#1305).
+            let config = crate::config::Config::load().0;
+            println!("{}", config.account_fallback.explained());
             println!(
                 "{}",
-                crate::config::Config::load().0.account_fallback.explained()
+                crate::config::switch_at_explained(
+                    config.account_switch_at,
+                    config.account_fallback
+                )
             );
             Ok(())
         }

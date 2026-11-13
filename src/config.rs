@@ -613,6 +613,27 @@ pub fn switch_at_word(at: u8) -> String {
     }
 }
 
+/// What `imkr account ls` says about the threshold (#9899): where it is
+/// set, what it does, and that `account_fallback` decides here too — the
+/// keeper looked for a 95 % threshold Bastian knew of and found it
+/// nowhere, because there was none yet. Named with its key, so nobody has
+/// to search again.
+pub fn switch_at_explained(at: u8, fallback: AccountFallback) -> String {
+    if at == 0 {
+        return "before the limit: nothing (account_switch_at = 0 in config.toml, settings \"Account nearly used up\"). New bees and keepers start in the freest account.".to_owned();
+    }
+    let does = match fallback {
+        AccountFallback::Auto => "moves it by itself",
+        AccountFallback::Ask => {
+            "names the account for Ctrl+B s C, it does NOT move it (account_fallback = ask)"
+        }
+        AccountFallback::Off => "does nothing, as account_fallback = off",
+    };
+    format!(
+        "before the limit (account_switch_at = {at} in config.toml, settings \"Account nearly used up\"): when the account of a resting agent (idle or done, never working or asking) reaches {at} % of its week or five hours, imkr {does} — to the freest account below {at} % in every window, same conversation; with none below, it stays and imkr says so once. New bees and keepers (imkr spawn, imkr keeper without --account) start in the freest account below {at} %."
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Notifications {
@@ -1360,6 +1381,17 @@ run = \"notify-send blocked\"
     /// values in the same order (#9102), and saving from the key keeps the
     /// rest of the config — the key writes the whole file, as every switch
     /// in imkr does.
+    #[test]
+    fn account_ls_says_where_the_threshold_is_and_what_it_does() {
+        let auto = switch_at_explained(95, AccountFallback::Auto);
+        assert!(auto.contains("account_switch_at = 95"), "{auto}");
+        assert!(auto.contains("95 %") && auto.contains("moves it by itself"));
+        // Under ask nothing moves on its own, and it says so.
+        let ask = switch_at_explained(95, AccountFallback::Ask);
+        assert!(ask.contains("does NOT move") && !ask.contains("by itself"));
+        assert!(switch_at_explained(0, AccountFallback::Auto).contains("nothing"));
+    }
+
     #[test]
     fn the_switch_ahead_threshold_is_95_and_steps_to_off() {
         let config = Config::parse("theme = \"catppuccin\"\n").unwrap();
