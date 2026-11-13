@@ -159,6 +159,9 @@ try:
 finally:
     for s in ('bee1', 'bee2', 'bee3', 'bee4'):
         cli('-s', s, 'kill-server')
-    print('world', root)
+    if ok and not os.environ.get('KEEP_WORLD'):
+        shutil.rmtree(root, ignore_errors=True)
+    else:
+        print('world kept:', root)
 print('ALL PASS' if ok else 'SOME FAILED')
 sys.exit(0 if ok else 1)
