@@ -187,7 +187,14 @@ pub fn set_nerd_font(on: bool) {
 /// dim; past window 10, or without a known window, the number follows a
 /// plain dot. The sidebar and `Ctrl+B S` both show them.
 pub fn agent_dots(dots: &[(AgentState, Option<u8>)]) -> Vec<(Style, String)> {
-    let nerd = NERD_FONT.load(std::sync::atomic::Ordering::Relaxed);
+    dots_in(dots, NERD_FONT.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// `agent_dots` for a font that is (`nerd`) or is not a Nerd Font. Tests
+/// call this rather than flip `NERD_FONT`: the flag is the process's, and
+/// a test running beside one that had it on saw Nerd Font circles where it
+/// expected ❶.
+fn dots_in(dots: &[(AgentState, Option<u8>)], nerd: bool) -> Vec<(Style, String)> {
     let dim = Style::new().fg(theme::current().muted);
     dots.iter()
         .map(|&(state, window)| {
@@ -1087,12 +1094,10 @@ mod tests {
         let dots: Vec<String> = agent_dots(&dots).into_iter().map(|(_, d)| d).collect();
         assert_eq!(dots, ["❸ ", "❸ ", "●12 ", "● "]);
         // With a Nerd Font, round circles: 1 is U+F0CA0, 3 two each later.
-        set_nerd_font(true);
-        let round: Vec<String> = agent_dots(&[(AgentState::Working, Some(3))])
+        let round: Vec<String> = dots_in(&[(AgentState::Working, Some(3))], true)
             .into_iter()
             .map(|(_, d)| d)
             .collect();
-        set_nerd_font(false);
         assert_eq!(round, ["\u{F0CA4} "]);
         assert!(find("⇄ codingmachine").is_some());
         assert_eq!(find("brain").unwrap().1, Some(Target::Session(1)));

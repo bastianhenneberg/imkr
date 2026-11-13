@@ -443,7 +443,17 @@ mod tests {
             assert!(lock(&path).unwrap().is_none());
         }
         drop(first);
-        assert!(lock(&path).unwrap().is_some());
+        // The lock belongs to the open file, and a process another test
+        // forks in this moment holds a copy of it until its exec closes it
+        // (O_CLOEXEC). So the failover may take a moment here; a notifier
+        // that really ends releases it with its last descriptor.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut taken = lock(&path).unwrap();
+        while taken.is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            taken = lock(&path).unwrap();
+        }
+        assert!(taken.is_some());
         std::fs::remove_file(path).unwrap();
     }
     fn alert(pane: usize, kind: &str) -> Alert {
