@@ -64,19 +64,7 @@ const DAY: u64 = 24 * HOUR;
 pub fn report() -> Result<Report> {
     let store = Store::here()?;
     let now = crate::persist::now();
-    let mut accounts = Vec::new();
-    for tool in crate::account::TOOLS {
-        let default = store.default_of(tool);
-        for group in subscriptions(&store, tool) {
-            // The same subscription twice has one limit: asked once, and
-            // the answer counts for every name in the group.
-            let first = &group[0];
-            let default = group.iter().any(|a| a.name == default);
-            let mut usage = usage_of(&store, first, default, now);
-            usage.names = group.iter().map(|a| a.name.clone()).collect();
-            accounts.push(usage);
-        }
-    }
+    let accounts = accounts_of(&store, now);
     let tokens = vec![
         Tokens {
             tool: "claude".into(),
@@ -111,6 +99,40 @@ fn subscriptions(store: &Store, tool: &str) -> Vec<Vec<Account>> {
         }
     }
     groups.into_iter().map(|(_, group)| group).collect()
+}
+
+/// The limits of every account here, without the tokens of `report`, and
+/// kept for `cached` just as well: what deciding about an account needs.
+/// Reading a week of transcripts for the tokens is the costly part, and a
+/// server that watches its agents' limits (#9899) asks every few minutes.
+pub fn limits() -> Result<Vec<AccountUsage>> {
+    let store = Store::here()?;
+    let now = crate::persist::now();
+    let accounts = accounts_of(&store, now);
+    let report = Report {
+        accounts,
+        tokens: Vec::new(),
+    };
+    keep_in(&store.root, &report, now);
+    Ok(report.accounts)
+}
+
+/// The usage of every subscription here, see `report`.
+fn accounts_of(store: &Store, now: u64) -> Vec<AccountUsage> {
+    let mut accounts = Vec::new();
+    for tool in crate::account::TOOLS {
+        let default = store.default_of(tool);
+        for group in subscriptions(store, tool) {
+            // The same subscription twice has one limit: asked once, and
+            // the answer counts for every name in the group.
+            let first = &group[0];
+            let default = group.iter().any(|a| a.name == default);
+            let mut usage = usage_of(store, first, default, now);
+            usage.names = group.iter().map(|a| a.name.clone()).collect();
+            accounts.push(usage);
+        }
+    }
+    accounts
 }
 
 /// How long a kept report is good enough to pick an account from. Long
@@ -211,6 +233,22 @@ pub fn fullness(usage: &AccountUsage) -> Option<(f64, f64)> {
         .map(|w| w.used)
         .fold(f64::NEG_INFINITY, f64::max);
     Some((week, if hours.is_finite() { hours } else { 0.0 }))
+}
+
+/// Whether any window of `usage` — the week or the five hours — has
+/// reached `at` percent: the threshold for moving an agent before its
+/// account runs out (`Config::account_switch_at`, #9899).
+pub fn reaches(usage: &AccountUsage, at: f64) -> bool {
+    usage.windows.iter().any(|w| w.used >= at)
+}
+
+/// The fullest window of `usage`, for a message that says why an account
+/// is left: at a threshold that is not always the week.
+pub fn fullest(usage: &AccountUsage) -> Option<&Window> {
+    usage
+        .windows
+        .iter()
+        .max_by(|a, b| a.used.total_cmp(&b.used))
 }
 
 /// A window as a message names it: `88 % week`.

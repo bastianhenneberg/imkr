@@ -93,6 +93,17 @@ Projekt-Slug: `imkr`
   (`FreestAccount` → `move_to_freest_account`, fokussiertes Pane), `Ctrl+B s U`
   (`AccountFallback` → `step_account_fallback`); `imkr account` und die Kontoliste zeigen die
   Woche aus dem Cache (600 s), fragen aber nie selbst — das tut `imkr account usage`.
+  Vorab statt am Limit (#9899): `App::check_near_limit` (je `NEAR_LIMIT_EVERY` 10 s) schiebt nur
+  **ruhende** Agents (`switches_ahead`: Idle/Done) ab `Config::account_switch_at` (Standard 95,
+  0 = aus, SETTINGS „Account nearly used up“) in Woche **oder** 5h (`usage::reaches`) per
+  `switch_account` (gleiche Prüfungen) ins freieste Konto, das in **jedem** Fenster darunter liegt
+  (`Store::freest_below`, ohne Zahlen kein Kandidat); `account_fallback` gilt auch hier. Kein
+  Konto darunter → bleibt, einmal gesagt (`near_limit_said`). Zahlen: `usage::limits` (ohne
+  Token-Scan) wenn der geteilte Cache älter als `NEAR_LIMIT_MEASURED` (300 s). `imkr spawn`/
+  `keeper` ohne `--account`: `keeper::start_in` → `Store::freest_to_start` (Default zuerst, also
+  bei Gleichstand/ohne Zahlen wie vorher), Zeile „claude starts in X: freer than the default Y“
+  (spawn auf stderr, `--json` als `account`). E2E `tests/account_ahead.py`: Fake-`claude` (Python, nicht bash: `is_shell`)
+  mit Hooks per `imkr status` und Transkript in `~/.claude/projects`, `usage.json` von Hand.
   Ein Wechsel ist ein **Neustart** (#1305): die Umgebung eines laufenden Prozesses ist von außen
   nicht änderbar, `switch_account` beendet den Agenten und `finish_switches` tippt
   `… -- claude --resume <id>`. Darum vorher `Store::conversation(tool, session)` →

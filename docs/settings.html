@@ -209,6 +209,8 @@ hosts = []          # other machines whose sessions to show, see docs/machines.m
 name = &quot;laptop&quot;     # this machine's name for the others, e.g. its ssh alias; default: hostname
 computer_use = &quot;off&quot;          # may agents see and drive this screen: &quot;off&quot;, &quot;ask&quot;, &quot;on&quot;
 computer_use_monitor = &quot;AGENT&quot;  # which screen they mean; default: the focused one
+account_fallback = &quot;ask&quot;  # account used up: &quot;ask&quot; names the freest, &quot;auto&quot; moves there, &quot;off&quot;
+account_switch_at = 95    # a resting agent moves before its limit, from this % of week or 5h; 0 = off
 
 [which_key]
 enabled = true      # show the key menu after Ctrl+B

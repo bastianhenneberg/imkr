@@ -1451,6 +1451,10 @@ pub struct App {
     /// Since when a measurement of the accounts runs in a thread; it
     /// writes `usage::cached`, it does not answer here.
     measuring_usage: Option<Instant>,
+    /// When `check_near_limit` last looked, and what it last said per pane
+    /// (account, outcome), so that it says each thing once (#9899).
+    near_limit_at: Option<Instant>,
+    near_limit_said: HashMap<PaneId, String>,
     /// The directories listed on other machines for the directory prompt,
     /// by machine and directory; `None` while ssh is still asking.
     dir_lists: DirLists,
@@ -1602,6 +1606,8 @@ impl App {
             used_up_seen: HashMap::new(),
             account_choices: Vec::new(),
             measuring_usage: None,
+            near_limit_at: None,
+            near_limit_said: HashMap::new(),
             dir_pick: None,
             picker: None,
             search: None,
@@ -4990,6 +4996,7 @@ impl App {
         self.finish_switches();
         self.check_resumed();
         self.check_used_up();
+        self.check_near_limit();
         for pane in self.panes.values_mut() {
             pane.refresh_meta();
         }
@@ -6757,6 +6764,144 @@ impl App {
                 since: Instant::now(),
             });
         }
+    }
+
+    /// Moves a resting agent whose account has reached
+    /// `account_switch_at` percent of its week or five hours to the
+    /// freest account below that, before it runs out (#9899). Until then
+    /// imkr only switched at the limit message, after the agent had
+    /// stopped mid-work.
+    ///
+    /// Only an agent that rests (`switches_ahead`): one at work would lose
+    /// its turn, one that asks something would lose the question. The
+    /// switch is `switch_account`'s, so a conversation that is not saved
+    /// yet is refused before anything is ended. `account_fallback`
+    /// decides as at the limit: `auto` moves, `ask` names the account,
+    /// `off` leaves it alone. With no account below the threshold the
+    /// agent stays, and imkr says so once.
+    fn check_near_limit(&mut self) {
+        let at = self.config.account_switch_at;
+        if at == 0 || self.config.account_fallback == crate::config::AccountFallback::Off {
+            return;
+        }
+        if self
+            .near_limit_at
+            .is_some_and(|t| t.elapsed() < NEAR_LIMIT_EVERY)
+        {
+            return;
+        }
+        self.near_limit_at = Some(Instant::now());
+        let mut resting = Vec::new();
+        for (&id, pane) in &self.panes {
+            let Some(tool) = pane
+                .program()
+                .filter(|p| crate::account::TOOLS.contains(&p.as_str()))
+            else {
+                self.near_limit_said.remove(&id);
+                continue;
+            };
+            if !switches_ahead(self.shown_state(id))
+                || self.switching.contains_key(&id)
+                || self.resumed.contains_key(&id)
+                || self.account_choices.iter().any(|c| c.pane == id)
+            {
+                continue;
+            }
+            let current = pane
+                .accounts
+                .get(&tool)
+                .cloned()
+                .unwrap_or_else(|| crate::account::STANDARD.to_owned());
+            resting.push((id, tool, current));
+        }
+        if resting.is_empty() {
+            return;
+        }
+        // The numbers are shared by every session here (`usage.json`):
+        // only the first to find them old measures.
+        let Some(numbers) = crate::usage::cached(NEAR_LIMIT_MEASURED) else {
+            self.measure_limits();
+            return;
+        };
+        let Ok(store) = crate::account::Store::here() else {
+            return;
+        };
+        let auto = self.config.account_fallback == crate::config::AccountFallback::Auto;
+        let name = |account: &str, tool: &str| {
+            store
+                .find(tool, account)
+                .map(|a| crate::account::shown(&store, &a))
+                .unwrap_or_else(|| account.to_owned())
+        };
+        for (id, tool, current) in resting {
+            let Some(usage) = crate::usage::numbers_for(&numbers, &tool, &current) else {
+                continue;
+            };
+            if !crate::usage::reaches(usage, f64::from(at)) {
+                self.near_limit_said.remove(&id);
+                continue;
+            }
+            let full = crate::usage::fullest(usage)
+                .map(crate::usage::window_label)
+                .unwrap_or_default();
+            let here = name(&current, &tool);
+            let lead = format!("{tool} in {here} is at {full}");
+            let next = store.freest_below(&tool, &current, &numbers, f64::from(at));
+            let (said, text) = match next {
+                None => (
+                    format!("{current}:stays"),
+                    format!("{lead}, and no other account is below {at} % — it stays there"),
+                ),
+                Some((next, window)) => {
+                    let free = window
+                        .map(|w| format!(" ({})", crate::usage::window_label(&w)))
+                        .unwrap_or_default();
+                    let there = crate::account::shown(&store, &next);
+                    if !auto {
+                        (
+                            format!("{current}:ask:{}", next.name),
+                            format!(
+                                "{lead}: Ctrl+B s C restarts it in {there}{free} before it runs out"
+                            ),
+                        )
+                    } else {
+                        match self.switch_account(id, &next, Throw::Never, None, None, None) {
+                            Ok(_) => (
+                                format!("{current}:moved:{}", next.name),
+                                format!(
+                                    "{lead}: restarts {tool} in {there}{free} before it runs out, same conversation"
+                                ),
+                            ),
+                            Err(e) => (
+                                format!("{current}:refused:{}", next.name),
+                                format!("{lead}, not moved to {there}: {e}"),
+                            ),
+                        }
+                    }
+                }
+            };
+            if self.near_limit_said.get(&id) == Some(&said) {
+                continue;
+            }
+            self.near_limit_said.insert(id, said);
+            self.notify(id, "account", &text);
+            self.flash = Some(format!("pane {id}: {text}"));
+        }
+    }
+
+    /// Measures the limits of the accounts in a thread, without the
+    /// tokens (`usage::limits`), for `check_near_limit`.
+    fn measure_limits(&mut self) {
+        if self
+            .measuring_usage
+            .is_some_and(|at| at.elapsed() < USAGE_WAIT)
+        {
+            return;
+        }
+        self.measuring_usage = Some(Instant::now());
+        std::thread::spawn(|| {
+            let _ = crate::usage::limits();
+        });
     }
 
     /// Acts on the agents in `account_choices` once the usage of the
@@ -16215,6 +16360,25 @@ const ACCOUNTS_MEASURED: u64 = 600;
 /// but it must not wait forever on a machine that is offline.
 const USAGE_WAIT: Duration = Duration::from_secs(25);
 
+/// How often `check_near_limit` looks at the resting agents. It reads a
+/// small file each time; the measurement itself is `NEAR_LIMIT_MEASURED`.
+const NEAR_LIMIT_EVERY: Duration = Duration::from_secs(10);
+
+/// How old the numbers may be for `check_near_limit` before they are
+/// measured again: one request per subscription every five minutes, for
+/// all sessions of the machine together (`usage.json` is shared). A
+/// window rarely climbs the last few percent faster than that, and the
+/// fallback at the limit still catches it.
+const NEAR_LIMIT_MEASURED: u64 = 300;
+
+/// Whether an agent in `state` may be moved to another account ahead of
+/// its limit (#9899): only one that rests. Working would lose its turn,
+/// blocked the question it asks, and a failed one is the limit's case
+/// (`check_used_up`); without a known state nothing is moved.
+fn switches_ahead(state: Option<AgentState>) -> bool {
+    matches!(state, Some(AgentState::Idle | AgentState::Done))
+}
+
 /// An agent whose account is to change as soon as the usage of the others
 /// is known (`decide_accounts`).
 struct AccountChoice {
@@ -17393,6 +17557,18 @@ mod tests {
     /// away a decision typed in five seconds earlier (#1305). So the
     /// automatic way waits for it; a switch asked for by hand is refused
     /// in `switch_account`, so the person can decide.
+    #[test]
+    fn only_a_resting_agent_moves_ahead_of_its_limit() {
+        assert!(switches_ahead(Some(AgentState::Idle)));
+        assert!(switches_ahead(Some(AgentState::Done)));
+        // At work it would lose its turn, asking it would lose the
+        // question; a failed one is the limit's own case.
+        for state in [AgentState::Working, AgentState::Blocked, AgentState::Failed] {
+            assert!(!switches_ahead(Some(state)), "{state:?}");
+        }
+        assert!(!switches_ahead(None));
+    }
+
     #[test]
     fn a_switch_waits_for_an_unsent_line_but_not_for_ever() {
         use std::time::Duration;

@@ -479,7 +479,62 @@ impl Store {
         current: &str,
         numbers: &[crate::usage::AccountUsage],
     ) -> Option<(Account, Option<crate::usage::Window>)> {
-        let free = self.free_after(tool, current);
+        Self::freest_of(self.free_after(tool, current), tool, numbers)
+    }
+
+    /// The account to move `current` of `tool` to before it runs out
+    /// (#9899): as `freest`, but only one the numbers show below `at`
+    /// percent in every window. An account without numbers is no
+    /// candidate here — moving a working agent on a guess could move it
+    /// into a fuller account than the one it leaves.
+    pub fn freest_below(
+        &self,
+        tool: &str,
+        current: &str,
+        numbers: &[crate::usage::AccountUsage],
+        at: f64,
+    ) -> Option<(Account, Option<crate::usage::Window>)> {
+        let free = self
+            .free_after(tool, current)
+            .into_iter()
+            .filter(|account| {
+                crate::usage::numbers_for(numbers, tool, &account.name).is_some_and(|usage| {
+                    !usage.windows.is_empty() && !crate::usage::reaches(usage, at)
+                })
+            })
+            .collect();
+        Self::freest_of(free, tool, numbers)
+    }
+
+    /// The account a new agent of `tool` starts in when none is given
+    /// (#9899, `imkr spawn` and `imkr keeper`): of those logged in and not
+    /// used up, the freest by `numbers` — the default first, so that
+    /// without numbers, or on a tie, nothing changes.
+    pub fn freest_to_start(
+        &self,
+        tool: &str,
+        numbers: &[crate::usage::AccountUsage],
+    ) -> Option<(Account, Option<crate::usage::Window>)> {
+        let default = self.default_of(tool);
+        let used_up = self.used_up();
+        let mut free: Vec<Account> = self
+            .of_tool(tool)
+            .into_iter()
+            .filter(|a| self.logged_in(a) && self.used_up_for(a, &used_up).is_none())
+            .collect();
+        if let Some(at) = free.iter().position(|a| a.name == default) {
+            let first = free.remove(at);
+            free.insert(0, first);
+        }
+        Self::freest_of(free, tool, numbers)
+    }
+
+    /// The first of `free` by `numbers`, see `freest`.
+    fn freest_of(
+        free: Vec<Account>,
+        tool: &str,
+        numbers: &[crate::usage::AccountUsage],
+    ) -> Option<(Account, Option<crate::usage::Window>)> {
         let mut rated: Vec<(&Account, (f64, f64), &crate::usage::Window)> = free
             .iter()
             .filter_map(|account| {
@@ -1281,6 +1336,84 @@ mod tests {
         assert_eq!(
             store.freest("claude", STANDARD, &tied).unwrap().0.name,
             "department"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Ahead of the limit (#9899): a new agent starts in the freest account,
+    /// the default on a tie or without numbers; a resting one moves only to
+    /// an account the numbers show below the threshold in every window.
+    #[test]
+    fn ahead_of_the_limit_only_an_account_below_the_threshold_counts() {
+        let base = std::env::temp_dir().join(format!("imkr-ahead-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let store = Store {
+            root: base.join("state/accounts"),
+            home: base.join("home"),
+        };
+        claude_login(&store.home, "me@x", "org1");
+        std::fs::create_dir_all(store.usual_dir("claude")).unwrap();
+        for name in ["work", "spare"] {
+            store
+                .add(Account {
+                    name: name.into(),
+                    tool: "claude".into(),
+                    ..Account::default()
+                })
+                .unwrap();
+        }
+        claude_login(&store.root.join("claude/work"), "work@x", "org2");
+        claude_login(&store.root.join("claude/spare"), "spare@x", "org3");
+        let numbers = |name: &str, week: f64, hours: f64| crate::usage::AccountUsage {
+            tool: "claude".into(),
+            name: name.into(),
+            names: vec![name.into()],
+            default: false,
+            plan: None,
+            windows: vec![
+                crate::usage::Window {
+                    label: "week".into(),
+                    used: week,
+                    resets_at: None,
+                },
+                crate::usage::Window {
+                    label: "5h".into(),
+                    used: hours,
+                    resets_at: None,
+                },
+            ],
+            note: None,
+        };
+        let start = |numbers: &[crate::usage::AccountUsage]| {
+            store.freest_to_start("claude", numbers).unwrap().0.name
+        };
+        // Without numbers, and on a tie, the default as before.
+        assert_eq!(start(&[]), STANDARD);
+        let tie = [
+            numbers(STANDARD, 30.0, 10.0),
+            numbers("work", 30.0, 10.0),
+            numbers("spare", 30.0, 10.0),
+        ];
+        assert_eq!(start(&tie), STANDARD);
+        let all = [
+            numbers(STANDARD, 80.0, 96.0),
+            numbers("work", 40.0, 97.0),
+            numbers("spare", 60.0, 5.0),
+        ];
+        // The week decides where a new agent starts…
+        assert_eq!(start(&all), "work");
+        // …but moving ahead of the limit wants every window below it:
+        // `work`'s five hours are at 97 %, so `spare` it is.
+        assert!(crate::usage::reaches(&all[0], 95.0));
+        let (to, _) = store.freest_below("claude", STANDARD, &all, 95.0).unwrap();
+        assert_eq!(to.name, "spare");
+        // Nothing below the threshold: no move. Nor to an account without
+        // numbers — that would be a guess.
+        assert!(store.freest_below("claude", STANDARD, &all, 50.0).is_none());
+        assert!(
+            store
+                .freest_below("claude", STANDARD, &all[..1], 95.0)
+                .is_none()
         );
         let _ = std::fs::remove_dir_all(&base);
     }

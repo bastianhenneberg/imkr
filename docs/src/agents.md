@@ -327,6 +327,27 @@ right away, in the same conversation, whether or not anything is used up. It is 
 by the focus — and the one to press when an account is nearly full and you would rather not
 wait for the limit.
 
+#### Before the limit, not at it
+
+Waiting for the limit message means the agent has already stopped mid-work. So imkr also looks
+ahead: when the account of a **resting** agent (idle or done) has used *Account nearly used up:
+switch before, from* — 95 % by default — of its week or of its five hours, the agent moves to the
+freest account that is below that in every window. The numbers are measured every five minutes
+while an agent of Claude or Codex rests, for all sessions of the machine together, and only the
+limits are asked (not the tokens). It goes the same way as the switch at the limit, a restart in
+the same conversation, with the same checks: an agent that is working or asking something is not
+moved, one with nothing saved yet is left alone *before* anything is ended, and an unsent line
+holds the switch back. *Account used up* decides here too: `auto` moves, `ask` names the account
+for `Ctrl+B s C`, `off` does neither. When no other account is below the threshold, the agent
+stays where it is and imkr says so once: *claude in stelljes is at 96 % 5h, and no other account
+is below 95 % — it stays there*. The setting steps through 80, 90, 95, 98 % and off
+(`account_switch_at = 95` in the config, 0 = off).
+
+New agents start freest too: `imkr spawn` and `imkr keeper` without `--account` take the freest
+logged-in account of the default agent (by the measured numbers, at most ten minutes old,
+otherwise measured first), the default on a tie or without numbers, and say which and why:
+*claude starts in department (12 % week): freer than the default stelljes (88 % week)*.
+
 Limits belong to the subscription, not to the account's name. `imkr account` shows who each one
 is logged in as, and `add` and `login` warn when an account is logged in to a subscription that
 has one already; nothing is removed for it. One used up counts for every account of the same
@@ -550,6 +571,9 @@ imkr keeper                      # session `keeper` (`keeper-2` … when taken),
 imkr keeper --host server        # the same on another machine
 imkr keeper --account work       # its agent in account `work` (or claude:work)
 ```
+
+Without `--account`, the keeper and every bee start in the freest account (see *Before the limit,
+not at it*).
 
 Without a terminal at hand: start a new session (`n` in `Ctrl+B S`), and after its name the list
 of what it starts with offers **⚑ keeper** below `empty` and your templates. Then comes the

@@ -249,9 +249,14 @@ enum Ready {
 /// (`Config::expand_agents`): the default agent, or with `account`
 /// (`NAME` or `TOOL:NAME`) that account's agent in it, which must be
 /// logged in (#9291).
-pub fn agent_for(account: Option<&str>, default: &str) -> Result<(String, String)> {
+///
+/// Without one it takes the freest account of the default agent
+/// (`start_in`, #9899) and says which in the third value; before, every
+/// bee started in the default account, also when that one was nearly
+/// used up and another nearly whole.
+pub fn agent_for(account: Option<&str>, default: &str) -> Result<(String, String, Option<String>)> {
     let Some(given) = account else {
-        return Ok((default.to_owned(), "<agent>".to_owned()));
+        return Ok(start_in(default));
     };
     let store = crate::account::Store::here()?;
     let (tool, name) = match given.split_once(':') {
@@ -280,7 +285,67 @@ pub fn agent_for(account: Option<&str>, default: &str) -> Result<(String, String
     Ok((
         account.tool.clone(),
         format!("<{}@{}>", account.tool, account.name),
+        None,
     ))
+}
+
+/// How old the measured usage may be to choose the account of a new agent
+/// by. Older numbers are measured again first (`usage::limits`, some
+/// seconds), and the threshold (`Config::account_switch_at`) corrects a
+/// choice that turns out wrong once the agent rests.
+const START_MEASURED: u64 = 600;
+
+/// The agent of `tool` (the default agent) in its freest account, with a
+/// line that says which and why (#9899). Just `<agent>` where there is
+/// nothing to choose: another agent than claude and codex, a single
+/// account, none logged in, or the accounts not readable.
+fn start_in(tool: &str) -> (String, String, Option<String>) {
+    let plain = (tool.to_owned(), "<agent>".to_owned(), None);
+    if !crate::account::TOOLS.contains(&tool) {
+        return plain;
+    }
+    let Ok(store) = crate::account::Store::here() else {
+        return plain;
+    };
+    let logged_in = store
+        .of_tool(tool)
+        .iter()
+        .filter(|a| store.logged_in(a))
+        .count();
+    if logged_in < 2 {
+        return plain;
+    }
+    let numbers = crate::usage::cached(START_MEASURED)
+        .or_else(|| crate::usage::limits().ok())
+        .unwrap_or_default();
+    let Some((account, _)) = store.freest_to_start(tool, &numbers) else {
+        let note = format!("every {tool} account is used up: starting in the default one");
+        return (tool.to_owned(), "<agent>".to_owned(), Some(note));
+    };
+    let default = store.default_of(tool);
+    let label = |name: &str| {
+        let shown = store
+            .find(tool, name)
+            .map(|a| crate::account::shown(&store, &a))
+            .unwrap_or_else(|| name.to_owned());
+        match crate::usage::numbers_for(&numbers, tool, name).and_then(crate::usage::deciding) {
+            Some(window) => format!("{shown} ({})", crate::usage::window_label(window)),
+            None => shown,
+        }
+    };
+    let why = if numbers.is_empty() {
+        "no usage measured, so by the list order".to_owned()
+    } else if account.name == default {
+        "the default account, and none is freer".to_owned()
+    } else {
+        format!("freer than the default {}", label(&default))
+    };
+    let note = format!("{tool} starts in {}: {why}", label(&account.name));
+    (
+        tool.to_owned(),
+        format!("<{}@{}>", account.tool, account.name),
+        Some(note),
+    )
 }
 
 /// Starts session `name` here with `agent` (a placeholder, see
@@ -439,6 +504,9 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
         let name = value["name"].as_str().unwrap_or_default().to_owned();
         let pane = value["pane"].as_u64().unwrap_or_default();
         client::remember_host(&host);
+        if let Some(chosen) = value["account"].as_str() {
+            println!("{host}: {chosen}");
+        }
         println!(
             "keeper {host}:{name}/{pane} in {}",
             value["dir"].as_str().unwrap_or_default()
@@ -446,7 +514,7 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
         return show(Some(&host), &name);
     }
     let (config, _) = crate::config::Config::load();
-    let (tool, agent) = agent_for(account.as_deref(), &config.default_agent)?;
+    let (tool, agent, chosen) = agent_for(account.as_deref(), &config.default_agent)?;
     check_skill(&tool)?;
     let name = match given {
         Some(name) if session_taken(&name) => bail!("there is a session {name} already"),
@@ -459,6 +527,11 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
         Some(dir) => crate::template::home_dir(std::path::Path::new(&dir)),
         None => std::env::current_dir()?,
     };
+    if let Some(chosen) = &chosen
+        && !json
+    {
+        println!("{chosen}");
+    }
     let (socket, pane, _, ready) = start(&name, &cwd, false, None, &agent)?;
     client::request_at(&socket, Request::Keeper { mark: true })?;
     mail_pane(&socket, pane);
@@ -481,7 +554,7 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
     if json {
         println!(
             "{}",
-            serde_json::json!({ "name": name, "pane": pane, "address": at, "dir": folder })
+            serde_json::json!({ "name": name, "pane": pane, "address": at, "dir": folder, "account": chosen })
         );
         return Ok(());
     }
@@ -674,14 +747,15 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
                 brief: value["brief"].as_str().unwrap_or_default().to_owned(),
                 at: crate::persist::now(),
             };
-            (bee, value["asking"].as_bool() == Some(true))
+            let chosen = value["account"].as_str().map(|a| format!("{host}: {a}"));
+            (bee, value["asking"].as_bool() == Some(true), chosen)
         }
         None => {
             if session_taken(name) {
                 bail!("there is a session {name} already");
             }
             let (config, _) = crate::config::Config::load();
-            let (_, agent) = agent_for(account.as_deref(), &config.default_agent)?;
+            let (_, agent, chosen) = agent_for(account.as_deref(), &config.default_agent)?;
             let brief = if brief == "-" {
                 keep_brief(&crate::persist::state_dir()?, name, &text)?
             } else {
@@ -714,10 +788,10 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
                 brief,
                 at: crate::persist::now(),
             };
-            (bee, asking)
+            (bee, asking, chosen)
         }
     };
-    let (bee, asking) = bee;
+    let (bee, asking, chosen) = bee;
     if mine {
         let keeper = keeper.unwrap_or_else(protocol::session_name);
         record(&self::dir(&keeper)?, bee.clone())?;
@@ -734,6 +808,9 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
             .and_then(|p| p.parse::<u64>().ok())
             .into();
         value["asking"] = asking.into();
+        if let Some(chosen) = &chosen {
+            value["account"] = chosen.as_str().into();
+        }
         println!("{value}");
         // Passed on: the keeper's side says it, with the name it knows.
         if !mine {
@@ -749,6 +826,10 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
         return Err(waits_for_answer(&bee.address, &then));
     }
     if !json {
+        // On stderr: the address on stdout is what scripts read.
+        if let Some(chosen) = &chosen {
+            eprintln!("{chosen}");
+        }
         println!("{}", bee.address);
     }
     Ok(())

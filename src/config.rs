@@ -223,6 +223,11 @@ pub struct Config {
     /// When an agent's account is used up: ask, go on in the next one
     /// (`auto`), or `off`.
     pub account_fallback: AccountFallback,
+    /// From how many percent used of its week or its five hours a resting
+    /// agent moves to the freest account below that, before it runs out
+    /// (#9899); 0 = never. `account_fallback` decides as at the limit:
+    /// `auto` moves, `ask` names the account, `off` does neither.
+    pub account_switch_at: u8,
     /// The user's own commands, in the `Ctrl+B c` menu.
     pub commands: Vec<UserCommand>,
     /// Whether agents are resumed after a restart: typed in and started,
@@ -591,6 +596,23 @@ impl AccountFallback {
     }
 }
 
+/// `Config::account_switch_at` unless set: AI Brain leaves an account
+/// out as a fallback from 98 %, so 95 % leaves an agent the room to
+/// finish a turn after its move.
+pub const SWITCH_AT_DEFAULT: u8 = 95;
+
+/// The thresholds the settings menu steps through, 0 = off.
+pub const SWITCH_AT_STEPS: [u8; 5] = [0, 80, 90, 95, 98];
+
+/// `Config::account_switch_at` as the settings menu shows it.
+pub fn switch_at_word(at: u8) -> String {
+    if at == 0 {
+        "off".to_owned()
+    } else {
+        format!("{at} %")
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Notifications {
@@ -632,6 +654,7 @@ impl Default for Config {
             sidebar: Sidebar::default(),
             notifications: Notifications::default(),
             account_fallback: AccountFallback::default(),
+            account_switch_at: SWITCH_AT_DEFAULT,
             commands: vec![UserCommand {
                 key: 'g',
                 name: "lazygit".into(),
@@ -801,6 +824,13 @@ pub const SETTINGS: &[Setting] = &[
         value: |c| c.account_fallback.word().to_owned(),
         step: |c, forward| {
             c.account_fallback = step_in(&AccountFallback::ALL, &c.account_fallback, forward)
+        },
+    },
+    Setting {
+        name: "Account nearly used up: switch before, from",
+        value: |c| switch_at_word(c.account_switch_at),
+        step: |c, forward| {
+            c.account_switch_at = step_in(&SWITCH_AT_STEPS, &c.account_switch_at, forward)
         },
     },
     Setting {
@@ -1330,6 +1360,24 @@ run = \"notify-send blocked\"
     /// values in the same order (#9102), and saving from the key keeps the
     /// rest of the config — the key writes the whole file, as every switch
     /// in imkr does.
+    #[test]
+    fn the_switch_ahead_threshold_is_95_and_steps_to_off() {
+        let config = Config::parse("theme = \"catppuccin\"\n").unwrap();
+        assert_eq!(config.account_switch_at, 95);
+        let setting = SETTINGS
+            .iter()
+            .find(|s| s.name.starts_with("Account nearly used up"))
+            .unwrap();
+        assert_eq!((setting.value)(&config), "95 %");
+        let mut config = config;
+        (setting.step)(&mut config, true);
+        assert_eq!(config.account_switch_at, 98);
+        (setting.step)(&mut config, true);
+        assert_eq!((setting.value)(&config), "off");
+        let written = Config::parse(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(written.account_switch_at, 0);
+    }
+
     #[test]
     fn account_fallback_steps_the_same_way_for_key_and_menu() {
         let text = "theme = \"catppuccin\"

@@ -470,6 +470,24 @@ right away, in the same conversation, whether or not anything is used up. It is 
 <code>ask</code> message points at — in <em>that</em> pane, which the message names in front, since the key goes
 by the focus — and the one to press when an account is nearly full and you would rather not
 wait for the limit.</p>
+<h4 id="before-the-limit-not-at-it">Before the limit, not at it</h4>
+<p>Waiting for the limit message means the agent has already stopped mid-work. So imkr also looks
+ahead: when the account of a <strong>resting</strong> agent (idle or done) has used <em>Account nearly used up:
+switch before, from</em> — 95 % by default — of its week or of its five hours, the agent moves to the
+freest account that is below that in every window. The numbers are measured every five minutes
+while an agent of Claude or Codex rests, for all sessions of the machine together, and only the
+limits are asked (not the tokens). It goes the same way as the switch at the limit, a restart in
+the same conversation, with the same checks: an agent that is working or asking something is not
+moved, one with nothing saved yet is left alone <em>before</em> anything is ended, and an unsent line
+holds the switch back. <em>Account used up</em> decides here too: <code>auto</code> moves, <code>ask</code> names the account
+for <code>Ctrl+B s C</code>, <code>off</code> does neither. When no other account is below the threshold, the agent
+stays where it is and imkr says so once: <em>claude in stelljes is at 96 % 5h, and no other account
+is below 95 % — it stays there</em>. The setting steps through 80, 90, 95, 98 % and off
+(<code>account_switch_at = 95</code> in the config, 0 = off).</p>
+<p>New agents start freest too: <code>imkr spawn</code> and <code>imkr keeper</code> without <code>--account</code> take the freest
+logged-in account of the default agent (by the measured numbers, at most ten minutes old,
+otherwise measured first), the default on a tie or without numbers, and say which and why:
+<em>claude starts in department (12 % week): freer than the default stelljes (88 % week)</em>.</p>
 <p>Limits belong to the subscription, not to the account's name. <code>imkr account</code> shows who each one
 is logged in as, and <code>add</code> and <code>login</code> warn when an account is logged in to a subscription that
 has one already; nothing is removed for it. One used up counts for every account of the same
@@ -639,6 +657,8 @@ own — a <strong>bee</strong> — that starts with a fresh context and its brie
 imkr keeper --host server        # the same on another machine
 imkr keeper --account work       # its agent in account `work` (or claude:work)
 </code></pre>
+<p>Without <code>--account</code>, the keeper and every bee start in the freest account (see <em>Before the limit,
+not at it</em>).</p>
 <p>Without a terminal at hand: start a new session (<code>n</code> in <code>Ctrl+B S</code>), and after its name the list
 of what it starts with offers <strong>⚑ keeper</strong> below <code>empty</code> and your templates. Then comes the
 directory, as for every new session, and — on this machine, with more than one account logged
