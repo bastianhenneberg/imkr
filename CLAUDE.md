@@ -841,7 +841,12 @@ Projekt-Slug: `imkr`
   das Echo einer noch ungesendeten Eingabe erzeugt Ausgabe. Für Codex keine
   automatischen Enter-Wiederholungen und beim Zustellen den frischen Pane-Zustand
   statt des vorherigen Idle-Ticks nehmen. Leerer Composer gibt die Queue frei,
-  ist aber **kein** `Confirmed`-Nachweis. Repro ohne Konto/Endpoint:
+  ist aber **kein** `Confirmed`-Nachweis.
+  Statusblock unter dem Composer: bis `CODEX_STATUS_ROWS` (4) eingerückte Zeilen unter einer
+  Leerzeile — Codex 0.170 bricht ihn in schmalen Panes (21×48) nach dem ersten Zug auf vier
+  Zeilen um (Modell/Ordner/Titel, „← for agents · ⚠ 1 warning“). Mit nur einer Zeile sah imkr
+  dort keinen Composer: Post blieb für immer gehalten (`codex_submit.py` fiel schon auf
+  7f3a41e bei MARKER_FOLLOWUP), und seit #641 lehnte auch `send` ab. Repro ohne Konto/Endpoint:
   `cargo build && python tests/mail_stall.py`; Fake-Codex, eigener HOME/Socket/Config,
   schnelle Antwort, Queue, Draft/Paste/Approval, Working→Idle, verschlucktes Enter,
   Server-Handover und Prozess-Neustart. `IMKR_HOSTNAME=mail-regression-host cargo test`

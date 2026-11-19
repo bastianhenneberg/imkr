@@ -1301,6 +1301,11 @@ const ENTER_AGAIN: Duration = Duration::from_secs(2);
 /// only be empty lines nobody asked for.
 const ENTER_TRIES: u8 = 1;
 
+/// How many rows the status block under Codex's composer may have and
+/// still count as one (`codex_composer`): four measured with Codex 0.170
+/// at 21x48. More is an unfamiliar layout — imkr then sees no composer.
+const CODEX_STATUS_ROWS: usize = 4;
+
 /// Codex redraws the submitted prompt in its conversation, often inside
 /// ENTER_LINES. Only the composer at the cursor can hold unsent input.
 /// Return None for an unfamiliar layout (including approval dialogs): it
@@ -1318,11 +1323,20 @@ fn codex_composer(screen: &crate::term::Parser) -> Option<String> {
         .iter()
         .rposition(|r| r.contains("? for shortcuts"))
         .map(|row| row + start + 1);
-    let separator = rows.len().checked_sub(2)?;
-    let status_only = rows[separator].trim().is_empty()
-        && rows
-            .last()
-            .is_some_and(|row| row.starts_with("  ") && !row.trim().is_empty())
+    // The status block under the composer: every row of it indented and
+    // written, a blank row above it. One row in Codex 0.166; in 0.170 a
+    // narrow pane wraps model, folder and session title over several
+    // rows and adds "← for agents · ⚠ 1 warning" (measured at 21x48 after
+    // the first turn, idea #641) — with one row only, imkr saw no
+    // composer there, held every message and refused every `send`.
+    let status_rows = rows
+        .iter()
+        .rev()
+        .take_while(|row| row.starts_with("  ") && !row.trim().is_empty())
+        .count();
+    let separator = rows.len().checked_sub(status_rows + 1)?;
+    let status_only = (1..=CODEX_STATUS_ROWS).contains(&status_rows)
+        && rows[separator].trim().is_empty()
         && screen.bracketed_paste();
     let end = if let Some(footer) = footer {
         (start + 1..footer).find(|&i| rows[i].trim().is_empty())?
@@ -17169,6 +17183,48 @@ mod tests {
             );
             assert!(super::codex_composer(&screen).is_none());
         }
+    }
+
+    /// Codex 0.170 in a 21x48 pane after its first turn, as
+    /// `tests/codex_submit.py` saw it (idea #641): the status under the
+    /// composer wraps over four rows. With one status row recognised only,
+    /// imkr saw no composer here — on 7f3a41e it held a message to it for
+    /// good ("what was typed in before is still in its input line"), and
+    /// with `send` refusing where it cannot see, every `send` failed.
+    #[test]
+    fn codex_composer_reads_a_status_wrapped_over_several_rows() {
+        let draw = |input: &str, status: &[&str]| {
+            let mut screen = crate::term::Parser::new(21, 48, 100);
+            let start = 21 - status.len() - 1;
+            screen.process(
+                format!(
+                    "\x1b[2J\x1b[H› MARKER_COMPLETE\r\n\r\n• ACK MARKER_COMPLETE\x1b[{start};1H› {input}\r\n\r\n{}\x1b[{start};3H\x1b[?2004h",
+                    status.join("\r\n")
+                )
+                .as_bytes(),
+            );
+            screen
+        };
+        let status = [
+            "  fake default · /tmp/imkr-submit-1343-ll4rqr54/",
+            "  work · [imkr message from submit-worker/0]",
+            "  MARKER_COMPLETE",
+            "  ← for agents         ⚠ 1 warning · f2 to view",
+        ];
+        let empty = draw("\x1b[2mAsk Codex to do anything\x1b[0m", &status);
+        assert_eq!(super::codex_composer(&empty).as_deref(), Some(""));
+        let draft = draw("HUMAN_DRAFT", &status);
+        assert_eq!(
+            super::codex_composer(&draft).as_deref(),
+            Some("› HUMAN_DRAFT")
+        );
+        // The old geometry still holds.
+        let one = draw("\x1b[2mAsk Codex to do anything\x1b[0m", &status[..1]);
+        assert_eq!(super::codex_composer(&one).as_deref(), Some(""));
+        // More than that is not a layout imkr knows: it sees no composer.
+        let five = [status[0]; 5];
+        let unknown = draw("\x1b[2mAsk Codex to do anything\x1b[0m", &five);
+        assert_eq!(super::codex_composer(&unknown), None);
     }
 
     fn codex_screen(input: &str, history: &str) -> crate::term::Parser {
