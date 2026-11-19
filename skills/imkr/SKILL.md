@@ -64,6 +64,9 @@ shell, vim): there its Enter could run whatever stands on the command line. Look
 what stands there. `imkr send --pane 3 --clear` throws away a line imkr typed in itself
 and sends nothing (`--clear <text>`: then sends); a line somebody wrote by hand it leaves
 alone — ask the user instead. Who typed what into a pane is listed in `imkr mail <address>`.
+A word that looks like an option and is none (`--keys`) is refused, not typed; text that
+really begins with `--` goes after a lone `--`. `--pane` is always needed: `send` no
+longer falls back to your own pane. `imkr send --help` shows the usage.
 
 ## Messages you receive
 

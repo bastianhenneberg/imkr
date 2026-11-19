@@ -475,6 +475,10 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
     use crate::cli::{take_flag, take_value};
     const USAGE: &str = "usage: imkr keeper [NAME] [--host H] [--dir DIR] [--account A] \
                          | --mark [SESSION] | --unmark [SESSION]";
+    if crate::cli::wants_help(args) {
+        println!("{USAGE}");
+        return Ok(());
+    }
     let mut rest = args.to_vec();
     let mark = take_flag(&mut rest, "--mark");
     let unmark = take_flag(&mut rest, "--unmark");
@@ -689,6 +693,10 @@ pub fn spawn(args: &[String], host: Option<String>) -> Result<()> {
     use crate::cli::{take_flag, take_value};
     const USAGE: &str = "usage: imkr spawn NAME --brief FILE|- [--host H] [--dir REPO] \
                          [--worktree] [--task N] [--keeper K] [--account A] [--json]";
+    if crate::cli::wants_help(args) {
+        println!("{USAGE}");
+        return Ok(());
+    }
     let mut rest = args.to_vec();
     let brief = take_value(&mut rest, "--brief")?.context(USAGE)?;
     let dir = take_value(&mut rest, "--dir")?;

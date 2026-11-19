@@ -104,12 +104,16 @@ Commands:
 For scripts and agents:
   list [--json]                         list the panes with program and agent state
   status <working|blocked|idle|clear>   report this pane's agent state (for hooks)
-  send [--pane N] [--no-enter] [--stdin] [--append | --clear] [--from ADDRESS] <text>
+  send --pane N [--no-enter] [--stdin] [--append | --clear] [--from ADDRESS] [--] <text>
                 type text into a pane; refuses if something unsent stands in
                 its input line or imkr cannot see that line, --append types
                 anyway, --clear throws away a line imkr typed in itself
                 first (alone: only that, nothing sent); `imkr mail` shows
-                who typed
+                who typed. A word like --this that is no option is refused,
+                not typed: text that begins with -- goes after a lone --.
+                `send --help` prints the usage, and so do msg, read, spawn
+                and keeper. --pane is needed, also for the own pane: up to
+                0.21.114 a missing one meant this pane
   checkpoints   the checkpoints of the repository here: its state after
                 each agent turn, with the setting on
   run [--pane N] [--timeout S] -- command

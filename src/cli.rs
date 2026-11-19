@@ -286,7 +286,7 @@ pub fn list(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `imkr send [--pane N] [--no-enter] [--stdin] [--append | --clear]
+/// `imkr send --pane N [--no-enter] [--stdin] [--append | --clear]
 /// [--from ADDRESS] <text>...`, with `--stdin` the text as it comes, e.g.
 /// an answer sent through ssh.
 ///
@@ -295,25 +295,41 @@ pub fn list(args: &[String]) -> Result<()> {
 /// remember is no check. `--append` types after it as before, `--clear`
 /// throws it away first and sends nothing of it (alone: only that).
 pub fn send(args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: imkr send [--pane N] [--no-enter] [--stdin] \
-                         [--append | --clear] [--from ADDRESS] <text>...";
-    let mut rest = args.to_vec();
-    let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
+    const USAGE: &str = "usage: imkr send --pane N [--no-enter] [--stdin] \
+                         [--append | --clear] [--from ADDRESS] [--] <text>...";
+    // Before anything else: `--help` was typed into the own pane (#1526).
+    if wants_help(args) {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    let (mut rest, after) = split_text(args);
+    // Only `--pane`, never `$IMKR_PANE` (#1526): see `send_needs_a_pane`.
+    let pane = take_value(&mut rest, "--pane")?;
     let enter = !take_flag(&mut rest, "--no-enter");
     let append = take_flag(&mut rest, "--append");
     let clear = take_flag(&mut rest, "--clear");
-    let from = match take_value(&mut rest, "--from")? {
-        Some(from) => from,
-        None => own_address(),
+    let stdin = take_flag(&mut rest, "--stdin");
+    let given = take_value(&mut rest, "--from")?;
+    // Before `own_address`, which already asks the session.
+    refuse_unknown_options(&rest, USAGE)?;
+    let pane: PaneId = match pane {
+        Some(v) => v
+            .parse()
+            .with_context(|| format!("{v:?} is not a pane number"))?,
+        None => bail!(send_needs_a_pane(
+            std::env::var("IMKR_PANE").ok().as_deref()
+        )),
     };
     if append && clear {
         bail!("--append keeps what stands in the input line, --clear throws it away: one of them");
     }
-    let text = if take_flag(&mut rest, "--stdin") {
+    let from = given.unwrap_or_else(own_address);
+    let text = if stdin {
         let mut text = String::new();
         std::io::stdin().read_to_string(&mut text)?;
         text
     } else {
+        rest.extend(after);
         rest.join(" ")
     };
     if clear {
@@ -340,6 +356,24 @@ pub fn send(args: &[String]) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Why `imkr send` without `--pane` is refused, naming what changed: up
+/// to v0.21.114 it filled a missing `--pane` from `$IMKR_PANE`, which
+/// every pane has — so a forgotten `--pane` (or `imkr send --help`)
+/// typed the text into the caller's own pane and pressed Enter, where
+/// an agent reads it as the user's message (#1526). Counted before
+/// removing it: no caller used that on purpose. `own` is `$IMKR_PANE`.
+fn send_needs_a_pane(own: Option<&str>) -> String {
+    let own = match own {
+        Some(pane) => format!(" (your own pane would be --pane {pane})"),
+        None => String::new(),
+    };
+    format!(
+        "which pane? use --pane N{own}. imkr send no longer falls back to $IMKR_PANE: \
+         up to v0.21.114 a missing --pane meant your own pane, so a forgotten --pane \
+         typed the text into it with Enter — removed on purpose (bug #1526)"
+    )
 }
 
 /// How long `imkr send --clear` waits for the input line to be empty.
@@ -654,12 +688,18 @@ pub fn cp(args: &[String]) -> Result<()> {
 /// the sender when the message is passed on over ssh.
 pub fn msg(args: &[String]) -> Result<()> {
     const USAGE: &str =
-        "usage: imkr msg [--wait] [--confirm] <to> <text>... (or the text on stdin)";
-    let mut rest = args.to_vec();
+        "usage: imkr msg [--wait] [--confirm] <to> [--] <text>... (or the text on stdin)";
+    if wants_help(args) {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    let (mut rest, after) = split_text(args);
     let wait = take_flag(&mut rest, "--wait");
     let confirm = take_flag(&mut rest, "--confirm");
     let stdin = take_flag(&mut rest, "--stdin");
     let given = take_value(&mut rest, "--from")?;
+    refuse_unknown_options(&rest, USAGE)?;
+    rest.extend(after);
     // Sent from a pane here (not passed on for one elsewhere): its session
     // notes it for the orchestration view.
     let mine = given.is_none();
@@ -1391,6 +1431,12 @@ pub fn notify(args: &[String]) -> Result<()> {
 /// `imkr read [--pane N] [--lines N]`: what is on a pane's screen, or its
 /// last N lines with the history.
 pub fn read(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr read [--pane N | ADDRESS] [--lines N]";
+    // Without this, `--help` read the own pane (#1526).
+    if wants_help(args) {
+        println!("{USAGE}");
+        return Ok(());
+    }
     let mut rest = args.to_vec();
     let lines = take_value(&mut rest, "--lines")?
         .map(|n| n.parse::<usize>().context("--lines takes a number"))
@@ -3085,6 +3131,50 @@ fn take_pane(args: &mut Vec<String>) -> Result<Option<PaneId>> {
                 .with_context(|| format!("{v:?} is not a pane number"))
         })
         .transpose()
+}
+
+/// `-h` or `--help` among the options, i.e. before a `--`: the caller
+/// wants the usage, not the command. Checked before a command reads its
+/// options — `imkr send --help` typed `--help` into the own pane and
+/// pressed Enter, because `--pane` falls back to `$IMKR_PANE` (#1526).
+pub(crate) fn wants_help(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|a| *a != "--")
+        .any(|a| a == "-h" || a == "--help")
+}
+
+/// `args` split at the first `--`: the options (and words) before it, and
+/// the words after it, which are text, never options — the way to send a
+/// text that itself begins with `--`.
+pub(crate) fn split_text(args: &[String]) -> (Vec<String>, Vec<String>) {
+    match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (args.to_vec(), Vec::new()),
+    }
+}
+
+/// Whether `word` looks like an option: `--` and a letter or digit, one
+/// word. Text that merely begins with dashes is not one — a file pasted
+/// with `"$(cat note.md)"` starts with the `---` of its front matter, and
+/// a quoted sentence has spaces.
+fn looks_like_option(word: &str) -> bool {
+    word.strip_prefix("--")
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && !word.contains(char::is_whitespace)
+}
+
+/// Refuses a word left over after the known options that looks like an
+/// option itself (#1526): such a word is almost always a typo and almost
+/// never the message, and typing it would send it with Enter.
+fn refuse_unknown_options(words: &[String], usage: &str) -> Result<()> {
+    if let Some(word) = words.iter().find(|w| looks_like_option(w)) {
+        bail!(
+            "unknown option {word}, nothing sent — a text that begins with -- goes after a \
+             lone --\n{usage}"
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
