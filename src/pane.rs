@@ -211,6 +211,11 @@ pub struct Pane {
     /// this server runs: after a restart or `imkr update` it is gone, and
     /// a line counts as nobody's — not cleared.
     filled: Cell<Option<Instant>>,
+    /// Whether this pane came over from another server process — `imkr
+    /// update` or a window moved here (`from_handover`): what imkr typed
+    /// into it before that, this process does not know (`filled` does not
+    /// travel), and `imkr send --clear` has to say so (idea #641).
+    came_over: bool,
     /// Whether this pane's agent fetches its messages itself through its
     /// own hook (`Request::TakeMail`): then nothing is ever typed in. Set
     /// by the first hook call that asked, cleared when its session ends.
@@ -474,6 +479,7 @@ impl Pane {
         // Mail its agent has not shown it acted on travels, unlike
         // `takes_mail`: dropping it would drop a message (#1313).
         pane.handed = from.handed.clone();
+        pane.came_over = true;
         pane.parser.lock().unwrap().set_title(from.title.clone());
         *pane.remote.lock().unwrap() = from.remote.clone();
         // What it wrote was read before the handover: the pane is not busy
@@ -564,6 +570,7 @@ impl Pane {
             keyed: Cell::new(None),
             typed: Cell::new(None),
             filled: Cell::new(None),
+            came_over: false,
             takes_mail: false,
             handed: Vec::new(),
             events,
@@ -1019,6 +1026,12 @@ impl Pane {
     /// its own.
     pub fn filled(&self) -> Option<Instant> {
         self.filled.get()
+    }
+
+    /// Whether this pane came over from another server process (`imkr
+    /// update`, a moved window), see `came_over`.
+    pub fn came_over(&self) -> bool {
+        self.came_over
     }
 
     /// Whether the end of `text` still stands at the bottom of the screen,

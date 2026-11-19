@@ -1063,7 +1063,19 @@ fn imkrs_line(filled: Option<Instant>, typed: Option<Instant>) -> bool {
 /// imkr typed in, it can clear: that one is in `imkr mail`. Everything
 /// else is left to whoever sits at the pane — there is no switch past
 /// this, because a switch that lifts a lock becomes a habit.
-fn clear_hold(standing: &str, filled: Option<Instant>, typed: Option<Instant>) -> Option<String> {
+///
+/// `came_over`: the pane came over from another server process (`imkr
+/// update`, a moved window, `Pane::came_over`), and what imkr typed before
+/// that is not known here. Refusing then is fail-closed on purpose — and
+/// the refusal SAYS that this is the reason (the keeper's condition): the
+/// first `--clear` after every update refuses, and without the reason in
+/// the message that looks like a bug somebody goes looking for.
+fn clear_hold(
+    standing: &str,
+    filled: Option<Instant>,
+    typed: Option<Instant>,
+    came_over: bool,
+) -> Option<String> {
     if imkrs_line(filled, typed) {
         return None;
     }
@@ -1073,11 +1085,17 @@ fn clear_hold(standing: &str, filled: Option<Instant>, typed: Option<Instant>) -
             "its input line holds {shown}, and somebody typed into it by hand after imkr \
              did — that may be a person's work, so nothing was cleared"
         )
+    } else if came_over {
+        format!(
+            "its input line holds {shown}, and imkr cannot tell who typed that: this pane \
+             came over from an imkr before `imkr update` (or from another session), and \
+             what was typed in before that is not known here. Not an error — it refuses \
+             on purpose, since it may be a person's work, so nothing was cleared"
+        )
     } else {
         format!(
-            "its input line holds {shown}, and imkr cannot show that it typed that in \
-             itself (it knows only while it runs, not over a restart or `imkr update`) — \
-             it may be a person's work, so nothing was cleared"
+            "its input line holds {shown}, which imkr did not type in itself — it may be \
+             a person's work, so nothing was cleared"
         )
     })
 }
@@ -1236,7 +1254,7 @@ fn send_into(
     let standing = input_standing(p.input_line(), program.as_deref(), &p.screen());
     if clear {
         if let Some(was) = standing.as_deref().filter(|was| !was.is_empty()) {
-            if let Some(why) = clear_hold(was, p.filled(), p.last_typed()) {
+            if let Some(why) = clear_hold(was, p.filled(), p.last_typed(), p.came_over()) {
                 return Ok(SendDone::Kept(why));
             }
             p.write(clearing_keys(was).as_bytes())
@@ -17538,11 +17556,17 @@ while True:
         // imkr never filled it, or not while it was its own.
         assert!(!super::imkrs_line(None, None));
         assert!(!super::imkrs_line(None, Some(then)));
-        assert_eq!(super::clear_hold("x", Some(later), Some(then)), None);
-        let unknown = super::clear_hold("/exit", None, None).unwrap();
-        assert!(unknown.contains("«/exit»") && unknown.contains("cannot show"));
-        let by_hand = super::clear_hold("/exit", Some(then), Some(later)).unwrap();
+        assert_eq!(super::clear_hold("x", Some(later), Some(then), false), None);
+        assert_eq!(super::clear_hold("x", Some(later), Some(then), true), None);
+        let foreign = super::clear_hold("/exit", None, None, false).unwrap();
+        assert!(foreign.contains("«/exit»") && foreign.contains("did not type"));
+        let by_hand = super::clear_hold("/exit", Some(then), Some(later), false).unwrap();
         assert!(by_hand.contains("by hand"));
+        // After `imkr update` the refusal names the update as its reason
+        // (the keeper's condition): otherwise the first `--clear` after
+        // every update looks like a bug.
+        let updated = super::clear_hold("/exit", None, None, true).unwrap();
+        assert!(updated.contains("imkr update") && updated.contains("Not an error"));
     }
 
     /// Rank 2 of idea #641: where imkr cannot see the input line — every

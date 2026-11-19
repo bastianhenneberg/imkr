@@ -932,7 +932,9 @@ Projekt-Slug: `imkr`
   `Pane::note_filled` (eigen = vorher leer gesehen und kein Handentwurf, oder schon imkrs),
   `app::imkrs_line` = gefüllt **und** seit dem keine Taste von Hand (`Pane::last_typed`,
   Enter zählt), sonst `clear_hold` → `SendDone::Kept` (Programm bekommt keine Taste).
-  Bewusst ohne Schalter zum Überstimmen; nach Neustart/`update` gilt jede Zeile als fremd.
+  Bewusst ohne Schalter zum Überstimmen; nach `update`/verschobenem Fenster gilt jede Zeile als
+  fremd (`filled` reist nicht mit), und die Ablehnung **sagt** das (`Pane::came_over` aus
+  `from_handover`), sonst sieht der erste `--clear` nach jedem Update wie ein Fehler aus.
   E2E-Tests mit echt mitschreibender Python-Eingabezeile (`echoing`). `KEYS_SETTLE` (2 s, `Pane::typed_lately`):
   gemessen sah ein `send` direkt nach einem Paste die Zeile leer. `Request::Send` hat `guard`/
   `clear`/`from` (serde default), nur die CLI setzt `guard` (`--append` nicht); Shim, `run`,
