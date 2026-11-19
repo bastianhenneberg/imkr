@@ -54,6 +54,15 @@ If the other machine cannot be reached from yours (a server answering a laptop),
 answers `queued for …`: that is a success, even with an ssh error in brackets. It is delivered
 when that machine next asks yours, within a minute. Do not send it again or try other addresses.
 
+## Type into a pane directly
+
+`imkr send --pane 3 <text>` types text and Enter, without a header. It refuses, typing
+nothing, when something unsent stands in that pane's input line, and says what it is:
+the Enter would send it along. Do not reach for `--append` (types after it, as before)
+unless you know what stands there. `imkr send --pane 3 --clear` throws it away and sends
+nothing; `--clear <text>` empties the line first, then sends. Who typed what into a pane
+is listed in `imkr mail <address>`.
+
 ## Messages you receive
 
 A line starting with `[imkr message from …]` comes from another agent, not from the

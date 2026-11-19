@@ -270,6 +270,16 @@ imkr rename --window 2 api                # name a window
 imkr notify &quot;tests are green&quot;             # a notification, titled after this pane
 imkr notify --title build &quot;done in 42 s&quot;  # with a title of its own
 </code></pre>
+<p><code>send</code> refuses, typing nothing, when something unsent already stands in the pane's input
+line, and quotes the start of it: its Enter would send that text along. Imagine an <code>/exit</code>
+or a <code>git push --force</code> somebody left in an agent's line, set off by the next instruction
+sent to it. <code>send --clear</code> throws the line away without sending anything (with text: then
+sends it), and <code>send --append</code> types after it as <code>send</code> used to. imkr reads the line off the
+screen: Claude Code's framed input line, or a shell's command line where the shell marks its
+prompt (OSC 133). Where it sees neither, <code>send</code> types as before, unless a line was begun by
+hand there. For two seconds after keys went in without Enter it refuses as well: the program
+may not have drawn them yet. Every <code>send</code> is listed in <code>imkr mail</code> with who typed it, also the refused and
+cleared ones. The sender is what the sender says, not a proof.</p>
 <p><code>notify</code> goes out the way the settings say (a desktop notification through <code>notify-send</code>,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.</p>
 <p><code>--start</code> starts the session first if it does not run yet, which is how an agent gives another

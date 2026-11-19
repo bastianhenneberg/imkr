@@ -39,11 +39,13 @@ fn tools() -> Value {
         },
         {
             "name": "imkr_send",
-            "description": "Types text into a pane, followed by Enter unless enter is false. For shells and programs; to ask another agent something, use imkr_message.",
+            "description": "Types text into a pane, followed by Enter unless enter is false. Refuses, typing nothing, when something unsent already stands in the pane's input line: the Enter would send it along. For shells and programs; to ask another agent something, use imkr_message.",
             "inputSchema": { "type": "object", "required": ["pane", "text"], "properties": {
                 "pane": pane,
                 "text": { "type": "string" },
-                "enter": { "type": "boolean", "description": "Press Enter after the text (default true)." }
+                "enter": { "type": "boolean", "description": "Press Enter after the text (default true)." },
+                "append": { "type": "boolean", "description": "Type after what stands in the input line instead of refusing." },
+                "clear": { "type": "boolean", "description": "Throw away what stands in the input line first, sending none of it. With empty text only that." }
             }}
         },
         {
@@ -174,6 +176,12 @@ fn command_for(tool: &str, args: &Value) -> Result<(Vec<String>, String), String
             push(&mut line, &["send", "--stdin", "--pane", &pane()?]);
             if args["enter"].as_bool() == Some(false) {
                 push(&mut line, &["--no-enter"]);
+            }
+            if args["append"].as_bool() == Some(true) {
+                push(&mut line, &["--append"]);
+            }
+            if args["clear"].as_bool() == Some(true) {
+                push(&mut line, &["--clear"]);
             }
             input = text("text")?;
         }

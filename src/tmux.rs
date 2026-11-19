@@ -324,10 +324,18 @@ fn run_one(command: &[String]) -> Result<()> {
                     .map(|key| key_bytes(key).unwrap_or_else(|| key.clone()))
                     .collect()
             };
+            // Keys, typed as before: the shim gets text and Enter in two
+            // calls, so refusing the second for the first would break it.
             client::request(Request::Send {
                 pane: at.id,
                 text,
                 enter: false,
+                guard: false,
+                clear: false,
+                from: Some(match crate::protocol::caller() {
+                    Some(caller) => format!("{caller} (tmux send-keys)"),
+                    None => "tmux send-keys".to_owned(),
+                }),
             })?;
             Ok(())
         }

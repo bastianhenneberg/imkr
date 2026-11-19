@@ -237,7 +237,14 @@ const COMMANDS: &[Command] = &[
     cmd(
         "send",
         "type text into a pane",
-        &["--pane", "--no-enter", "--stdin"],
+        &[
+            "--pane",
+            "--no-enter",
+            "--stdin",
+            "--append",
+            "--clear",
+            "--from",
+        ],
         Nothing,
     ),
     cmd(

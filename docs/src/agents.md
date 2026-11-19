@@ -89,6 +89,17 @@ imkr notify "tests are green"             # a notification, titled after this pa
 imkr notify --title build "done in 42 s"  # with a title of its own
 ```
 
+`send` refuses, typing nothing, when something unsent already stands in the pane's input
+line, and quotes the start of it: its Enter would send that text along. Imagine an `/exit`
+or a `git push --force` somebody left in an agent's line, set off by the next instruction
+sent to it. `send --clear` throws the line away without sending anything (with text: then
+sends it), and `send --append` types after it as `send` used to. imkr reads the line off the
+screen: Claude Code's framed input line, or a shell's command line where the shell marks its
+prompt (OSC 133). Where it sees neither, `send` types as before, unless a line was begun by
+hand there. For two seconds after keys went in without Enter it refuses as well: the program
+may not have drawn them yet. Every `send` is listed in `imkr mail` with who typed it, also the refused and
+cleared ones. The sender is what the sender says, not a proof.
+
 `notify` goes out the way the settings say (a desktop notification through `notify-send`,
 OSC 9 to the terminal, or none) and shows up in the control bar as well.
 

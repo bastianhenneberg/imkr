@@ -49,6 +49,14 @@ pub fn draft_after(bytes: &[u8]) -> Option<bool> {
 /// the rest of the day.
 const DRAFT_HOLDS: Duration = Duration::from_secs(30 * 60);
 
+/// How long after a key the screen of a pane is not taken at its word
+/// about its input line (idea #641): the program has not drawn it yet.
+/// Measured in the test world: a paste typed in and an `imkr send` right
+/// after it, and the second saw an empty line — Claude Code had not drawn
+/// the paste — and sent both. Two seconds is far longer than any redraw
+/// and far shorter than anybody waits between two deliberate sends.
+const KEYS_SETTLE: Duration = Duration::from_secs(2);
+
 /// How many characters of what was typed in have to be on the screen for
 /// it to count as still standing in the input line (`shows_text`).
 const SHOWN_TAIL: usize = 40;
@@ -78,6 +86,71 @@ pub fn shows_text(screen: &str, typed: &str) -> bool {
     let from = all.chars().count().saturating_sub(SHOWN_TAIL);
     let tail: String = all.chars().skip(from).collect();
     !tail.is_empty() && bare(screen).contains(&tail)
+}
+
+/// The characters an agent puts in front of its input line: Claude Code
+/// `❯` (older versions `>`), Codex `›`.
+const INPUT_PROMPTS: &[char] = &['❯', '>', '›'];
+
+/// Box drawing around an agent's input line, cut off its rows.
+const INPUT_FRAME: &[char] = &['│', '┃'];
+
+/// What stands in the framed input line an agent draws at the bottom of
+/// its screen (idea #641), `None` where there is none to be seen.
+///
+/// Claude Code draws it between two rules (`────`, older versions a box
+/// `╭──╮ … ╰──╯`), the first row starting with `❯`. Measured on Claude
+/// Code in a terminal: what somebody wrote there comes in plain cells,
+/// the suggestion an empty line shows (`Try "write a test for app.rs"`)
+/// in dim ones (SGR 2) — so dim cells do not count, or every fresh agent
+/// would look as if somebody had written in it.
+///
+/// `None` is "cannot tell", not "empty": a program that draws no such box
+/// (vim, a question dialog, an agent we do not know) is left to whoever
+/// asks. The bottom-most box wins, the one being written in.
+pub fn input_box(screen: &crate::term::Parser) -> Option<String> {
+    let (rows, cols) = screen.size();
+    // Each row as written, dim cells as blanks.
+    let text: Vec<String> = (0..rows)
+        .map(|row| {
+            (0..cols)
+                .filter_map(|col| screen.cell(row, col))
+                .filter(|cell| !cell.is_wide_continuation())
+                .map(|cell| {
+                    if cell.dim() {
+                        " ".to_owned()
+                    } else {
+                        cell.contents()
+                    }
+                })
+                .collect::<String>()
+                .replace('\u{a0}', " ")
+        })
+        .collect();
+    let rule = |row: &str| {
+        let row = row.trim();
+        row.chars().filter(|&c| c == '─').count() >= 10
+            && row
+                .chars()
+                .all(|c| matches!(c, '─' | '╭' | '╮' | '╰' | '╯'))
+    };
+    let rules: Vec<usize> = (0..text.len()).filter(|&i| rule(&text[i])).collect();
+    let unframed = |row: &str| -> String {
+        row.trim()
+            .trim_start_matches(INPUT_FRAME)
+            .trim_end_matches(INPUT_FRAME)
+            .trim()
+            .to_owned()
+    };
+    rules.windows(2).rev().find_map(|pair| {
+        let (top, bottom) = (pair[0], pair[1]);
+        let inside: Vec<String> = text[top + 1..bottom].iter().map(|r| unframed(r)).collect();
+        let first = inside.first()?;
+        let written = first.strip_prefix(INPUT_PROMPTS)?;
+        let mut lines = vec![written.trim().to_owned()];
+        lines.extend(inside[1..].iter().cloned());
+        Some(lines.join("\n").trim().to_owned())
+    })
 }
 
 pub struct Pane {
@@ -124,6 +197,9 @@ pub struct Pane {
     /// up in the middle of it and the Enter after it would send the lot
     /// (#9379).
     draft: Cell<Option<Instant>>,
+    /// When imkr last typed text in here without Enter (`imkr send
+    /// --no-enter`, the tmux shim), see `typed_lately`.
+    keyed: Cell<Option<Instant>>,
     /// When the user last typed anything here at all, Enter included: a
     /// second Enter must never go into a pane somebody has touched since
     /// (#9379).
@@ -199,13 +275,22 @@ struct Shell {
     running: Option<(usize, u16)>,
     /// The last finished: its output and exit code.
     last: Option<Finished>,
+    /// Where the prompt ends and the command line begins (`B`), while the
+    /// shell waits for one: what stands from here to the cursor is what
+    /// somebody wrote and has not sent (idea #641).
+    prompt: Option<(usize, u16)>,
 }
 
 impl Shell {
     fn mark(&mut self, mark: char, exit: Option<i32>, at: (usize, u16)) {
         self.seen = true;
         match mark {
-            'C' => self.running = Some(at),
+            'A' => self.prompt = None,
+            'B' => self.prompt = Some(at),
+            'C' => {
+                self.prompt = None;
+                self.running = Some(at);
+            }
             'D' => {
                 // A `D` without `C` is the first prompt's: no command ran.
                 if let Some(from) = self.running.take() {
@@ -469,6 +554,7 @@ impl Pane {
             prompts: 0,
             submitted: Vec::new(),
             draft: Cell::new(None),
+            keyed: Cell::new(None),
             typed: Cell::new(None),
             takes_mail: false,
             handed: Vec::new(),
@@ -919,6 +1005,54 @@ impl Pane {
         shows_text(&agent::tail(self.screen().screen(), lines), text)
     }
 
+    /// Notes that imkr typed `text` in here, sent with Enter or not, for
+    /// `typed_lately`.
+    pub fn note_keyed(&self, text: &str, enter: bool) {
+        if enter {
+            self.keyed.set(None);
+        } else if !text.is_empty() {
+            self.keyed.set(Some(Instant::now()));
+        }
+    }
+
+    /// Whether keys that may have left something in the input line came in
+    /// so lately that the screen may not show them yet (`KEYS_SETTLE`):
+    /// typed by imkr without Enter, or by hand in a line not sent.
+    pub fn typed_lately(&self) -> bool {
+        let lately = |at: Option<Instant>| at.is_some_and(|at| at.elapsed() < KEYS_SETTLE);
+        lately(self.keyed.get()) || (self.drafting() && lately(self.typed.get()))
+    }
+
+    /// What stands, unsent, in the input line of the program here (idea
+    /// #641): `Some("")` when it is seen to be empty, `None` when imkr
+    /// cannot see it.
+    ///
+    /// A shell waiting at its prompt goes first, from its own marks (OSC
+    /// 133 `B` to the cursor): the box an agent drew before it ended may
+    /// still stand above the prompt and says nothing any more. Up to the
+    /// cursor, not the end of the row — zsh shows a suggestion after it
+    /// that nobody has taken. Otherwise the framed box of an agent
+    /// (`input_box`).
+    pub fn input_line(&self) -> Option<String> {
+        let prompt = self.shell.lock().unwrap().prompt;
+        if let Some(from) = prompt {
+            let mut parser = self.parser.lock().unwrap();
+            let history = history_len(&mut parser);
+            let (row, col) = parser.screen().cursor_position();
+            let cursor = (history + usize::from(row), col);
+            if cursor <= from {
+                return Some(String::new());
+            }
+            // `text_between` takes its end cell with it.
+            let end = match cursor.1 {
+                0 => (cursor.0 - 1, parser.size().1),
+                col => (cursor.0, col - 1),
+            };
+            return Some(text_between(&mut parser, from, end).trim().to_owned());
+        }
+        input_box(&self.screen())
+    }
+
     /// Whether the user began a line here and has not sent it yet, so that
     /// a message must wait. A line nobody has touched for `DRAFT_HOLDS`
     /// does not hold anything back any more: a single stray key must not
@@ -1260,6 +1394,77 @@ fn wait_readable(pty: RawFd, wake: RawFd) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A screen of `cols` columns showing `bytes`.
+    fn shown(bytes: &str, cols: u16) -> crate::term::Parser {
+        let mut parser = crate::term::Parser::new(12, cols, 0);
+        parser.process(bytes.as_bytes());
+        parser
+    }
+
+    /// Claude Code's input line as measured on 19.11.2026: a grey rule, the
+    /// row with `❯` and a no-break space, a grey rule, the footer.
+    fn claude_box(inside: &str) -> String {
+        let rule = "─".repeat(40);
+        format!(
+            "● done\r\n\r\n\x1b[38;5;244m{rule}\x1b[39m\r\n{inside}\r\n\
+             \x1b[38;5;244m{rule}\x1b[39m\r\n  \x1b[38;5;220m⏵⏵ auto mode on\x1b[39m"
+        )
+    }
+
+    /// What somebody wrote and did not send is read off the screen (idea
+    /// #641), also over several rows, and the suggestion an empty line
+    /// shows in dim letters is nobody's text.
+    #[test]
+    fn the_input_line_of_an_agent_is_read_off_its_screen() {
+        // The sentence from 19.11.2026, standing unsent.
+        let written = shown(&claude_box("❯\u{a0}Variante B, bau es im Paket"), 60);
+        assert_eq!(
+            input_box(&written).as_deref(),
+            Some("Variante B, bau es im Paket")
+        );
+        // Empty, with the suggestion of a fresh agent: SGR 2.
+        let fresh = shown(
+            &claude_box("❯\u{a0}\x1b[2mTry \"write a test for app.rs\"\x1b[0m"),
+            60,
+        );
+        assert_eq!(input_box(&fresh).as_deref(), Some(""));
+        // Empty without suggestion, as after the first prompt.
+        assert_eq!(
+            input_box(&shown(&claude_box("❯\u{a0}"), 60)).as_deref(),
+            Some("")
+        );
+        // Wrapped and over two lines: all of it counts.
+        let long = shown(&claude_box("❯\u{a0}zeile eins\r\n  zeile zwei"), 60);
+        assert_eq!(input_box(&long).as_deref(), Some("zeile eins\nzeile zwei"));
+        // The older box of Claude Code.
+        let older = "╭────────────────────────────────╮\r\n\
+                     │ > /exit                        │\r\n\
+                     ╰────────────────────────────────╯";
+        assert_eq!(input_box(&shown(older, 60)).as_deref(), Some("/exit"));
+        // Two boxes on the screen: the lower one is being written in.
+        let both = format!(
+            "{}\r\n{}",
+            claude_box("❯\u{a0}old"),
+            claude_box("❯\u{a0}new")
+        );
+        assert_eq!(input_box(&shown(&both, 60)).as_deref(), Some("new"));
+    }
+
+    /// Where no agent draws an input line, imkr cannot tell — and says
+    /// so with `None` rather than "empty", which would let `send` type
+    /// into a line it has never seen.
+    #[test]
+    fn no_input_line_is_not_an_empty_one() {
+        assert_eq!(input_box(&shown("$ ls\r\nsrc target\r\n$ ", 60)), None);
+        // Rules alone, as in a table or a markdown view: no prompt, no line.
+        let rule = "─".repeat(40);
+        let table = format!("{rule}\r\n a  b\r\n{rule}");
+        assert_eq!(input_box(&shown(&table, 60)), None);
+        // A dialog of the agent instead of its input line.
+        let dialog = format!("{rule}\r\n Do you want to proceed?\r\n ❯ 1. Yes\r\n{rule}");
+        assert_eq!(input_box(&shown(&dialog, 60)), None);
+    }
 
     /// Text still standing in the input line is found again even where the
     /// program wrapped it over several lines (#9379).

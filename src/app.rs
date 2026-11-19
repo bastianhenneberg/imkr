@@ -984,6 +984,166 @@ fn mail_hold(
     }
 }
 
+/// Who typed with `Request::Send` when the request does not say: an imkr
+/// older than idea #641, or a caller that left it out.
+const UNKNOWN_SENDER: &str = "an unknown sender";
+
+/// How much of what stands in an input line a refusal quotes: enough to
+/// recognise it, not the whole of a pasted briefing.
+const SHOWN_INPUT: usize = 40;
+
+/// Why `imkr send` must not type into a pane (idea #641), `None` when it
+/// may. `standing` is what imkr sees in its input line (`None`: it cannot
+/// see one), `drafting` whether the user began a line there by hand.
+///
+/// What is on the screen decides where imkr can see it. Where it cannot,
+/// a line the user began here and did not send is the best evidence
+/// there is (`Pane::drafting`); without either, `send` types as it always
+/// did — refusing every pane imkr cannot read would make `send` useless
+/// for programs it does not know.
+///
+/// `lately`: keys came in so lately that the screen may not show them yet
+/// (`Pane::typed_lately`). Then an empty line on the screen proves
+/// nothing — measured: an `imkr send` right after a paste saw the line
+/// empty and sent the paste along with its own Enter.
+fn send_hold(standing: Option<&str>, drafting: bool, lately: bool) -> Option<String> {
+    if lately && standing.is_none_or(|text| text.trim().is_empty()) {
+        return Some("keys went in a moment ago that its screen does not show yet".to_owned());
+    }
+    match standing {
+        Some(text) if !text.trim().is_empty() => {
+            let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let mut shown: String = one_line.chars().take(SHOWN_INPUT).collect();
+            if one_line.chars().count() > SHOWN_INPUT {
+                shown.push('…');
+            }
+            Some(format!("its input line holds «{shown}», unsent"))
+        }
+        Some(_) => None,
+        None if drafting => Some("somebody began a line there and has not sent it".to_owned()),
+        None => None,
+    }
+}
+
+/// The keys that empty an input line holding `standing` without sending
+/// anything (idea #641): per row Ctrl+K (to its end), Ctrl+U (to its
+/// start) and Backspace (into the row above), plus one round more.
+///
+/// Measured on Claude Code: Ctrl+U alone only deletes back to the start of
+/// the row the cursor is on, and a cursor in the middle leaves the rest.
+/// Not Esc Esc, which also empties it but stops an agent that is working,
+/// and never Ctrl+C, which on an empty line ends Claude Code. All three
+/// keys do the same in zsh and bash. Whether it worked, the caller reads
+/// back from the screen — these are keys, not a promise.
+fn clearing_keys(standing: &str) -> String {
+    "\x0b\x15\x7f".repeat(standing.lines().count() + 1)
+}
+
+/// Types `text` into `p`, then Enter if `enter`: what `type_into` does to
+/// the pane itself.
+fn type_keys(p: &mut Pane, text: &str, enter: bool) -> Result<(), String> {
+    p.note_input();
+    p.note_keyed(text, enter);
+    let bracketed = p.screen().screen().bracketed_paste();
+    let mut bytes = Vec::new();
+    // A single-line burst can leave Codex's [Pasted Content ...] unsent
+    // despite our Enter 20 ms later (#1339, duplicate #1343; real TUI test).
+    // Give it an explicit paste boundary before our one Enter instead
+    // of relying on a timing gap. Keep shell single-line input as keys.
+    if bracketed && (text.contains('\n') || p.program().as_deref() == Some("codex")) {
+        bytes.extend_from_slice(b"\x1b[200~");
+        bytes.extend_from_slice(text.as_bytes());
+        bytes.extend_from_slice(b"\x1b[201~");
+    } else {
+        bytes.extend_from_slice(text.as_bytes());
+    }
+    p.write(&bytes).map_err(|e| e.to_string())?;
+    if enter {
+        // A separate write, so programs see Enter as a key and
+        // not as part of a paste.
+        thread::sleep(Duration::from_millis(20));
+        p.write(b"\r").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// What `send_into` did.
+#[derive(Debug, PartialEq)]
+enum SendDone {
+    /// Typed the text (and Enter).
+    Typed,
+    /// Typed nothing: something unsent stands in the input line, and why.
+    Refused(String),
+    /// Typed the keys that empty the input line, or none where it was
+    /// empty already; what stood there before, `None` where imkr cannot
+    /// see it (and typed nothing).
+    Cleared(Option<String>),
+}
+
+/// The note `imkr mail` shows for what `send_into` did (idea #641): who
+/// typed what into the pane, who was refused, who cleared it. `None` for
+/// clearing a line that was empty already — nothing happened to it.
+fn send_note(done: &SendDone, from: &str, text: &str, enter: bool) -> Option<protocol::MailNote> {
+    let (what, text, why) = match done {
+        SendDone::Typed => (
+            protocol::MailWhat::Send,
+            if enter {
+                format!("{text} ⏎")
+            } else {
+                text.to_owned()
+            },
+            None,
+        ),
+        SendDone::Refused(why) => (
+            protocol::MailWhat::Refused,
+            text.to_owned(),
+            Some(why.clone()),
+        ),
+        SendDone::Cleared(Some(was)) if !was.is_empty() => (
+            protocol::MailWhat::Cleared,
+            String::new(),
+            Some(was.clone()),
+        ),
+        SendDone::Cleared(_) => return None,
+    };
+    Some(protocol::MailNote {
+        at: 0,
+        seq: 0,
+        pane: 0,
+        peer: from.to_owned(),
+        sent: false,
+        text,
+        what,
+        about: None,
+        why,
+    })
+}
+
+/// What `Request::Send` does to the pane itself (idea #641): refuse,
+/// empty its input line, or type. Apart from `App` so that a test can
+/// hand it a real pane and look at what the program in it got.
+fn send_into(
+    p: &mut Pane,
+    text: &str,
+    enter: bool,
+    guard: bool,
+    clear: bool,
+) -> Result<SendDone, String> {
+    let standing = p.input_line();
+    if clear {
+        if let Some(was) = standing.as_deref().filter(|was| !was.is_empty()) {
+            p.write(clearing_keys(was).as_bytes())
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(SendDone::Cleared(standing));
+    }
+    if guard && let Some(why) = send_hold(standing.as_deref(), p.drafting(), p.typed_lately()) {
+        return Ok(SendDone::Refused(why));
+    }
+    type_keys(p, text, enter)?;
+    Ok(SendDone::Typed)
+}
+
 /// Whether a note is a message between two addresses, which is what the
 /// orchestration view is about: not what became of one (#9379), and not one
 /// a person sent from a plain terminal, which cannot be answered.
@@ -3243,12 +3403,23 @@ impl App {
             }
             Request::Read { pane, lines } => {
                 let p = self.panes.get(&pane).ok_or(format!("no pane {pane}"))?;
-                Ok(serde_json::json!({ "pane": pane, "text": p.read(lines) }))
+                // `input`: what stands unsent in its input line, `null`
+                // where imkr cannot see one (idea #641). `imkr send --clear`
+                // reads it back to know the line is empty.
+                Ok(serde_json::json!({
+                    "pane": pane,
+                    "text": p.read(lines),
+                    "input": p.input_line(),
+                }))
             }
-            Request::Send { pane, text, enter } => {
-                self.type_into(pane, &text, enter)?;
-                Ok(serde_json::json!({ "pane": pane }))
-            }
+            Request::Send {
+                pane,
+                text,
+                enter,
+                guard,
+                clear,
+                from,
+            } => self.send_keys(pane, &text, enter, guard, clear, from),
             Request::New {
                 command,
                 float,
@@ -3354,30 +3525,68 @@ impl App {
         serde_json::Value::Array(panes)
     }
 
+    /// `Request::Send`: types into pane `pane`, refuses to, or empties its
+    /// input line, and notes which for `imkr mail` (idea #641).
+    ///
+    /// The refusal is the default of `imkr send` (`guard`), not something
+    /// to remember: "look into the pane before you send" is a procedure,
+    /// and a procedure that needs discipline is no lock. On 19.11.2026 a
+    /// sentence nobody owned up to stood unsent in a bee's input line, the
+    /// opposite of what its keeper had decided; the keeper's next `send`
+    /// would have sent it along. It was harmless by luck — had it been
+    /// `/exit` or `git push --force`, the keeper's own message would have
+    /// set it off.
+    fn send_keys(
+        &mut self,
+        pane: PaneId,
+        text: &str,
+        enter: bool,
+        guard: bool,
+        clear: bool,
+        from: Option<String>,
+    ) -> Reply {
+        let from = from.unwrap_or_else(|| UNKNOWN_SENDER.to_owned());
+        let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
+        let done = send_into(p, text, enter, guard, clear)?;
+        if let Some(note) = send_note(&done, &from, text, enter) {
+            self.note_what(
+                pane,
+                &note.peer,
+                false,
+                &note.text,
+                note.what,
+                note.why.as_deref(),
+            );
+        }
+        match done {
+            SendDone::Cleared(Some(input)) => {
+                Ok(serde_json::json!({ "pane": pane, "input": input }))
+            }
+            SendDone::Cleared(None) => Err(format!(
+                "imkr cannot see the input line of pane {pane}, so it cleared nothing"
+            )),
+            SendDone::Refused(why) => Err(format!(
+                "pane {pane}: {why}, so nothing was typed — the Enter would have sent \
+                 it along. `imkr send --clear --pane {pane}` throws it away without \
+                 sending anything; `--append` types after it as before"
+            )),
+            SendDone::Typed => {
+                if enter {
+                    // Nobody's message: there is no delivery to confirm.
+                    self.watch_enter(pane, text, 0, "");
+                }
+                Ok(serde_json::json!({ "pane": pane, "guarded": guard }))
+            }
+        }
+    }
+
     /// Types `text` into pane `pane`, then Enter if `enter`, as a paste if
-    /// it has several lines or goes to Codex, if the program takes pastes.
+    /// it has several lines or goes to Codex, if the program takes pastes
+    /// (`type_keys`).
     fn type_into(&mut self, pane: PaneId, text: &str, enter: bool) -> Result<(), String> {
         let p = self.panes.get_mut(&pane).ok_or(format!("no pane {pane}"))?;
-        p.note_input();
-        let bracketed = p.screen().screen().bracketed_paste();
-        let mut bytes = Vec::new();
-        // A single-line burst can leave Codex's [Pasted Content ...] unsent
-        // despite our Enter 20 ms later (#1339, duplicate #1343; real TUI test).
-        // Give it an explicit paste boundary before our one Enter instead
-        // of relying on a timing gap. Keep shell single-line input as keys.
-        if bracketed && (text.contains('\n') || p.program().as_deref() == Some("codex")) {
-            bytes.extend_from_slice(b"\x1b[200~");
-            bytes.extend_from_slice(text.as_bytes());
-            bytes.extend_from_slice(b"\x1b[201~");
-        } else {
-            bytes.extend_from_slice(text.as_bytes());
-        }
-        p.write(&bytes).map_err(|e| e.to_string())?;
+        type_keys(p, text, enter)?;
         if enter {
-            // A separate write, so programs see Enter as a key and
-            // not as part of a paste.
-            thread::sleep(Duration::from_millis(20));
-            p.write(b"\r").map_err(|e| e.to_string())?;
             // Nobody's message: there is no delivery to confirm.
             self.watch_enter(pane, text, 0, "");
         }
@@ -10313,11 +10522,34 @@ impl App {
         thread::spawn(move || {
             let result = match &place.host {
                 None => protocol::session_socket(&place.name).and_then(|path| {
-                    crate::client::request_at(&path, Request::Send { pane, text, enter })
+                    crate::client::request_at(
+                        &path,
+                        Request::Send {
+                            pane,
+                            text,
+                            enter,
+                            guard: false,
+                            clear: false,
+                            from: Some(format!("the user at {}", protocol::machine_name())),
+                        },
+                    )
                 }),
                 Some(host) => {
                     let pane = pane.to_string();
-                    let mut args = vec!["-s", &place.name, "send", "--stdin", "--pane", &pane];
+                    // `--append` as above, for an answer the user wrote in
+                    // the inbox (idea #641).
+                    let from = format!("the user at {}", protocol::machine_name());
+                    let mut args = vec![
+                        "-s",
+                        &place.name,
+                        "send",
+                        "--stdin",
+                        "--append",
+                        "--from",
+                        &from,
+                        "--pane",
+                        &pane,
+                    ];
                     if !enter {
                         args.push("--no-enter");
                     }
@@ -16904,6 +17136,235 @@ mod tests {
                 "--continue"
             }));
         }
+    }
+
+    /// A pane running a stand-in for Claude Code: it draws an input line
+    /// holding `inside` and writes every byte it gets to `log`, raw, so the
+    /// tests can see what the program in the pane really received.
+    fn stand_in(inside: &str, log: &std::path::Path) -> crate::pane::Pane {
+        let rule = "─".repeat(40);
+        // Raw like Claude Code: no line discipline that could swallow or
+        // act on Ctrl+U before the program sees it.
+        let script = format!(
+            "stty raw -echo; printf '%s\\r\\n%s\\r\\n%s\\r\\n' '{rule}' '{inside}' '{rule}'; \
+             exec cat > '{}'",
+            log.display()
+        );
+        running(script, log)
+    }
+
+    /// A pane running `script`, once it shows an input line and `log` is there.
+    fn running(script: String, log: &std::path::Path) -> crate::pane::Pane {
+        let (events, _rx) = std::sync::mpsc::channel();
+        // Kept alive by the reader thread for as long as the pane reads.
+        std::mem::forget(_rx);
+        let command = ["sh".to_owned(), "-c".to_owned(), script];
+        let pane = crate::pane::Pane::spawn(
+            crate::pane::Spawn {
+                id: 7,
+                rows: 12,
+                cols: 60,
+                cwd: None,
+                command: &command,
+                socket: std::path::Path::new("/nonexistent/imkr-test.sock"),
+                accounts: &Default::default(),
+            },
+            events,
+        )
+        .unwrap();
+        let start = std::time::Instant::now();
+        while pane.input_line().is_none() || !log.exists() {
+            assert!(
+                start.elapsed().as_secs() < 10,
+                "the stand-in never drew its line"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        pane
+    }
+
+    /// What the program in the pane got, after it had time to get it.
+    fn received(log: &std::path::Path) -> String {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::fs::read_to_string(log).unwrap()
+    }
+
+    fn log_in(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("imkr-send-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("got")
+    }
+
+    /// The incident behind idea #641, on 19.11.2026: "Variante B, bau es im
+    /// Paket" stood unsent in a bee's input line, the opposite of what its
+    /// keeper had decided — and the keeper's next `imkr send` would have
+    /// sent it along with its own Enter. Had it been `/exit`, the keeper's
+    /// message would have set it off.
+    ///
+    /// Not "there is an error": the program in the pane gets NOTHING.
+    #[test]
+    fn send_types_nothing_into_an_input_line_that_holds_something() {
+        let log = log_in("refused");
+        let mut pane = stand_in("❯ Variante B, bau es im Paket", &log);
+        let done = super::send_into(&mut pane, "Variante A gilt", true, true, false).unwrap();
+        assert_eq!(
+            done,
+            super::SendDone::Refused(
+                "its input line holds «Variante B, bau es im Paket», unsent".into()
+            )
+        );
+        assert_eq!(received(&log), "", "the program got something");
+    }
+
+    /// `--append` types after it, as `send` always did: text and Enter.
+    #[test]
+    fn send_with_append_types_after_what_stands_there() {
+        let log = log_in("append");
+        let mut pane = stand_in("❯ halb geschrieben", &log);
+        let done = super::send_into(&mut pane, "weiter", true, false, false).unwrap();
+        assert_eq!(done, super::SendDone::Typed);
+        assert_eq!(received(&log), "weiter\r");
+    }
+
+    /// An empty input line: `send` is what it always was.
+    #[test]
+    fn send_into_an_empty_input_line_types_as_before() {
+        let log = log_in("empty");
+        let mut pane = stand_in("❯ ", &log);
+        let done = super::send_into(&mut pane, "hallo", true, true, false).unwrap();
+        assert_eq!(done, super::SendDone::Typed);
+        assert_eq!(received(&log), "hallo\r");
+    }
+
+    /// Measured in the test world: a paste typed in without Enter, and an
+    /// `imkr send` right after it saw an empty line — Claude Code had not
+    /// drawn the paste yet — and sent it along. The stand-in here never
+    /// draws what it gets: the slowest program there can be.
+    #[test]
+    fn send_right_after_keys_waits_for_the_screen() {
+        let log = log_in("lately");
+        let mut pane = stand_in("❯ ", &log);
+        let typed = super::send_into(&mut pane, "zeile eins", false, false, false).unwrap();
+        assert_eq!(typed, super::SendDone::Typed);
+        let done = super::send_into(&mut pane, "/help", true, true, false).unwrap();
+        assert!(matches!(done, super::SendDone::Refused(_)), "{done:?}");
+        assert_eq!(received(&log), "zeile eins", "the Enter went in after it");
+    }
+
+    /// `--clear` sends keys that delete, and nothing that sends: no Enter,
+    /// no Esc (stops a working agent), no Ctrl+C (ends an idle Claude).
+    #[test]
+    fn clearing_the_input_line_sends_nothing() {
+        let log = log_in("clear");
+        let mut pane = stand_in("❯ /exit", &log);
+        let done = super::send_into(&mut pane, "", true, false, true).unwrap();
+        assert_eq!(done, super::SendDone::Cleared(Some("/exit".into())));
+        let got = received(&log);
+        assert!(!got.is_empty(), "nothing cleared");
+        assert!(
+            got.bytes().all(|b| matches!(b, 0x0b | 0x15 | 0x7f)),
+            "more than deleting keys: {got:?}"
+        );
+        // Text given along is not typed by the clearing request itself:
+        // `imkr send --clear TEXT` sends it only once the line is seen empty.
+        let log = log_in("clear-text");
+        let mut pane = stand_in("❯ /exit", &log);
+        super::send_into(&mut pane, "neu", true, false, true).unwrap();
+        assert!(!received(&log).contains("neu"));
+    }
+
+    /// A shell at its prompt says where its command line begins (OSC 133
+    /// `B`); what stands from there to the cursor was written and not run.
+    /// A stand-in, because a real zsh would read a config of its own.
+    #[test]
+    fn send_types_nothing_after_a_shell_line_somebody_began() {
+        let log = log_in("shell");
+        let script = format!(
+            "stty raw -echo; printf '\\033]133;A\\007$ \\033]133;B\\007rm -rf build'; \
+             exec cat > '{}'",
+            log.display()
+        );
+        let mut pane = running(script, &log);
+        assert_eq!(pane.input_line().as_deref(), Some("rm -rf build"));
+        let done = super::send_into(&mut pane, "ls", true, true, false).unwrap();
+        assert!(matches!(done, super::SendDone::Refused(_)), "{done:?}");
+        assert_eq!(received(&log), "");
+    }
+
+    /// Why `send` must not type, from what imkr sees (idea #641).
+    #[test]
+    fn send_holds_only_for_something_unsent() {
+        let hold = |standing, drafting| super::send_hold(standing, drafting, false);
+        assert_eq!(hold(Some(""), false), None);
+        assert_eq!(hold(Some("  "), false), None);
+        // The screen decides where imkr sees the line, also over a key the
+        // user pressed long ago.
+        assert_eq!(hold(Some(""), true), None);
+        assert!(hold(Some("/exit"), false).unwrap().contains("«/exit»"));
+        // Keys a moment ago: an empty line on the screen proves nothing
+        // yet, the program may not have drawn them (measured with a paste).
+        assert!(super::send_hold(Some(""), false, true).is_some());
+        assert!(super::send_hold(None, false, true).is_some());
+        assert!(
+            super::send_hold(Some("x"), false, true)
+                .unwrap()
+                .contains("«x»")
+        );
+        // A long one is quoted short, on one line.
+        let long = format!("git push --force\n{}", "x".repeat(200));
+        let why = hold(Some(&long), false).unwrap();
+        assert!(why.contains("«git push --force xxx") && why.contains("…»"));
+        assert!(!why.contains('\n'));
+        // Where it sees no line, a line begun by hand still holds.
+        assert!(hold(None, true).is_some());
+        assert_eq!(hold(None, false), None);
+    }
+
+    /// "Who typed that into this window?" is one call (idea #641): every
+    /// `send` leaves its sender in the log `imkr mail` reads — typed,
+    /// refused or cleared.
+    #[test]
+    fn every_send_leaves_its_sender_in_the_log() {
+        use super::{SendDone, send_note};
+        let keeper = "claude@codingmachine:kalender-package/0";
+        let typed = send_note(&SendDone::Typed, keeper, "Variante A", true).unwrap();
+        assert_eq!(typed.what, crate::protocol::MailWhat::Send);
+        assert_eq!(typed.peer, keeper);
+        assert_eq!(typed.text, "Variante A ⏎");
+        let mut shown = serde_json::to_value(&typed).unwrap();
+        shown["pane"] = 3.into();
+        let line = crate::cli::mail_line(&shown);
+        assert!(
+            line.contains(&format!("{keeper} typed into pane 3")),
+            "{line}"
+        );
+        assert!(line.contains("Variante A"), "{line}");
+
+        let refused =
+            send_note(&SendDone::Refused("it holds «x»".into()), keeper, "y", true).unwrap();
+        assert_eq!(refused.what, crate::protocol::MailWhat::Refused);
+        assert_eq!(refused.peer, keeper);
+        let line = crate::cli::mail_line(&serde_json::to_value(&refused).unwrap());
+        assert!(line.contains(keeper) && line.contains("refused"), "{line}");
+
+        let cleared =
+            send_note(&SendDone::Cleared(Some("/exit".into())), keeper, "", true).unwrap();
+        assert_eq!(cleared.why.as_deref(), Some("/exit"));
+        let line = crate::cli::mail_line(&serde_json::to_value(&cleared).unwrap());
+        assert!(line.contains(keeper) && line.contains("/exit"), "{line}");
+        // Emptying an empty line is nothing to note.
+        assert_eq!(
+            send_note(&SendDone::Cleared(Some(String::new())), keeper, "", true),
+            None
+        );
+    }
+
+    /// One round of deleting keys per row of the line, and one more.
+    #[test]
+    fn clearing_keys_reach_every_row() {
+        assert_eq!(super::clearing_keys("a"), "\x0b\x15\x7f".repeat(2));
+        assert_eq!(super::clearing_keys("a\nb\nc"), "\x0b\x15\x7f".repeat(4));
     }
 
     /// Enter goes again only where something is really stuck — never into a

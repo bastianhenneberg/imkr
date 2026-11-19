@@ -1017,7 +1017,21 @@ fn send(body: &[u8]) -> Response {
     if let Some(host) = &send.host {
         let reply = known_machine(host, &send.session).and_then(|()| {
             let pane = send.pane.to_string();
-            let mut args = vec!["-s", &send.session, "send", "--stdin", "--pane", &pane];
+            // `--append`: typed as on this machine, where the page types
+            // keys and does not refuse (idea #641). An older imkr there
+            // takes the two options for text and drops them with `--stdin`.
+            let from = format!("imkr web at {}", crate::protocol::machine_name());
+            let mut args = vec![
+                "-s",
+                &send.session,
+                "send",
+                "--stdin",
+                "--append",
+                "--from",
+                &from,
+                "--pane",
+                &pane,
+            ];
             if !send.enter {
                 args.push("--no-enter");
             }
@@ -1035,6 +1049,9 @@ fn send(body: &[u8]) -> Response {
                 pane: send.pane,
                 text: send.text,
                 enter: send.enter,
+                guard: false,
+                clear: false,
+                from: Some("imkr web".to_owned()),
             },
         )
     });

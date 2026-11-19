@@ -286,12 +286,29 @@ pub fn list(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `imkr send [--pane N] [--no-enter] [--stdin] <text>...`, with
-/// `--stdin` the text as it comes, e.g. an answer sent through ssh.
+/// `imkr send [--pane N] [--no-enter] [--stdin] [--append | --clear]
+/// [--from ADDRESS] <text>...`, with `--stdin` the text as it comes, e.g.
+/// an answer sent through ssh.
+///
+/// Refuses, typing nothing, when something unsent stands in the pane's
+/// input line (idea #641) — by default, because a check one has to
+/// remember is no check. `--append` types after it as before, `--clear`
+/// throws it away first and sends nothing of it (alone: only that).
 pub fn send(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: imkr send [--pane N] [--no-enter] [--stdin] \
+                         [--append | --clear] [--from ADDRESS] <text>...";
     let mut rest = args.to_vec();
     let pane = take_pane(&mut rest)?.context("which pane? use --pane N")?;
     let enter = !take_flag(&mut rest, "--no-enter");
+    let append = take_flag(&mut rest, "--append");
+    let clear = take_flag(&mut rest, "--clear");
+    let from = match take_value(&mut rest, "--from")? {
+        Some(from) => from,
+        None => own_address(),
+    };
+    if append && clear {
+        bail!("--append keeps what stands in the input line, --clear throws it away: one of them");
+    }
     let text = if take_flag(&mut rest, "--stdin") {
         let mut text = String::new();
         std::io::stdin().read_to_string(&mut text)?;
@@ -299,11 +316,72 @@ pub fn send(args: &[String]) -> Result<()> {
     } else {
         rest.join(" ")
     };
-    if text.is_empty() && !enter {
-        bail!("usage: imkr send [--pane N] [--no-enter] [--stdin] <text>...");
+    if clear {
+        clear_input(pane, &from)?;
+        if text.is_empty() {
+            println!("cleared the input line of pane {pane}, nothing sent");
+            return Ok(());
+        }
+    } else if text.is_empty() && !enter {
+        bail!(USAGE);
     }
-    client::request(Request::Send { pane, text, enter })?;
+    let reply = client::request(Request::Send {
+        pane,
+        text,
+        enter,
+        guard: !append,
+        clear: false,
+        from: Some(from),
+    })?;
+    if !append && reply.get("guarded").is_none() {
+        eprintln!(
+            "imkr: this session runs an older imkr, which typed without looking at the \
+             input line first — `imkr update` brings it up to date"
+        );
+    }
     Ok(())
+}
+
+/// How long `imkr send --clear` waits for the input line to be empty.
+const CLEAR_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Empties the input line of `pane` without sending anything (idea #641),
+/// and reads it back until it is seen empty: the keys are only keys, and
+/// a program that takes them differently must not leave the caller
+/// believing the line is empty.
+fn clear_input(pane: PaneId, from: &str) -> Result<()> {
+    // Each reply says what stood there BEFORE its keys went in, so an
+    // empty one means the keys of the round before did it.
+    let start = std::time::Instant::now();
+    loop {
+        let reply = client::request(Request::Send {
+            pane,
+            text: String::new(),
+            enter: false,
+            guard: false,
+            clear: true,
+            from: Some(from.to_owned()),
+        })?;
+        let Some(standing) = reply.get("input") else {
+            bail!(
+                "this session runs an older imkr, which cannot clear an input line — `imkr update`"
+            );
+        };
+        let Some(standing) = standing.as_str() else {
+            bail!("imkr cannot see the input line of pane {pane}, so it cleared nothing");
+        };
+        if standing.is_empty() {
+            return Ok(());
+        }
+        if start.elapsed() > CLEAR_WITHIN {
+            bail!(
+                "the input line of pane {pane} is still not empty, nothing was sent: «{}»",
+                short(standing, 60)
+            );
+        }
+        // Time for the program to take the keys and draw the line again.
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
 }
 
 /// This pane's address for answers: `machine:session/pane`, with the
@@ -1189,7 +1267,7 @@ fn mail_lines(
 }
 
 /// One line for a note of the message log.
-fn mail_line(note: &serde_json::Value) -> String {
+pub(crate) fn mail_line(note: &serde_json::Value) -> String {
     let at = note["at"]
         .as_u64()
         .and_then(protocol::chrono_like)
@@ -1226,6 +1304,19 @@ fn mail_line(note: &serde_json::Value) -> String {
         "overdue" => format!(
             "{at}  ⚠ pane {pane} has NOT got it: {}",
             note["why"].as_str().unwrap_or("it is overdue")
+        ),
+        // Not messages, keys (idea #641): who typed into which pane, so
+        // "who wrote that in there?" is one call and not four questions.
+        "send" => format!("{at}  ⌨ {peer} typed into pane {pane}  {text}"),
+        "refused" => format!(
+            "{at}  ✋ {peer} was refused at pane {pane}, {}: {text}",
+            note["why"]
+                .as_str()
+                .unwrap_or("its input line was not empty")
+        ),
+        "cleared" => format!(
+            "{at}  ⌫ {peer} cleared the input line of pane {pane}, nothing sent: {}",
+            short(note["why"].as_str().unwrap_or(""), 60)
         ),
         _ if note["sent"].as_bool() == Some(true) => {
             format!("{at}  → {peer} (from pane {pane})  {text}")
@@ -1616,10 +1707,15 @@ pub fn run(args: &[String]) -> Result<()> {
     if before["running"] == serde_json::json!(true) {
         bail!("a command runs in pane {pane} already; `imkr wait --pane {pane}` waits for it");
     }
+    // Typed as it always was, unguarded: idea #641 is about `send`. A
+    // shell line somebody began would go along here too — not changed yet.
     client::request(Request::Send {
         pane,
         text: command_line(&command),
         enter: true,
+        guard: false,
+        clear: false,
+        from: Some(format!("imkr run ({})", own_address())),
     })?;
     finish(pane, before["finished"].as_u64().unwrap_or(0), timeout)
 }

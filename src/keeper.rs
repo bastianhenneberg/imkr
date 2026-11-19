@@ -564,6 +564,10 @@ pub fn keeper(args: &[String], host: Option<String>) -> Result<()> {
             pane,
             text: first_input(&tool, &folder),
             enter: true,
+            // A fresh agent, just seen idle: nobody can have written in it.
+            guard: false,
+            clear: false,
+            from: Some(format!("imkr keeper ({})", crate::cli::own_address())),
         },
     )?;
     if json {

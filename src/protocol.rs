@@ -433,6 +433,25 @@ pub enum Request {
         pane: PaneId,
         text: String,
         enter: bool,
+        /// Refuse, and type nothing, when something unsent already stands
+        /// in the pane's input line (idea #641): the Enter would send it
+        /// along. `imkr send` asks for it unless told `--append`; the
+        /// tmux shim, `imkr run` and the web page type keys as before. An
+        /// older server ignores it and types — the reply then lacks
+        /// `guarded`, and `imkr send` says so.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        guard: bool,
+        /// Throw away what stands in the input line instead, typing
+        /// nothing and sending nothing (`imkr send --clear`). `text` and
+        /// `enter` are not used.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear: bool,
+        /// Who types, as an address (`claude@laptop:imkr/2`) or a
+        /// description, for the log `imkr mail` shows (idea #641): `send`
+        /// was the one way into a pane that left no trace. Told by the
+        /// sender, not proven.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
     },
     /// A message for the agent in pane `to` (its number, name or program),
     /// typed in once it is idle, never into a question. `from` is the
@@ -953,6 +972,15 @@ pub enum MailWhat {
     /// rather than quietly re-delivered: otherwise a keeper sees the same
     /// message twice at a bee and cannot tell whether they sent it twice.
     Again,
+    /// Typed into the pane with `imkr send` (or the tmux shim, the web
+    /// page), not a message: `peer` says who, `text` what (idea #641).
+    Send,
+    /// An `imkr send` refused because something unsent stood in the
+    /// input line: `why` is what stood there, `text` what was not typed.
+    Refused,
+    /// The input line was emptied with `imkr send --clear`, nothing sent:
+    /// `why` is what stood there.
+    Cleared,
 }
 
 /// A message an agent here sent or got (`imkr msg`), kept for the
