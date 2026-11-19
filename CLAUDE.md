@@ -585,7 +585,9 @@ Projekt-Slug: `imkr`
 - Shell-Integration (OSC 133): `LinkScanner` liefert auch `Piece::Mark` (A/B/C/D;exit), `Pane::shell`
   (`Shell::mark`: C = Ausgabe beginnt, D = fertig), `Pane::last_command` (Ende exklusiv: `text`
   nimmt die Endzelle mit), `Request::LastCommand`; CLI `run`, `wait` ohne `--until`,
-  `shell-integration zsh|bash`. Die zsh des Users sendet OSC 133 schon selbst.
+  `shell-integration zsh|bash`. ~~Die zsh des Users sendet OSC 133 schon selbst.~~ Gemessen
+  19.11.2026 (`script` in einem Pane): sie sendet dort **kein** OSC 133, nur OSC 2 und 7 —
+  vermutlich tut es Ghostty, nicht die zshrc. Und `shell-integration` sendet A/C/D, nie `B`.
 - Links: `src/links.rs` (`LinkScanner` trennt OSC 8 aus der Ausgabe, im Pane-Reader nach dem
   Grafik-Scanner; Start/Ende mit Cursorposition als `Link` in `Pane::links`, max. 500; `url_in`
   für Klartext-URLs). Ctrl+Klick in `App::mouse` vor `forward_mouse` → `Pane::link_at` →
@@ -915,6 +917,22 @@ Projekt-Slug: `imkr`
   keine Reihenfolge halten. Der getippte Rückfall bleibt **nur** für das Pane ohne eigenen Hook
   (codex ohne freigegebene Hooks, pi, Shell, claude direkt nach SessionEnd) und für den einzelnen, wirklich geparkten
   Agenten — ihn ganz wegzunehmen hieße, dass ein codex nie wieder Post bekommt.
+- **`imkr send` tippt nicht in ein belegtes Eingabefeld** (Idee #641): `app::send_into` (frei,
+  damit ein Test ein echtes Pane mit Schein-Agent bekommt, der jedes Byte mitschreibt) →
+  `Pane::input_line` (`Some("")` leer gesehen, `None` = nicht sichtbar) → `app::send_hold`.
+  Erkannt wird nur `pane::input_box` (Claude Code: Box zwischen `─`-Linien, erste Zeile `❯`,
+  **abgeblendete Zellen zählen nicht** — der Platzhalter `Try "…"` ist SGR 2) und eine Shell
+  mit OSC 133 `B` (`Shell::prompt`, bis zum Cursor). Gemessen NICHT erkannt: zsh des Users,
+  zsh mit `shell-integration`, bash, nvim, Codex — dort tippt `send` wie bisher (Tabelle an
+  `Pane::input_line`, Loch benannt in `send_hold`). `KEYS_SETTLE` (2 s, `Pane::typed_lately`):
+  gemessen sah ein `send` direkt nach einem Paste die Zeile leer. `Request::Send` hat `guard`/
+  `clear`/`from` (serde default), nur die CLI setzt `guard` (`--append` nicht); Shim, `run`,
+  Web, Keeper-Erststart tippen unbewacht. `--clear` = `clearing_keys` (Ctrl+K, Ctrl+U,
+  Backspace je Zeile; nie Esc — unterbricht einen arbeitenden Agenten —, nie Ctrl+C),
+  `cli::clear_input` liest über `Request::Send{clear}` nach, bis leer. Protokoll:
+  `send_note` → `MailWhat::Send|Refused|Cleared` in `imkr mail`; `from` ist Zuschreibung,
+  kein Nachweis. Testwelt-Falle: kein `rm` o. ä. in Testtext an einen echten Agenten im
+  Auto-Modus — der Wettlauf schickte ihn einmal ab.
 - Getippter Rückfall erst bei echter Ruhe (#9379, v0.21.93): `QUIET_BEFORE_TYPING` (5 s ohne
   Ausgabe) zusätzlich zu `HOOK_WITHIN`. Gemeldetes idle allein genügt nicht — zwischen zwei
   Zügen meldet ein Agent kurz idle, während er mitten in der Arbeit ist, und genau dann traf

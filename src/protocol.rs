@@ -448,8 +448,14 @@ pub enum Request {
         clear: bool,
         /// Who types, as an address (`claude@laptop:imkr/2`) or a
         /// description, for the log `imkr mail` shows (idea #641): `send`
-        /// was the one way into a pane that left no trace. Told by the
-        /// sender, not proven.
+        /// was the one way into a pane that left no trace.
+        ///
+        /// NOT A PROOF. In the keeper's words, kept as they were given:
+        /// "from kommt vom Aufrufer selbst, ist also Zuschreibung und kein
+        /// Nachweis - wer luegen will, kann luegen. Fuer Verwechslungen
+        /// taugt es vollstaendig, und die sind der wahrscheinliche Fall."
+        /// The caller names itself; nothing here checks it. Do not read
+        /// the log as evidence against somebody who meant to deceive.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from: Option<String>,
     },

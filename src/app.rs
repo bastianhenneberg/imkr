@@ -1021,6 +1021,13 @@ fn send_hold(standing: Option<&str>, drafting: bool, lately: bool) -> Option<Str
         }
         Some(_) => None,
         None if drafting => Some("somebody began a line there and has not sent it".to_owned()),
+        // THE LOCK DOES NOT HOLD HERE. imkr cannot see this program's
+        // input line, nobody typed into it by hand, and `send` types as it
+        // always did — whatever may stand there goes off with its Enter.
+        // Letting it through is the lesser harm (refusing would make
+        // `send` useless for every program imkr does not know), but it is
+        // a hole, not a check. Measured on 19.11.2026 which programs land
+        // here, see `Pane::input_line`: most of them.
         None => None,
     }
 }
@@ -1083,6 +1090,12 @@ enum SendDone {
 /// The note `imkr mail` shows for what `send_into` did (idea #641): who
 /// typed what into the pane, who was refused, who cleared it. `None` for
 /// clearing a line that was empty already — nothing happened to it.
+///
+/// `from` is what the caller said about itself (`Request::Send::from`):
+/// "from kommt vom Aufrufer selbst, ist also Zuschreibung und kein
+/// Nachweis - wer luegen will, kann luegen. Fuer Verwechslungen taugt es
+/// vollstaendig, und die sind der wahrscheinliche Fall." A note a log
+/// shows looks more certain than it is; this one is attribution only.
 fn send_note(done: &SendDone, from: &str, text: &str, enter: bool) -> Option<protocol::MailNote> {
     let (what, text, why) = match done {
         SendDone::Typed => (

@@ -1033,6 +1033,24 @@ impl Pane {
     /// cursor, not the end of the row — zsh shows a suggestion after it
     /// that nobody has taken. Otherwise the framed box of an agent
     /// (`input_box`).
+    ///
+    /// `None` lets `imkr send` through unchecked (`app::send_hold`).
+    /// Measured on 19.11.2026 in a test world, each with text typed into
+    /// it and then `send --clear`:
+    ///
+    /// | program                                   | seen? |
+    /// |-------------------------------------------|-------|
+    /// | Claude Code 2.1.x                         | yes   |
+    /// | zsh with the user's own config            | NO: sends no OSC 133 at all in a pane, only OSC 2 and 7 |
+    /// | zsh with `imkr shell-integration zsh`     | NO: it sends A, C and D, never B |
+    /// | bash without config                       | NO: no marks |
+    /// | nvim                                      | NO: no input line to find |
+    /// | Codex                                     | NO: draws `›` on a coloured row, no rules; its old prompts in the transcript look the same |
+    ///
+    /// The shell path below is tested only with a stand-in that sends B
+    /// (as Ghostty's, kitty's or VS Code's integration do); no shell
+    /// measured here does. Claude Code's older box (`╭─ │ > │ ╰─`) is a
+    /// unit test from its old look, not measured live. pi: not measured.
     pub fn input_line(&self) -> Option<String> {
         let prompt = self.shell.lock().unwrap().prompt;
         if let Some(from) = prompt {
