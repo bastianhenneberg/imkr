@@ -1035,17 +1035,17 @@ impl Pane {
     /// (`input_box`).
     ///
     /// `None` lets `imkr send` through unchecked (`app::send_hold`).
-    /// Measured on 19.11.2026 in a test world, each with text typed into
-    /// it and then `send --clear`:
+    /// Measured on 19.11.2026 in a test world on top of v0.21.112, each
+    /// with text typed into it and then `send --clear`:
     ///
     /// | program                                   | seen? |
     /// |-------------------------------------------|-------|
-    /// | Claude Code 2.1.x                         | yes   |
+    /// | Claude Code 2.1.328                       | yes   |
     /// | zsh with the user's own config            | NO: sends no OSC 133 at all in a pane, only OSC 2 and 7 |
     /// | zsh with `imkr shell-integration zsh`     | NO: it sends A, C and D, never B |
     /// | bash without config                       | NO: no marks |
     /// | nvim                                      | NO: no input line to find |
-    /// | Codex                                     | NO: draws `›` on a coloured row, no rules; its old prompts in the transcript look the same |
+    /// | Codex 0.170.0                             | NOT HERE: no rules; `app::input_standing` reads it with `codex_composer` (#1339) — measured yes, also `--clear` |
     ///
     /// The shell path below is tested only with a stand-in that sends B
     /// (as Ghostty's, kitty's or VS Code's integration do); no shell

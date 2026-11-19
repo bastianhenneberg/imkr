@@ -922,8 +922,9 @@ Projekt-Slug: `imkr`
   `Pane::input_line` (`Some("")` leer gesehen, `None` = nicht sichtbar) → `app::send_hold`.
   Erkannt wird nur `pane::input_box` (Claude Code: Box zwischen `─`-Linien, erste Zeile `❯`,
   **abgeblendete Zellen zählen nicht** — der Platzhalter `Try "…"` ist SGR 2) und eine Shell
-  mit OSC 133 `B` (`Shell::prompt`, bis zum Cursor). Gemessen NICHT erkannt: zsh des Users,
-  zsh mit `shell-integration`, bash, nvim, Codex — dort tippt `send` wie bisher (Tabelle an
+  mit OSC 133 `B` (`Shell::prompt`, bis zum Cursor), Codex über das vorhandene
+  `codex_composer` (`app::input_standing`). Gemessen NICHT erkannt: zsh des Users, zsh mit
+  `shell-integration`, bash, nvim — dort tippt `send` wie bisher (Tabelle an
   `Pane::input_line`, Loch benannt in `send_hold`). `KEYS_SETTLE` (2 s, `Pane::typed_lately`):
   gemessen sah ein `send` direkt nach einem Paste die Zeile leer. `Request::Send` hat `guard`/
   `clear`/`from` (serde default), nur die CLI setzt `guard` (`--append` nicht); Shim, `run`,

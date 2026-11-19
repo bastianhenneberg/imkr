@@ -1027,7 +1027,8 @@ fn send_hold(standing: Option<&str>, drafting: bool, lately: bool) -> Option<Str
         // Letting it through is the lesser harm (refusing would make
         // `send` useless for every program imkr does not know), but it is
         // a hole, not a check. Measured on 19.11.2026 which programs land
-        // here, see `Pane::input_line`: most of them.
+        // here, see `Pane::input_line`: everything but Claude Code and
+        // Codex — every shell measured, vim, pi (not measured).
         None => None,
     }
 }
@@ -1132,6 +1133,28 @@ fn send_note(done: &SendDone, from: &str, text: &str, enter: bool) -> Option<pro
     })
 }
 
+/// What stands unsent in a pane's input line, for `send_into` (idea #641):
+/// what the pane reads off itself (`own`, Claude Code and shells with
+/// OSC 133 `B`), else for Codex what `codex_composer` finds — the reader
+/// `deliver_mail` already uses (#1339), not a second one. Its `None` (an
+/// unfamiliar layout, a dialog) stays `None`: imkr cannot see the line.
+fn input_standing(
+    own: Option<String>,
+    program: Option<&str>,
+    screen: &crate::term::Parser,
+) -> Option<String> {
+    own.or_else(|| {
+        let composer = codex_composer(screen).filter(|_| program == Some("codex"))?;
+        Some(
+            composer
+                .strip_prefix('›')
+                .unwrap_or(&composer)
+                .trim()
+                .to_owned(),
+        )
+    })
+}
+
 /// What `Request::Send` does to the pane itself (idea #641): refuse,
 /// empty its input line, or type. Apart from `App` so that a test can
 /// hand it a real pane and look at what the program in it got.
@@ -1142,7 +1165,8 @@ fn send_into(
     guard: bool,
     clear: bool,
 ) -> Result<SendDone, String> {
-    let standing = p.input_line();
+    let program = p.program();
+    let standing = input_standing(p.input_line(), program.as_deref(), &p.screen());
     if clear {
         if let Some(was) = standing.as_deref().filter(|was| !was.is_empty()) {
             p.write(clearing_keys(was).as_bytes())
@@ -17068,6 +17092,34 @@ mod tests {
         let row = history.split("\r\n").count() + 2;
         screen.process(format!("\x1b[{row};3H").as_bytes());
         screen
+    }
+
+    /// Codex's composer counts for `send` too (idea #641), read by the same
+    /// `codex_composer` that holds mail back (#1339): a draft refuses, the
+    /// dim suggestion of an empty one does not, an unfamiliar layout is
+    /// "cannot see". Only for Codex: the same rows in another program
+    /// are not its input line.
+    #[test]
+    fn send_sees_the_codex_composer() {
+        let draft = codex_screen("a real draft", "earlier answer");
+        assert_eq!(
+            super::input_standing(None, Some("codex"), &draft).as_deref(),
+            Some("a real draft")
+        );
+        let empty = codex_screen("\x1b[2mAsk Codex to do anything\x1b[0m", "earlier answer");
+        assert_eq!(
+            super::input_standing(None, Some("codex"), &empty).as_deref(),
+            Some("")
+        );
+        let mut dialog = codex_screen("old", "earlier answer");
+        dialog.process(b"\x1b[2J\x1b[Hnew shell after restart");
+        assert_eq!(super::input_standing(None, Some("codex"), &dialog), None);
+        assert_eq!(super::input_standing(None, Some("pi"), &draft), None);
+        // What the pane sees itself goes first.
+        assert_eq!(
+            super::input_standing(Some("x".into()), Some("codex"), &draft).as_deref(),
+            Some("x")
+        );
     }
 
     #[test]

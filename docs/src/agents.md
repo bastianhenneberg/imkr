@@ -96,10 +96,10 @@ sent to it. For two seconds after keys went in without Enter it refuses as well:
 program may not have drawn them yet. `send --clear` throws the line away without sending
 anything (with text: then sends it), and `send --append` types after it as `send` used to.
 
-This holds only where imkr can see the input line: today Claude Code, and a shell that
-marks the end of its prompt (OSC 133 `B`; imkr's own shell integration does not yet). Not
-Codex, pi, vim or a shell without such marks: there `send` types as before, unless a line
-was begun there by hand.
+This holds only where imkr can see the input line: today Claude Code and Codex, and a shell
+that marks the end of its prompt (OSC 133 `B`; imkr's own shell integration does not yet).
+Not pi, vim or a shell without such marks: there `send` types as before, unless a line was
+begun there by hand.
 
 Every `send` is listed in `imkr mail` with who typed it, also the refused and cleared ones.
 The sender is what the sender says about itself: attribution, not proof. It tells a mix-up

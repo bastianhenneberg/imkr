@@ -276,10 +276,10 @@ or a <code>git push --force</code> somebody left in an agent's line, set off by 
 sent to it. For two seconds after keys went in without Enter it refuses as well: the
 program may not have drawn them yet. <code>send --clear</code> throws the line away without sending
 anything (with text: then sends it), and <code>send --append</code> types after it as <code>send</code> used to.</p>
-<p>This holds only where imkr can see the input line: today Claude Code, and a shell that
-marks the end of its prompt (OSC 133 <code>B</code>; imkr's own shell integration does not yet). Not
-Codex, pi, vim or a shell without such marks: there <code>send</code> types as before, unless a line
-was begun there by hand.</p>
+<p>This holds only where imkr can see the input line: today Claude Code and Codex, and a shell
+that marks the end of its prompt (OSC 133 <code>B</code>; imkr's own shell integration does not yet).
+Not pi, vim or a shell without such marks: there <code>send</code> types as before, unless a line was
+begun there by hand.</p>
 <p>Every <code>send</code> is listed in <code>imkr mail</code> with who typed it, also the refused and cleared ones.
 The sender is what the sender says about itself: attribution, not proof. It tells a mix-up
 apart, not a lie.</p>
