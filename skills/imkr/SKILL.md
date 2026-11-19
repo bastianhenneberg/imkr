@@ -58,10 +58,12 @@ when that machine next asks yours, within a minute. Do not send it again or try 
 
 `imkr send --pane 3 <text>` types text and Enter, without a header. It refuses, typing
 nothing, when something unsent stands in that pane's input line, and says what it is:
-the Enter would send it along. Do not reach for `--append` (types after it, as before)
-unless you know what stands there. `imkr send --pane 3 --clear` throws it away and sends
-nothing; `--clear <text>` empties the line first, then sends. Who typed what into a pane
-is listed in `imkr mail <address>`.
+the Enter would send it along. It also refuses where it cannot see the input line (a
+shell, vim): there its Enter could run whatever stands on the command line. Look with
+`imkr read --pane 3` first; do not reach for `--append` (types anyway) unless you know
+what stands there. `imkr send --pane 3 --clear` throws away a line imkr typed in itself
+and sends nothing (`--clear <text>`: then sends); a line somebody wrote by hand it leaves
+alone — ask the user instead. Who typed what into a pane is listed in `imkr mail <address>`.
 
 ## Messages you receive
 

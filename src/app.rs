@@ -992,15 +992,22 @@ const UNKNOWN_SENDER: &str = "an unknown sender";
 /// recognise it, not the whole of a pasted briefing.
 const SHOWN_INPUT: usize = 40;
 
+/// `text` as a refusal quotes it: one line, short enough to recognise.
+fn quoted(text: &str) -> String {
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut shown: String = one_line.chars().take(SHOWN_INPUT).collect();
+    if one_line.chars().count() > SHOWN_INPUT {
+        shown.push('…');
+    }
+    format!("«{shown}»")
+}
+
 /// Why `imkr send` must not type into a pane (idea #641), `None` when it
 /// may. `standing` is what imkr sees in its input line (`None`: it cannot
 /// see one), `drafting` whether the user began a line there by hand.
 ///
 /// What is on the screen decides where imkr can see it. Where it cannot,
-/// a line the user began here and did not send is the best evidence
-/// there is (`Pane::drafting`); without either, `send` types as it always
-/// did — refusing every pane imkr cannot read would make `send` useless
-/// for programs it does not know.
+/// it refuses: see the last arm.
 ///
 /// `lately`: keys came in so lately that the screen may not show them yet
 /// (`Pane::typed_lately`). Then an empty line on the screen proves
@@ -1012,25 +1019,67 @@ fn send_hold(standing: Option<&str>, drafting: bool, lately: bool) -> Option<Str
     }
     match standing {
         Some(text) if !text.trim().is_empty() => {
-            let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            let mut shown: String = one_line.chars().take(SHOWN_INPUT).collect();
-            if one_line.chars().count() > SHOWN_INPUT {
-                shown.push('…');
-            }
-            Some(format!("its input line holds «{shown}», unsent"))
+            Some(format!("its input line holds {}, unsent", quoted(text)))
         }
         Some(_) => None,
         None if drafting => Some("somebody began a line there and has not sent it".to_owned()),
-        // THE LOCK DOES NOT HOLD HERE. imkr cannot see this program's
-        // input line, nobody typed into it by hand, and `send` types as it
-        // always did — whatever may stand there goes off with its Enter.
-        // Letting it through is the lesser harm (refusing would make
-        // `send` useless for every program imkr does not know), but it is
-        // a hole, not a check. Measured on 19.11.2026 which programs land
-        // here, see `Pane::input_line`: everything but Claude Code and
-        // Codex — every shell measured, vim, pi (not measured).
-        None => None,
+        // imkr cannot see this program's input line, so it cannot know
+        // what stands there — and an unknown line is a reason NOT to
+        // type, not a reason to. Not because this is common: it is not
+        // (measured on 19.11.2026, which programs land here, see
+        // `Pane::input_line`: everything but Claude Code and Codex — every
+        // shell measured, vim, pi not measured). Because in this case the
+        // harm has no bound. In an agent a stale line is a prompt; in a
+        // shell — a revived session brings back its windows as shells —
+        // it is a command line, and the Enter of `send` runs whatever
+        // stands there, which nothing can take back. This arm let `send`
+        // through until v0.21.113 ("refusing would make `send` useless
+        // for programs imkr does not know"): that weighed the convenience
+        // of the common case against harm that was never measured.
+        // `--append` is the deliberate way past it, for whoever knows
+        // what stands there.
+        None => Some("imkr cannot see its input line and cannot tell what stands there".to_owned()),
     }
+}
+
+/// Whether what stands in a pane's input line is imkr's own (idea #641):
+/// imkr filled it while it was its own (`Pane::filled`), and nobody typed
+/// a key into the pane after that (`Pane::last_typed`: every key from a
+/// client, a paste, a tap's input — Enter included).
+///
+/// Proof, not a guess: what counts is what imkr did itself, not what the
+/// line looks like. Without the mark — imkr never typed there, typed after
+/// somebody's text, or was restarted since — the line is nobody's.
+fn imkrs_line(filled: Option<Instant>, typed: Option<Instant>) -> bool {
+    filled.is_some_and(|filled| typed.is_none_or(|typed| typed < filled))
+}
+
+/// Why `imkr send --clear` must not empty an input line holding `standing`
+/// (idea #641), `None` when it may: only a line imkr filled itself
+/// (`imkrs_line`) is cleared.
+///
+/// What `--clear` throws away may be the half-written line of a person,
+/// which was never stored anywhere and cannot be had back. A stuck message
+/// imkr typed in, it can clear: that one is in `imkr mail`. Everything
+/// else is left to whoever sits at the pane — there is no switch past
+/// this, because a switch that lifts a lock becomes a habit.
+fn clear_hold(standing: &str, filled: Option<Instant>, typed: Option<Instant>) -> Option<String> {
+    if imkrs_line(filled, typed) {
+        return None;
+    }
+    let shown = quoted(standing);
+    Some(if filled.is_some() {
+        format!(
+            "its input line holds {shown}, and somebody typed into it by hand after imkr \
+             did — that may be a person's work, so nothing was cleared"
+        )
+    } else {
+        format!(
+            "its input line holds {shown}, and imkr cannot show that it typed that in \
+             itself (it knows only while it runs, not over a restart or `imkr update`) — \
+             it may be a person's work, so nothing was cleared"
+        )
+    })
 }
 
 /// The keys that empty an input line holding `standing` without sending
@@ -1050,6 +1099,16 @@ fn clearing_keys(standing: &str) -> String {
 /// Types `text` into `p`, then Enter if `enter`: what `type_into` does to
 /// the pane itself.
 fn type_keys(p: &mut Pane, text: &str, enter: bool) -> Result<(), String> {
+    // Whose the line is once this is in (idea #641): still imkr's when it
+    // was seen empty — and nobody began a line by hand that the screen may
+    // not show yet — or was imkr's already.
+    let program = p.program();
+    let ours = match input_standing(p.input_line(), program.as_deref(), &p.screen()) {
+        Some(standing) if standing.trim().is_empty() => !p.drafting(),
+        Some(_) => imkrs_line(p.filled(), p.last_typed()),
+        None => false,
+    };
+    p.note_filled(ours);
     p.note_input();
     p.note_keyed(text, enter);
     let bracketed = p.screen().screen().bracketed_paste();
@@ -1082,6 +1141,9 @@ enum SendDone {
     Typed,
     /// Typed nothing: something unsent stands in the input line, and why.
     Refused(String),
+    /// Cleared nothing: what stands in the input line may be a person's
+    /// (`clear_hold`), and why.
+    Kept(String),
     /// Typed the keys that empty the input line, or none where it was
     /// empty already; what stood there before, `None` where imkr cannot
     /// see it (and typed nothing).
@@ -1111,6 +1173,11 @@ fn send_note(done: &SendDone, from: &str, text: &str, enter: bool) -> Option<pro
         SendDone::Refused(why) => (
             protocol::MailWhat::Refused,
             text.to_owned(),
+            Some(why.clone()),
+        ),
+        SendDone::Kept(why) => (
+            protocol::MailWhat::Refused,
+            "--clear".to_owned(),
             Some(why.clone()),
         ),
         SendDone::Cleared(Some(was)) if !was.is_empty() => (
@@ -1169,6 +1236,9 @@ fn send_into(
     let standing = input_standing(p.input_line(), program.as_deref(), &p.screen());
     if clear {
         if let Some(was) = standing.as_deref().filter(|was| !was.is_empty()) {
+            if let Some(why) = clear_hold(was, p.filled(), p.last_typed()) {
+                return Ok(SendDone::Kept(why));
+            }
             p.write(clearing_keys(was).as_bytes())
                 .map_err(|e| e.to_string())?;
         }
@@ -3603,9 +3673,12 @@ impl App {
                 "imkr cannot see the input line of pane {pane}, so it cleared nothing"
             )),
             SendDone::Refused(why) => Err(format!(
-                "pane {pane}: {why}, so nothing was typed — the Enter would have sent \
-                 it along. `imkr send --clear --pane {pane}` throws it away without \
-                 sending anything; `--append` types after it as before"
+                "pane {pane}: {why}, so nothing was typed — the Enter could have sent \
+                 it along. `imkr read --pane {pane}` shows the pane; `--append` types \
+                 anyway, `--clear` throws away a line imkr typed in itself"
+            )),
+            SendDone::Kept(why) => Err(format!(
+                "pane {pane}: {why}. Whoever typed it can delete it in the pane"
             )),
             SendDone::Typed => {
                 if enter {
@@ -17317,26 +17390,214 @@ mod tests {
         assert_eq!(received(&log), "zeile eins", "the Enter went in after it");
     }
 
+    /// A pane running a stand-in for an agent's input line that takes keys
+    /// as Claude Code does: it draws what it gets in its box, Backspace
+    /// and Ctrl+U delete, Enter sends the line (empties it). Every byte
+    /// goes to `log`, raw.
+    fn echoing(log: &std::path::Path) -> crate::pane::Pane {
+        let program = log.with_file_name("line.py");
+        std::fs::write(
+            &program,
+            r#"
+import os, sys, tty
+tty.setraw(0)
+log = open(sys.argv[1], "wb", buffering=0)
+line = ""
+def draw():
+    rule = "\u2500" * 40
+    os.write(1, ("\x1b[H\x1b[2J" + rule + "\r\n\u276f " + line + "\r\n" + rule + "\r\n").encode())
+draw()
+while True:
+    got = os.read(0, 1024)
+    if not got:
+        break
+    log.write(got)
+    for c in got.decode("utf-8", "replace"):
+        if c == "\x15" or c == "\r":
+            line = ""
+        elif c == "\x7f":
+            line = line[:-1]
+        elif c >= " ":
+            line += c
+    draw()
+"#,
+        )
+        .unwrap();
+        running(
+            format!("exec python3 '{}' '{}'", program.display(), log.display()),
+            log,
+        )
+    }
+
+    /// Waits until the pane shows `want` in its input line.
+    fn shows_line(pane: &crate::pane::Pane, want: &str) {
+        let start = std::time::Instant::now();
+        while pane.input_line().as_deref() != Some(want) {
+            assert!(
+                start.elapsed().as_secs() < 5,
+                "the line never showed {want:?}: {:?}",
+                pane.input_line()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
     /// `--clear` sends keys that delete, and nothing that sends: no Enter,
     /// no Esc (stops a working agent), no Ctrl+C (ends an idle Claude).
+    /// Here on a line imkr filled itself — the only one it clears (idea
+    /// #641, see `clear_leaves_what_imkr_did_not_type_alone`).
     #[test]
     fn clearing_the_input_line_sends_nothing() {
         let log = log_in("clear");
-        let mut pane = stand_in("❯ /exit", &log);
+        let mut pane = echoing(&log);
+        shows_line(&pane, "");
+        let typed = super::send_into(&mut pane, "/help", false, true, false).unwrap();
+        assert_eq!(typed, super::SendDone::Typed);
+        shows_line(&pane, "/help");
         let done = super::send_into(&mut pane, "", true, false, true).unwrap();
-        assert_eq!(done, super::SendDone::Cleared(Some("/exit".into())));
+        assert_eq!(done, super::SendDone::Cleared(Some("/help".into())));
+        shows_line(&pane, "");
         let got = received(&log);
-        assert!(!got.is_empty(), "nothing cleared");
+        let keys = got.strip_prefix("/help").expect("what imkr typed first");
+        assert!(!keys.is_empty(), "nothing cleared");
         assert!(
-            got.bytes().all(|b| matches!(b, 0x0b | 0x15 | 0x7f)),
-            "more than deleting keys: {got:?}"
+            keys.bytes().all(|b| matches!(b, 0x0b | 0x15 | 0x7f)),
+            "more than deleting keys: {keys:?}"
         );
         // Text given along is not typed by the clearing request itself:
         // `imkr send --clear TEXT` sends it only once the line is seen empty.
         let log = log_in("clear-text");
-        let mut pane = stand_in("❯ /exit", &log);
+        let mut pane = echoing(&log);
+        shows_line(&pane, "");
+        super::send_into(&mut pane, "/help", false, true, false).unwrap();
+        shows_line(&pane, "/help");
         super::send_into(&mut pane, "neu", true, false, true).unwrap();
         assert!(!received(&log).contains("neu"));
+    }
+
+    /// Rank 1 of idea #641: `--clear` used to empty any line it could see,
+    /// and what it throws away can be the half-written line of a person —
+    /// never stored anywhere. It clears only a line imkr filled itself.
+    ///
+    /// Not "there is a message": the program in the pane gets NO deleting
+    /// key, and the line still stands.
+    #[test]
+    fn clear_leaves_what_imkr_did_not_type_alone() {
+        // Written by somebody else — imkr never typed here.
+        let log = log_in("clear-foreign");
+        let mut pane = stand_in("❯ halber Satz von Hand", &log);
+        let done = super::send_into(&mut pane, "", true, false, true).unwrap();
+        assert!(
+            matches!(&done, super::SendDone::Kept(why) if why.contains("«halber Satz von Hand»")),
+            "{done:?}"
+        );
+        assert_eq!(received(&log), "", "the program got something");
+
+        // imkr filled it, then a person added to it by hand.
+        let log = log_in("clear-touched");
+        let mut pane = echoing(&log);
+        shows_line(&pane, "");
+        super::send_into(&mut pane, "Apfel", false, true, false).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        pane.note_typed(b" Birne");
+        pane.write(b" Birne").unwrap();
+        shows_line(&pane, "Apfel Birne");
+        let done = super::send_into(&mut pane, "", true, false, true).unwrap();
+        assert!(
+            matches!(&done, super::SendDone::Kept(why) if why.contains("by hand")),
+            "{done:?}"
+        );
+        assert_eq!(received(&log), "Apfel Birne", "deleting keys went in");
+        assert_eq!(pane.input_line().as_deref(), Some("Apfel Birne"));
+
+        // imkr typed after somebody's text with `--append`: the line holds
+        // both, and is no longer imkr's alone.
+        let log = log_in("clear-appended");
+        let mut pane = echoing(&log);
+        shows_line(&pane, "");
+        pane.note_typed(b"Kirsche");
+        pane.write(b"Kirsche").unwrap();
+        shows_line(&pane, "Kirsche");
+        super::send_into(&mut pane, " Pflaume", false, false, false).unwrap();
+        shows_line(&pane, "Kirsche Pflaume");
+        let done = super::send_into(&mut pane, "", true, false, true).unwrap();
+        assert!(matches!(done, super::SendDone::Kept(_)), "{done:?}");
+        assert_eq!(received(&log), "Kirsche Pflaume", "deleting keys went in");
+    }
+
+    /// Who the line belongs to, as `--clear` decides it (idea #641).
+    #[test]
+    fn a_line_is_imkrs_only_while_nobody_typed_after_it() {
+        use std::time::{Duration, Instant};
+        let then = Instant::now();
+        let later = then + Duration::from_millis(1);
+        assert!(super::imkrs_line(Some(later), None));
+        assert!(super::imkrs_line(Some(later), Some(then)));
+        // A key by hand after imkr typed — Enter included.
+        assert!(!super::imkrs_line(Some(then), Some(later)));
+        // imkr never filled it, or not while it was its own.
+        assert!(!super::imkrs_line(None, None));
+        assert!(!super::imkrs_line(None, Some(then)));
+        assert_eq!(super::clear_hold("x", Some(later), Some(then)), None);
+        let unknown = super::clear_hold("/exit", None, None).unwrap();
+        assert!(unknown.contains("«/exit»") && unknown.contains("cannot show"));
+        let by_hand = super::clear_hold("/exit", Some(then), Some(later)).unwrap();
+        assert!(by_hand.contains("by hand"));
+    }
+
+    /// Rank 2 of idea #641: where imkr cannot see the input line — every
+    /// shell measured, vim, a program it does not know — `send` used to
+    /// type as always. Unknown is a reason not to: in that case the harm
+    /// has no bound (in a shell the Enter runs what stands there).
+    ///
+    /// Not "there is a message": the program in the pane gets NOTHING.
+    #[test]
+    fn send_types_nothing_where_it_cannot_see_the_input_line() {
+        let log = log_in("unseen");
+        let (events, _rx) = std::sync::mpsc::channel();
+        std::mem::forget(_rx);
+        // A shell-like line with no marks: imkr cannot tell where it is.
+        let command = [
+            "sh".to_owned(),
+            "-c".to_owned(),
+            format!(
+                "stty raw -echo; printf '$ rm -rf build'; exec cat > '{}'",
+                log.display()
+            ),
+        ];
+        let mut pane = crate::pane::Pane::spawn(
+            crate::pane::Spawn {
+                id: 8,
+                rows: 12,
+                cols: 60,
+                cwd: None,
+                command: &command,
+                socket: std::path::Path::new("/nonexistent/imkr-test.sock"),
+                accounts: &Default::default(),
+            },
+            events,
+        )
+        .unwrap();
+        let start = std::time::Instant::now();
+        while !log.exists() || !pane.read(Some(5)).contains("rm -rf build") {
+            assert!(start.elapsed().as_secs() < 10, "the stand-in never started");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(pane.input_line(), None, "imkr sees a line here after all");
+        let done = super::send_into(&mut pane, "/help", true, true, false).unwrap();
+        assert!(
+            matches!(&done, super::SendDone::Refused(why) if why.contains("cannot see")),
+            "{done:?}"
+        );
+        assert_eq!(received(&log), "", "the program got something");
+        // `--clear` cannot help there either: it sees nothing to clear.
+        let done = super::send_into(&mut pane, "", true, false, true).unwrap();
+        assert_eq!(done, super::SendDone::Cleared(None));
+        assert_eq!(received(&log), "", "the program got something");
+        // `--append` is the deliberate way past it, typed as always.
+        let done = super::send_into(&mut pane, "/help", true, false, false).unwrap();
+        assert_eq!(done, super::SendDone::Typed);
+        assert_eq!(received(&log), "/help\r");
     }
 
     /// A shell at its prompt says where its command line begins (OSC 133
@@ -17383,7 +17644,13 @@ mod tests {
         assert!(!why.contains('\n'));
         // Where it sees no line, a line begun by hand still holds.
         assert!(hold(None, true).is_some());
-        assert_eq!(hold(None, false), None);
+        // And so does a line nobody touched (rank 2 of idea #641). Until
+        // v0.21.113 this was `None`: "refusing every pane imkr cannot read
+        // would make `send` useless for programs it does not know". That
+        // weighed convenience against harm that has no bound — in a shell
+        // the Enter runs whatever stands there. Unknown is a reason not to
+        // type; `--append` types anyway.
+        assert!(hold(None, false).unwrap().contains("cannot see"));
     }
 
     /// "Who typed that into this window?" is one call (idea #641): every

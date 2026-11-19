@@ -204,6 +204,13 @@ pub struct Pane {
     /// second Enter must never go into a pane somebody has touched since
     /// (#9379).
     typed: Cell<Option<Instant>>,
+    /// When imkr last typed into this pane's input line while what stood
+    /// there was its own: seen empty, or filled by imkr before (idea #641,
+    /// `note_filled`). With `typed` it is what lets `imkr send --clear`
+    /// tell a line imkr filled from one a person wrote. Kept only while
+    /// this server runs: after a restart or `imkr update` it is gone, and
+    /// a line counts as nobody's — not cleared.
+    filled: Cell<Option<Instant>>,
     /// Whether this pane's agent fetches its messages itself through its
     /// own hook (`Request::TakeMail`): then nothing is ever typed in. Set
     /// by the first hook call that asked, cleared when its session ends.
@@ -556,6 +563,7 @@ impl Pane {
             draft: Cell::new(None),
             keyed: Cell::new(None),
             typed: Cell::new(None),
+            filled: Cell::new(None),
             takes_mail: false,
             handed: Vec::new(),
             events,
@@ -995,6 +1003,22 @@ impl Pane {
     /// When the user last typed anything here, Enter included.
     pub fn last_typed(&self) -> Option<Instant> {
         self.typed.get()
+    }
+
+    /// Notes that imkr typed into the input line here (idea #641): `ours`
+    /// when what stood there before was its own (seen empty, or filled by
+    /// imkr itself), so that the line is still nothing but imkr's.
+    /// Otherwise — typed after somebody's text with `--append`, or into a
+    /// line imkr cannot see — the line is nobody's any more.
+    pub fn note_filled(&self, ours: bool) {
+        self.filled.set(ours.then(Instant::now));
+    }
+
+    /// When imkr last filled the input line here while it was its own
+    /// (`note_filled`), `None` when it did not or the line stopped being
+    /// its own.
+    pub fn filled(&self) -> Option<Instant> {
+        self.filled.get()
     }
 
     /// Whether the end of `text` still stands at the bottom of the screen,

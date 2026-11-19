@@ -140,7 +140,8 @@ def scenario(binary, source_tool, failure=None, provider=False, resume=False, br
             assert guarded.returncode==0,guarded.stderr
             assert not notify_log.exists(),'notifications=off must prevent even shim dispatch'
 
-            r=cli('send','--pane',pane,shlex.quote(str(root/source_tool)));assert r.returncode==0,r.stderr
+            # --append: a bare bash shows imkr no input line, and since idea #641 send refuses there.
+            r=cli('send','--append','--pane',pane,shlex.quote(str(root/source_tool)));assert r.returncode==0,r.stderr
             until(lambda:(root/'source-ready').exists(),'source starts')
             until(lambda:any(p.get('program')==source_tool for p in json.loads(cli('list','--json').stdout)),'source recognized')
             if mapping:

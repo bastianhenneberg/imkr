@@ -106,9 +106,10 @@ For scripts and agents:
   status <working|blocked|idle|clear>   report this pane's agent state (for hooks)
   send [--pane N] [--no-enter] [--stdin] [--append | --clear] [--from ADDRESS] <text>
                 type text into a pane; refuses if something unsent stands in
-                its input line, --append types after it, --clear throws it
-                away first (alone: only that, nothing sent); `imkr mail`
-                shows who typed
+                its input line or imkr cannot see that line, --append types
+                anyway, --clear throws away a line imkr typed in itself
+                first (alone: only that, nothing sent); `imkr mail` shows
+                who typed
   checkpoints   the checkpoints of the repository here: its state after
                 each agent turn, with the setting on
   run [--pane N] [--timeout S] -- command

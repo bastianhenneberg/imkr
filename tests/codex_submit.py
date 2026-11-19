@@ -287,7 +287,9 @@ trust_level = "trusted"
         cli('submit-shell', 'new', '--start', '--window', '0', '--',
             '/bin/bash', '--noprofile', '--norc')
         shell_output = root / 'shell-output'
-        cli('submit-shell', 'send', '--pane', '0', f"printf shell-ok > {shell_output}")
+        # --append: a bare bash shows imkr no input line, and since idea
+        # #641 send refuses where it cannot see one.
+        cli('submit-shell', 'send', '--append', '--pane', '0', f"printf shell-ok > {shell_output}")
         until(lambda: shell_output.exists(), 'shell command')
         assert shell_output.read_text() == 'shell-ok'
         print('PASS: shell single-line command still executes normally', flush=True)

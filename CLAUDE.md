@@ -924,8 +924,16 @@ Projekt-Slug: `imkr`
   **abgeblendete Zellen zählen nicht** — der Platzhalter `Try "…"` ist SGR 2) und eine Shell
   mit OSC 133 `B` (`Shell::prompt`, bis zum Cursor), Codex über das vorhandene
   `codex_composer` (`app::input_standing`). Gemessen NICHT erkannt: zsh des Users, zsh mit
-  `shell-integration`, bash, nvim — dort tippt `send` wie bisher (Tabelle an
-  `Pane::input_line`, Loch benannt in `send_hold`). `KEYS_SETTLE` (2 s, `Pane::typed_lately`):
+  `shell-integration`, bash, nvim — dort **verweigert** `send` seit der zweiten Hälfte von
+  #641 (Tabelle an `Pane::input_line`, Begründung im letzten Arm von `send_hold`: nicht
+  „passiert oft“, sondern „im unbekannten Fall ist der Schaden nicht begrenzt“ — in einer
+  Shell führt das Enter die Zeile aus). `--append` ist der bewusste Weg vorbei.
+  `--clear` leert nur eine Zeile, die imkr **selbst** gefüllt hat: `type_keys` setzt
+  `Pane::note_filled` (eigen = vorher leer gesehen und kein Handentwurf, oder schon imkrs),
+  `app::imkrs_line` = gefüllt **und** seit dem keine Taste von Hand (`Pane::last_typed`,
+  Enter zählt), sonst `clear_hold` → `SendDone::Kept` (Programm bekommt keine Taste).
+  Bewusst ohne Schalter zum Überstimmen; nach Neustart/`update` gilt jede Zeile als fremd.
+  E2E-Tests mit echt mitschreibender Python-Eingabezeile (`echoing`). `KEYS_SETTLE` (2 s, `Pane::typed_lately`):
   gemessen sah ein `send` direkt nach einem Paste die Zeile leer. `Request::Send` hat `guard`/
   `clear`/`from` (serde default), nur die CLI setzt `guard` (`--append` nicht); Shim, `run`,
   Web, Keeper-Erststart tippen unbewacht. `--clear` = `clearing_keys` (Ctrl+K, Ctrl+U,

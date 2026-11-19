@@ -93,13 +93,19 @@ imkr notify --title build "done in 42 s"  # with a title of its own
 line, and quotes the start of it: its Enter would send that text along. Imagine an `/exit`
 or a `git push --force` somebody left in an agent's line, set off by the next instruction
 sent to it. For two seconds after keys went in without Enter it refuses as well: the
-program may not have drawn them yet. `send --clear` throws the line away without sending
-anything (with text: then sends it), and `send --append` types after it as `send` used to.
+program may not have drawn them yet. `send --append` types after it as `send` used to.
 
-This holds only where imkr can see the input line: today Claude Code and Codex, and a shell
-that marks the end of its prompt (OSC 133 `B`; imkr's own shell integration does not yet).
-Not pi, vim or a shell without such marks: there `send` types as before, unless a line was
-begun there by hand.
+`send --clear` throws the line away without sending anything (with text: then sends it) —
+but only a line imkr typed in itself, with nobody typing into the pane after it: a message
+whose Enter was swallowed, say. A line written by hand, or one imkr cannot show it filled
+(it knows only while it runs, not over a restart or `imkr update`), stays where it is and
+`send` says what stands there: it may be a person's work, which was never stored anywhere.
+Whoever typed it deletes it in the pane.
+
+imkr can see the input line of Claude Code and Codex, and of a shell that marks the end of
+its prompt (OSC 133 `B`; imkr's own shell integration does not yet). Where it cannot — pi,
+vim, a shell without such marks — `send` refuses as well: it cannot know what stands there,
+and in a shell its Enter would run it. `--append` types anyway.
 
 Every `send` is listed in `imkr mail` with who typed it, also the refused and cleared ones.
 The sender is what the sender says about itself: attribution, not proof. It tells a mix-up
