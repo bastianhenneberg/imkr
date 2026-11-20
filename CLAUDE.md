@@ -949,6 +949,30 @@ Projekt-Slug: `imkr`
   `send_note` → `MailWhat::Send|Refused|Cleared` in `imkr mail`; `from` ist Zuschreibung,
   kein Nachweis. Testwelt-Falle: kein `rm` o. ä. in Testtext an einen echten Agenten im
   Auto-Modus — der Wettlauf schickte ihn einmal ab.
+- **Zustellung an einen ruhenden Agenten hängt nicht mehr** (#1538): gemessen am Keeper
+  connect-manager 20.11.2026, fünf Bienen-Meldungen 11:19–11:50 „waits: you are typing“, frei erst
+  durch Bastians Prompt. Zwei Ursachen: (1) `Pane::drafting` ist eine Tasten-**Vermutung** (jede
+  Taste außer Enter/Esc/Ctrl+C/Ctrl+U, also auch Pfeile, Shift+Tab), und `mail_hold` fragte den
+  Bildschirm nie — jetzt freie Funktion `drafting_seen` (wie `send_hold`): Eingabezeile sichtbar
+  (`input_standing`), leer und keine Taste seit `KEYS_SETTLE` → kein Entwurf; Text dort oder Zeile
+  unsichtbar → hält wie bisher. (2) `waits_for_hook` hatte `more`: ab zwei offenen Nachrichten
+  wartete ALLES auf den Hook, ein ruhender Agent feuert keinen → Stillstand auch nach Ablauf von
+  `DRAFT_HOLDS`. `more` ist weg; die Reihenfolge (#1307) hält jetzt `take_mail`, das nichts
+  herausgibt, solange eine getippte Nachricht unbestätigt steht (`typed_unconfirmed`, nur
+  `entered`, nicht der Codex-Composer — ein Entwurf dort hält das Tippen, nicht den Hook).
+- **Biene meldet sich beim Keeper** (#1538): `App::tell_keeper` (am Ende von `update_agents`)
+  schickt bei Session mit `by` (spawn, `new --by`) je Agent-Pane eine Nachricht, wenn er done/
+  blocked/failed ist und `STOP_SETTLES` (10 s) so bleibt (ein `Stop` mit `decision: block` meldet
+  kurz idle). `KeeperTold` je Pane, `tells_keeper`: gleicher Zustand nur nach neuem Prompt
+  (`Pane::prompts`) oder `WORK_COUNTS` (30 s) Arbeit am Stück — Flackern sagt nichts; erster
+  Blick (frische Biene, nach Update) merkt nur. Text `keeper_note`, Inhalt `pane::last_said`
+  (letzter Absatz ÜBER der Eingabebox, Timer-Zeile `✻ Cooked for` übersprungen, nicht die
+  Fußzeile; Auflage des Keepers); hat die Biene im selben Zug (`turn_from` = letzter Prompt) selbst
+  an `by` geschrieben (`mail_log`, `sent`), nur eine Zeile ohne Bildschirm; blocked/failed immer
+  ganz. Weg: `send_to_keeper` = eigenes Binary `msg --stdin --from` im Thread (lokal, ssh, outbox).
+  Einstellung `tell_keeper` (Standard an). E2E: `cargo build && python3 tests/keeper_report.py`
+  (zwei Sessions ohne `IMKR_SOCKET`, Fake-Claude mit Box, Fußzeile und Hooks; `IMKR_HOSTNAME`
+  schlägt Config-`name` für `machine_name`).
 - Getippter Rückfall erst bei echter Ruhe (#9379, v0.21.93): `QUIET_BEFORE_TYPING` (5 s ohne
   Ausgabe) zusätzlich zu `HOOK_WITHIN`. Gemeldetes idle allein genügt nicht — zwischen zwei
   Zügen meldet ein Agent kurz idle, während er mitten in der Arbeit ist, und genau dann traf

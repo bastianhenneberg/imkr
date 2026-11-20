@@ -763,6 +763,112 @@ fn restored_history(text: &str) -> Vec<u8> {
 /// How many messages the orchestration view remembers.
 const MAIL_LOG: usize = 400;
 
+/// How long an agent has to stay done, blocked or failed before its keeper
+/// is told (#1538). A `Stop` that hands the agent its mail by hook
+/// (`decision: block`) reports idle for a moment, and the agent goes on
+/// working in the same turn: that is no stop.
+const STOP_SETTLES: Duration = Duration::from_secs(10);
+
+/// How long an agent has to work on end for a second stop in the same
+/// state to be told, where it does not say which prompts it took (#1538).
+/// A flicker between idle and working is shorter than that.
+const WORK_COUNTS: Duration = Duration::from_secs(30);
+
+/// What the keeper of a session was last told about one of its panes
+/// (`App::tell_keeper`, #1538), and what has happened since.
+struct KeeperTold {
+    /// The stop it was told of last (`stop_word`), `None` before any.
+    word: Option<&'static str>,
+    /// The agent's prompt count (`Pane::prompts`) when it was told.
+    prompts: u64,
+    /// The longest stretch the agent has worked on end since.
+    worked: Duration,
+    /// Since when it works, while it does.
+    working_from: Option<Instant>,
+    /// When its current turn began, seconds since 1970: the last prompt it
+    /// took, else when its keeper was told last. Messages the pane sent
+    /// itself after that belong to this turn.
+    turn_from: u64,
+    /// The prompt count `turn_from` was last moved for.
+    seen_prompts: u64,
+}
+
+/// The word a keeper is told for an agent's state (#1538): `done`,
+/// `blocked`, `failed`; `None` while it works.
+fn stop_word(state: AgentState) -> Option<&'static str> {
+    match state {
+        AgentState::Idle | AgentState::Done => Some("done"),
+        AgentState::Blocked => Some("blocked"),
+        AgentState::Failed => Some("failed"),
+        AgentState::Working => None,
+    }
+}
+
+/// Whether a keeper is told that its bee stopped with `word` (#1538), the
+/// stop having lasted `STOP_SETTLES` (`settled`).
+///
+/// Once per stop, never again for a flicker: the same word again only
+/// after new work — a prompt the agent took since (`prompts` above what it
+/// was when told), or `WORK_COUNTS` of work on end for an agent that does
+/// not say which prompts it takes. A different word is a different stop:
+/// a bee that was blocked and is done now has news.
+fn tells_keeper(told: &KeeperTold, word: &'static str, settled: bool, prompts: u64) -> bool {
+    let new_work = prompts > told.prompts || told.worked >= WORK_COUNTS;
+    settled && (told.word != Some(word) || new_work)
+}
+
+/// The message a keeper gets when its bee stops (#1538): who (session and
+/// address to answer to), which stop, and what it said last or why. A
+/// `done` the bee has already written to its keeper about this turn
+/// (`wrote`) comes as one line without the screen, so as not to say twice
+/// what the bee said itself; blocked and failed always come whole.
+fn keeper_note(session: &str, from: &str, word: &str, said: Option<&str>, wrote: bool) -> String {
+    let who = format!("[imkr] bee {session} ({from})");
+    let said = said.filter(|s| !s.is_empty());
+    match (word, said) {
+        ("done", _) if wrote => format!("{who} is done; it wrote to you this turn"),
+        ("blocked", Some(said)) => format!("{who} is blocked and asks: {said}"),
+        ("failed", Some(said)) => format!("{who} failed: {said}"),
+        (word, Some(said)) => format!("{who} is {word}: {said}"),
+        (word, None) => format!("{who} is {word}"),
+    }
+}
+
+/// Sends `text` to the keeper at `to` as pane `from`, the way `imkr msg`
+/// does: into its session here, over ssh to another machine, or into the
+/// outbox when that is out of reach (#1538). In the background, by this
+/// very binary, so that every way `msg` knows is this one too.
+fn send_to_keeper(to: &str, from: &str, text: &str) {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let (to, from, text) = (to.to_owned(), from.to_owned(), text.to_owned());
+    thread::spawn(move || {
+        let child = std::process::Command::new(exe)
+            .args(["msg", "--stdin", "--from", &from, &to])
+            // Its own pane's session would take the note for its own.
+            .env_remove("IMKR_PANE")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+        let Ok(mut child) = child else {
+            return;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if let Ok(out) = child.wait_with_output()
+            && !out.status.success()
+        {
+            eprintln!(
+                "telling the keeper {to}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    });
+}
+
 /// A pane Enter was typed into, until the program has taken it (#9379).
 struct Entered {
     pane: PaneId,
@@ -884,20 +990,47 @@ fn fetches_mail(takes_mail: bool, front: &[String]) -> bool {
 ///
 /// `fetches`: the agent has fetched its mail through its own hook before,
 /// so that way exists at all. `busy`: it is working, and the `Stop` at the
-/// end of its turn is bound to come. `more`: it has other messages pending,
-/// and they all have to go the same way — with one typed in and the rest
-/// fetched, a bee read them out of order on 03.11.2026, the later two
-/// arriving in its hook while the first still stood in its input line. Two
-/// paths at once cannot keep an order. `age`: a message younger than
+/// end of its turn is bound to come. `age`: a message younger than
 /// `HOOK_WITHIN` waits for the hook even from an agent that looks parked,
 /// because the `Stop` of a turn that has just ended is still on its way.
 ///
-/// An agent that is really parked, with nothing else pending, is the one
-/// case that is typed to: it fires no hook at all, and nobody would ever
-/// reach it. That typing is no longer taken on trust — it has to be
-/// confirmed by the agent itself, and is said out loud if it is not.
-fn waits_for_hook(fetches: bool, busy: bool, more: bool, age: u64) -> bool {
-    fetches && (busy || more || age < HOOK_WITHIN)
+/// An agent that is really parked fires no hook at all: it is typed to, or
+/// nobody would ever reach it. That typing is not taken on trust — it has
+/// to be confirmed by the agent itself, and is said out loud if it is not.
+///
+/// Until #1538 a parked agent with **more than one** message pending was
+/// not typed to either, so that all of them went the same way (on
+/// 03.11.2026 a bee read three out of order: the later two arrived in its
+/// `Stop` hook while the first still stood unsent in its input line). But
+/// a parked agent fires no hook, so with two messages pending only a
+/// person could ever free them: measured at the keeper connect-manager on
+/// 20.11.2026, five messages from its bees waited 31 minutes until
+/// Bastian wrote to it. The order is kept elsewhere now: the oldest is
+/// typed, the next waits for it to be taken (`unsent_typed`, the
+/// `settling` gap), and `take_mail` hands nothing out while a typed one
+/// stands unconfirmed — so the hook can no longer overtake it.
+fn waits_for_hook(fetches: bool, busy: bool, age: u64) -> bool {
+    fetches && (busy || age < HOOK_WITHIN)
+}
+
+/// Whether the user's half-written line holds a message back (#1538):
+/// `drafting` is what the keys said (`Pane::drafting`), `standing` what
+/// imkr sees in the input line (`None`: it cannot see one), `lately`
+/// whether keys came in so lately that the screen may not show them yet.
+///
+/// The keys are a guess. Every key but Enter, Esc, Ctrl+C and Ctrl+U
+/// counts as writing — an arrow, Shift+Tab, Ctrl+O as much as a letter —
+/// because imkr cannot see most programs' input lines, and for those the
+/// guess is all there is. Where it can see the line, the screen decides,
+/// as it already did for `imkr send` (`send_hold`): an input line seen
+/// empty, with no key in the last moment, holds no draft, whatever key
+/// came before. On 20.11.2026 the keeper connect-manager was held "you are
+/// typing" from 11:19 for half an hour (`DRAFT_HOLDS`) on such a guess.
+///
+/// Only the guess is overruled, never what stands there: text seen in the
+/// line keeps holding, and so does a line imkr cannot see.
+fn drafting_seen(standing: Option<&str>, drafting: bool, lately: bool) -> bool {
+    drafting && (lately || standing.is_none_or(|text| !text.trim().is_empty()))
 }
 
 /// The session and pane to tell that a message has not arrived, from the
@@ -1716,6 +1849,9 @@ pub struct App {
     /// pane, when, the text that went in and how often Enter went again
     /// (`check_entered`, #9379).
     entered: Vec<Entered>,
+    /// What the session's keeper (`by`) was told about each agent pane
+    /// stopping (`tell_keeper`, #1538).
+    keeper_told: HashMap<PaneId, KeeperTold>,
     /// Who messaged whom, newest last, for the orchestration view.
     mail_log: Vec<protocol::MailNote>,
     /// Counts the notes in `mail_log` up, so that `imkr mail --follow`
@@ -1891,6 +2027,7 @@ impl App {
             mailbox: Vec::new(),
             mail_sent: HashMap::new(),
             entered: Vec::new(),
+            keeper_told: HashMap::new(),
             mail_seq: 0,
             mail_held: HashSet::new(),
             mail_told: HashSet::new(),
@@ -4086,6 +4223,17 @@ impl App {
         if pane.program().as_deref() == Some("codex") {
             return codex_composer(&pane.screen()).is_none_or(|input| !input.is_empty());
         }
+        self.typed_unconfirmed(id)
+    }
+
+    /// Whether a message imkr typed into pane `id` still stands there and
+    /// the agent has not taken it (`entered`). Unlike `unsent_typed` not
+    /// the Codex composer: a draft of the user's there keeps imkr from
+    /// typing, but not the hook from fetching (`take_mail`).
+    fn typed_unconfirmed(&self, id: PaneId) -> bool {
+        let Some(pane) = self.panes.get(&id) else {
+            return false;
+        };
         self.entered
             .iter()
             .filter(|e| e.pane == id)
@@ -4124,9 +4272,10 @@ impl App {
         } else {
             self.agent_now(id)
         };
+        let standing = input_standing(pane.input_line(), program.as_deref(), &pane.screen());
         mail_hold(
             self.switching.contains_key(&id) || self.resumed.contains_key(&id),
-            pane.drafting(),
+            drafting_seen(standing.as_deref(), pane.drafting(), pane.typed_lately()),
             self.unsent_typed(id),
             state,
             queues,
@@ -4150,6 +4299,13 @@ impl App {
     fn take_mail(&mut self, pane: PaneId) -> Reply {
         if !self.panes.contains_key(&pane) {
             return Err(format!("no pane {pane}"));
+        }
+        // A message imkr typed in stands unsent: what the hook takes now
+        // would reach the agent before it (#1307, #1538). They wait their
+        // turn; the agent's `UserPromptSubmit` for the typed one confirms
+        // it, and the same hook call fetches them right behind it.
+        if self.typed_unconfirmed(pane) {
+            return Ok(serde_json::json!({ "pane": pane, "messages": [] }));
         }
         let mut taken = Vec::new();
         let mut rest = Vec::new();
@@ -4257,12 +4413,6 @@ impl App {
     fn deliver_mail(&mut self) {
         let mail = std::mem::take(&mut self.mailbox);
         let now = crate::persist::now();
-        // How many messages each pane has pending in this round, so that a
-        // pane with several of them sends them all the same way (#1307).
-        let mut pending: HashMap<PaneId, usize> = HashMap::new();
-        for mail in &mail {
-            *pending.entry(mail.pane).or_default() += 1;
-        }
         for mail in mail {
             let id = mail.pane;
             if !self.panes.contains_key(&id) {
@@ -4289,13 +4439,7 @@ impl App {
                     .panes
                     .get(&id)
                     .is_some_and(|p| p.last_output().elapsed() < QUIET_BEFORE_TYPING);
-            let more = pending.get(&id).copied().unwrap_or(0) > 1;
-            let hooked = waits_for_hook(
-                self.fetches_mail(id),
-                busy,
-                more,
-                now.saturating_sub(mail.at),
-            );
+            let hooked = waits_for_hook(self.fetches_mail(id), busy, now.saturating_sub(mail.at));
             if waits.is_some() || settling || hooked || self.mailbox.iter().any(|m| m.pane == id) {
                 if let Some(why) = waits
                     && self.mail_held.insert(mail.seq)
@@ -5484,10 +5628,99 @@ impl App {
         self.tell_taps(&seen);
         self.check_entered();
         self.deliver_mail();
+        self.tell_keeper(&seen);
         if !self.clients.is_empty() {
             self.unseen.remove(&self.ws.focus);
         }
         self.agents = seen;
+    }
+
+    /// Tells the keeper of this session (`by`, set by `imkr spawn` and
+    /// `new --by`) when one of its agents stops: done, blocked or failed
+    /// (#1538). Before, a keeper only learned it when somebody nudged it —
+    /// "warum muss ich dich immer erinnern siehst du nicht das die fertig
+    /// sind" (Bastian, 20.11.2026).
+    ///
+    /// Once per stop (`tells_keeper`), after `STOP_SETTLES`, by the same
+    /// way as `imkr msg` (`send_to_keeper`), so it reaches a keeper on
+    /// another machine as well and waits in its mailbox like any message.
+    /// A pane seen for the first time — a fresh bee, or this server after
+    /// an update — only marks where it stands: an idle agent there has
+    /// news for nobody.
+    fn tell_keeper(&mut self, seen: &HashMap<PaneId, (AgentState, Instant)>) {
+        self.keeper_told.retain(|id, _| seen.contains_key(id));
+        let Some(by) = self.by.clone().filter(|_| self.config.tell_keeper) else {
+            return;
+        };
+        let session = protocol::session_name();
+        let machine = protocol::machine_name();
+        let now = Instant::now();
+        let mut ids: Vec<PaneId> = seen.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
+            let (state, since) = seen[&id];
+            let Some(pane) = self.panes.get(&id) else {
+                continue;
+            };
+            let program = pane.program().unwrap_or_else(|| "agent".to_owned());
+            let from = format!("{program}@{machine}:{session}/{id}");
+            // Never to itself: a session that names one of its own panes.
+            if crate::cli::same_address(&by, &from) {
+                continue;
+            }
+            let prompts = pane.prompts;
+            let told = self.keeper_told.entry(id).or_insert_with(|| KeeperTold {
+                word: stop_word(state),
+                prompts,
+                worked: Duration::ZERO,
+                working_from: None,
+                turn_from: unix_now(),
+                seen_prompts: prompts,
+            });
+            // A prompt taken: its turn begins now.
+            if prompts > told.seen_prompts {
+                told.seen_prompts = prompts;
+                told.turn_from = unix_now();
+            }
+            match state {
+                AgentState::Working => {
+                    let from = *told.working_from.get_or_insert(since);
+                    told.worked = told.worked.max(now.duration_since(from));
+                }
+                _ => told.working_from = None,
+            }
+            let Some(word) = stop_word(state) else {
+                continue;
+            };
+            let settled = now.duration_since(since) >= STOP_SETTLES;
+            if !tells_keeper(told, word, settled, prompts) {
+                continue;
+            }
+            let turn_from = told.turn_from;
+            *told = KeeperTold {
+                word: Some(word),
+                prompts,
+                worked: Duration::ZERO,
+                working_from: None,
+                turn_from: unix_now(),
+                seen_prompts: prompts,
+            };
+            let wrote = self.mail_log.iter().any(|note| {
+                note.pane == id
+                    && note.sent
+                    && note.what == protocol::MailWhat::Message
+                    && note.at >= turn_from
+                    && !note.text.starts_with("[imkr] bee ")
+                    && crate::cli::same_address(&note.peer, &by)
+            });
+            let said = match state {
+                AgentState::Failed => Some(pane.failure_reason().to_owned()),
+                _ => crate::pane::last_said(&pane.screen()),
+            };
+            let text = keeper_note(&session, &from, word, said.as_deref(), wrote);
+            self.note_mail(id, &by, true, &text);
+            send_to_keeper(&by, &from, &text);
+        }
     }
 
     /// Takes a checkpoint of the repository the agent in pane `id` works
@@ -17944,37 +18177,136 @@ while True:
         assert_eq!(place("imker/claude"), None);
     }
 
-    /// Several messages for one pane go the same way, all of them: with one
-    /// typed in and the rest fetched by the hook, a bee read three of them
-    /// out of order on 03.11.2026 — the later two arrived inside its `Stop`
-    /// hook while the first still stood unsent in its input line (#1307).
+    /// A parked agent is typed to however many messages wait for it
+    /// (#1538). Until then two pending messages sent all of them to the
+    /// hook, and a parked agent fires none: five messages waited 31
+    /// minutes at the keeper connect-manager on 20.11.2026, until a person
+    /// wrote to it. The order the old rule kept (#1307) is now kept by
+    /// `take_mail`, which hands nothing out while a typed message stands
+    /// unconfirmed.
     #[test]
-    fn several_messages_for_one_pane_all_go_the_same_way() {
-        // (fetches its own mail, busy, more pending, seconds old)
+    fn a_parked_agent_is_reached_however_many_messages_wait() {
+        // (fetches its own mail, busy, seconds old)
         let hook = super::waits_for_hook;
         let old = super::HOOK_WITHIN + 1;
-        // The case that broke the order: parked, long past the grace, but
-        // more are pending — so this one waits for the hook as well.
-        assert!(hook(true, false, true, old));
-        // Alone and really parked: typed to, or nothing would ever reach
-        // it. This is the one message that is typed, and it has to be
-        // confirmed afterwards.
-        assert!(!hook(true, false, false, old));
+        // Parked, past the grace: typed to, or nothing would ever reach it.
+        assert!(!hook(true, false, old));
         // Working: waits, however long the turn takes.
-        assert!(hook(true, true, false, old));
+        assert!(hook(true, true, old));
         // Fresh: the `Stop` of a turn that has just ended is on its way.
-        assert!(hook(true, false, false, 0));
+        assert!(hook(true, false, 0));
         // No hook of its own — a Codex with untrusted hooks, pi, a plain
-        // shell: always typed to,
-        // whatever else is true. Taking that away would mean they never
-        // heard of a message again.
+        // shell: always typed to, whatever else is true.
         for busy in [false, true] {
-            for more in [false, true] {
-                for age in [0, old] {
-                    assert!(!hook(false, busy, more, age), "{busy} {more} {age}");
-                }
+            for age in [0, old] {
+                assert!(!hook(false, busy, age), "{busy} {age}");
             }
         }
+    }
+
+    /// The keys only guess at a draft; where imkr sees the input line, the
+    /// screen decides (#1538). Measured at the keeper connect-manager on
+    /// 20.11.2026: held "you are typing" for half an hour after a key that
+    /// left nothing in its line.
+    #[test]
+    fn a_draft_the_screen_shows_empty_holds_nothing() {
+        // (what stands in the input line, keys said drafting, keys lately)
+        let seen = super::drafting_seen;
+        // The case of 20.11.: a key was taken for writing, the line is empty.
+        assert!(!seen(Some(""), true, false));
+        assert!(!seen(Some("  "), true, false));
+        // Text stands there: still somebody's, still held.
+        assert!(seen(Some("wie geht's weiter"), true, false));
+        // A key a moment ago: the screen may not show it yet.
+        assert!(seen(Some(""), true, true));
+        // A line imkr cannot see (a shell, vim, a dialog): the keys decide.
+        assert!(seen(None, true, false));
+        // No keys, no draft — the screen never invents one.
+        assert!(!seen(Some("text"), false, false));
+        assert!(!seen(None, false, true));
+    }
+
+    /// A keeper is told once per stop of its bee, and a flicker between
+    /// idle and working tells it nothing more (#1538).
+    #[test]
+    fn a_keeper_is_told_once_per_stop() {
+        let told = |word, prompts, worked| super::KeeperTold {
+            word,
+            prompts,
+            worked,
+            working_from: None,
+            turn_from: 0,
+            seen_prompts: prompts,
+        };
+        let tells = super::tells_keeper;
+        let short = Duration::from_secs(4);
+        // Seen working first, now done for long enough: told.
+        assert!(tells(&told(None, 1, short), "done", true, 1));
+        // Not settled yet: a `Stop` that hands over mail looks like this.
+        assert!(!tells(&told(None, 1, short), "done", false, 1));
+        // Told done; it flickered to working for a moment and back.
+        assert!(!tells(&told(Some("done"), 1, short), "done", true, 1));
+        // A fresh bee, first seen idle, has news for nobody.
+        assert!(!tells(
+            &told(Some("done"), 0, Duration::ZERO),
+            "done",
+            true,
+            0
+        ));
+        // It took a new prompt and is done again: a new stop.
+        assert!(tells(&told(Some("done"), 1, short), "done", true, 2));
+        // Without prompt counts: long work on end counts as a new turn.
+        assert!(tells(
+            &told(Some("done"), 0, super::WORK_COUNTS),
+            "done",
+            true,
+            0
+        ));
+        // A different stop is news: done, then a question.
+        assert!(tells(&told(Some("done"), 1, short), "blocked", true, 1));
+        assert!(tells(&told(Some("blocked"), 1, short), "failed", true, 1));
+        // Working itself is never told.
+        assert_eq!(super::stop_word(AgentState::Working), None);
+        assert_eq!(super::stop_word(AgentState::Idle), Some("done"));
+    }
+
+    /// What the keeper reads (#1538): who, which stop, what it said last
+    /// or why. A done the bee wrote about itself comes as one line.
+    #[test]
+    fn a_keeper_reads_who_stopped_and_why() {
+        let note = super::keeper_note;
+        let from = "claude@codingmachine:crm-umzug/0";
+        assert_eq!(
+            note(
+                "crm-umzug",
+                from,
+                "done",
+                Some("FERTIG. Commit c7a70785"),
+                false
+            ),
+            "[imkr] bee crm-umzug (claude@codingmachine:crm-umzug/0) is done: FERTIG. Commit c7a70785"
+        );
+        // It wrote to its keeper this turn: no second copy of its words.
+        assert_eq!(
+            note(
+                "crm-umzug",
+                from,
+                "done",
+                Some("FERTIG. Commit c7a70785"),
+                true
+            ),
+            "[imkr] bee crm-umzug (claude@codingmachine:crm-umzug/0) is done; it wrote to you this turn"
+        );
+        // Blocked and failed come whole, whatever it wrote.
+        assert!(
+            note("crm-umzug", from, "blocked", Some("Darf ich pushen?"), true)
+                .ends_with("is blocked and asks: Darf ich pushen?")
+        );
+        assert!(
+            note("crm-umzug", from, "failed", Some("rate limit"), true)
+                .ends_with("failed: rate limit")
+        );
+        assert!(note("crm-umzug", from, "done", None, false).ends_with("is done"));
     }
 
     /// A pane whose agent fetched its mail by hook stops counting as one

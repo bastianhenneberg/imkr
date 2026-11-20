@@ -109,15 +109,19 @@ const INPUT_FRAME: &[char] = &['│', '┃'];
 /// (vim, a question dialog, an agent we do not know) is left to whoever
 /// asks. The bottom-most box wins, the one being written in.
 pub fn input_box(screen: &crate::term::Parser) -> Option<String> {
+    input_box_in(&screen_rows(screen, true)).map(|(_, written)| written)
+}
+
+/// Each row of `screen` as written, dim cells as blanks when `dim_blank`.
+fn screen_rows(screen: &crate::term::Parser, dim_blank: bool) -> Vec<String> {
     let (rows, cols) = screen.size();
-    // Each row as written, dim cells as blanks.
-    let text: Vec<String> = (0..rows)
+    (0..rows)
         .map(|row| {
             (0..cols)
                 .filter_map(|col| screen.cell(row, col))
                 .filter(|cell| !cell.is_wide_continuation())
                 .map(|cell| {
-                    if cell.dim() {
+                    if dim_blank && cell.dim() {
                         " ".to_owned()
                     } else {
                         cell.contents()
@@ -126,7 +130,12 @@ pub fn input_box(screen: &crate::term::Parser) -> Option<String> {
                 .collect::<String>()
                 .replace('\u{a0}', " ")
         })
-        .collect();
+        .collect()
+}
+
+/// The bottom-most framed input line in `text` (`input_box`): the row of
+/// its upper rule and what stands in it.
+fn input_box_in(text: &[String]) -> Option<(usize, String)> {
     let rule = |row: &str| {
         let row = row.trim();
         row.chars().filter(|&c| c == '─').count() >= 10
@@ -149,8 +158,65 @@ pub fn input_box(screen: &crate::term::Parser) -> Option<String> {
         let written = first.strip_prefix(INPUT_PROMPTS)?;
         let mut lines = vec![written.trim().to_owned()];
         lines.extend(inside[1..].iter().cloned());
-        Some(lines.join("\n").trim().to_owned())
+        Some((top, lines.join("\n").trim().to_owned()))
     })
+}
+
+/// How much of what an agent last said `last_said` passes on.
+const LAST_SAID: usize = 240;
+
+/// The rows `last_said` joins at most: the end of a paragraph, not a page.
+const LAST_SAID_ROWS: usize = 4;
+
+/// What the agent on `screen` said last, on one line (#1538): the last
+/// paragraph above its input line, for a keeper told that a bee stopped.
+///
+/// Above the input line, not the bottom of the screen: under Claude Code's
+/// box stand only its footer rows (`⏵⏵ bypass permissions on`), which say
+/// nothing about the work. The timer row Claude Code leaves above the box
+/// (`✻ Cooked for 2m 3s`) is skipped the same way. Where there is no box,
+/// the bottom of the screen it is.
+pub fn last_said(screen: &crate::term::Parser) -> Option<String> {
+    let rows = screen_rows(screen, false);
+    let end = input_box_in(&screen_rows(screen, true)).map_or(rows.len(), |(top, _)| top);
+    let frame: &[char] = &['│', '╭', '╮', '╰', '╯', '─', '┃'];
+    let bare = |row: &str| row.trim().trim_matches(frame).trim().to_owned();
+    // A timer or spinner row: a glyph, then words that end in a time.
+    let spinner = |row: &str| {
+        row.starts_with(['✻', '✽', '✢', '✳', '✶', '✺', '·', '*'])
+            && (row.contains(" for ") || row.contains('…') || row.contains('('))
+    };
+    let mut block: Vec<String> = Vec::new();
+    for row in rows[..end].iter().rev().map(|r| bare(r)) {
+        if row.is_empty() || row.chars().all(|c| frame.contains(&c)) {
+            if block.is_empty() {
+                continue;
+            }
+            break;
+        }
+        if block.is_empty() && spinner(&row) {
+            continue;
+        }
+        block.push(row);
+        if block.len() == LAST_SAID_ROWS {
+            break;
+        }
+    }
+    block.reverse();
+    let line = block.join(" ");
+    let line = line
+        .trim_start_matches(['●', '⏺'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if line.is_empty() {
+        return None;
+    }
+    let mut cut: String = line.chars().take(LAST_SAID).collect();
+    if line.chars().count() > LAST_SAID {
+        cut.push('…');
+    }
+    Some(cut)
 }
 
 pub struct Pane {
@@ -1504,6 +1570,38 @@ mod tests {
             claude_box("❯\u{a0}new")
         );
         assert_eq!(input_box(&shown(&both, 60)).as_deref(), Some("new"));
+    }
+
+    /// A keeper told that a bee stopped gets what the bee said last, not
+    /// its footer (#1538, the keeper's condition): under Claude Code's box
+    /// stand only `⏵⏵ bypass permissions on` and the like, and above it the
+    /// timer row it leaves after a turn.
+    #[test]
+    fn what_an_agent_said_last_is_read_above_its_input_line() {
+        let rule = "─".repeat(40);
+        let screen = format!(
+            "● Erste Antwort\r\n\r\n● FERTIG. Commit 40ece9c7, 12 Tests\r\n  gruen, nicht gepusht.\r\n\r\n\
+             ✻ Cooked for 2m 3s\r\n\r\n{rule}\r\n❯\u{a0}\r\n{rule}\r\n  ⏵⏵ bypass permissions on"
+        );
+        assert_eq!(
+            last_said(&shown(&screen, 60)).as_deref(),
+            Some("FERTIG. Commit 40ece9c7, 12 Tests gruen, nicht gepusht.")
+        );
+        // Without a box: the bottom of the screen.
+        assert_eq!(
+            last_said(&shown("$ make\r\nall done\r\n", 60)).as_deref(),
+            Some("$ make all done")
+        );
+        // Nothing said at all.
+        assert_eq!(last_said(&shown("", 60)), None);
+        // A long paragraph is cut, not passed on whole.
+        let long = "wort ".repeat(100);
+        let said = last_said(&shown(
+            &format!("{long}\r\n{rule}\r\n❯\u{a0}\r\n{rule}"),
+            60,
+        ))
+        .unwrap();
+        assert!(said.chars().count() <= LAST_SAID + 1, "{said}");
     }
 
     /// Where no agent draws an input line, imkr cannot tell — and says

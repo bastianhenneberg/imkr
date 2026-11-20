@@ -297,6 +297,11 @@ pub struct Config {
     /// `refs/imkr/checkpoints/…`, to go back to; branch, index and files
     /// stay as they are.
     pub checkpoints: bool,
+    /// A session started for somebody (`imkr spawn`, `new --by`) tells
+    /// them by message when its agent stops: done, blocked or failed
+    /// (#1538). A keeper learns that a bee is finished without anybody
+    /// nudging it.
+    pub tell_keeper: bool,
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
@@ -701,6 +706,7 @@ impl Default for Config {
             revive_sessions: true,
             revive_at_boot: false,
             checkpoints: false,
+            tell_keeper: true,
             sessions_on_start: false,
             session_banner: true,
             session_banner_at: BannerAt::Middle,
@@ -928,6 +934,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Git checkpoint after each agent turn",
         value: |c| if c.checkpoints { "on" } else { "off" }.to_owned(),
         step: |c, _| c.checkpoints = !c.checkpoints,
+    },
+    Setting {
+        name: "Tell the keeper when a bee stops",
+        value: |c| if c.tell_keeper { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.tell_keeper = !c.tell_keeper,
     },
     Setting {
         name: "tmux for agent teams (new panes)",

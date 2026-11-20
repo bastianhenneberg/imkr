@@ -572,6 +572,13 @@ messages of laptop:keeper
 A keeper starts one beside its agent (`imkr keeper`), so the agent's input line is yours alone
 and the messages have a place of their own.
 
+`you are typing` is said when a key went into the pane and was not followed by Enter. Where imkr
+can read the agent's input line (Claude Code, Codex), the screen has the last word: a line seen
+empty holds nothing back, whatever key came before, and only text standing there does. An agent
+that sits idle fires no hook of its own, so its messages are typed in, the oldest first and the
+next only once it took that one, however many wait.
+
+
 Answers find their way back without every machine reaching every other: a server needs no ssh
 to your laptop. A message for a machine out of reach waits in the sender's outbox (`imkr
 outbox`), and the machine it is for picks it up when it next asks that one, every 5 seconds
@@ -650,6 +657,25 @@ reboot) comes back with its windows instead; `imkr new` says so — `imkr forget
 it should start empty. On another machine the briefing travels along on stdin and is kept there,
 readable only by you. It prints the bee's address (`--json` for scripts) and notes the bee in
 the keeper's `bees.json`: `Ctrl+B O` shows each bee's task, and its briefing above its screen.
+
+When a bee stops, its keeper hears it without asking: a session started for somebody
+(`imkr spawn`, `imkr new --by ADDRESS`) sends them a message when its agent is done, blocked or
+failed and has stayed so for ten seconds:
+
+```
+[imkr] bee api-fix (claude@server:api-fix/0) is done: FERTIG. Commit 40ece9c7, 12 tests green.
+[imkr] bee api-fix (claude@server:api-fix/0) is blocked and asks: Push to main?
+[imkr] bee api-fix (claude@server:api-fix/0) failed: rate limit
+[imkr] bee api-fix (claude@server:api-fix/0) is done; it wrote to you this turn
+```
+
+Once per stop: the same state is told again only after the bee took a new prompt (or worked for
+half a minute on end, for an agent that does not report its prompts), so a flicker between idle
+and working says nothing. What it said last comes from above its input line, not Claude Code's
+footer. A bee that already wrote to its keeper in that turn gets the short last line, so the
+keeper does not read its words twice; blocked and failed always come whole. It travels like
+`imkr msg`, to keepers on other machines too. The setting *Tell the keeper when a bee stops*
+turns it off.
 
 An agent that asks something before it starts — Claude Code's "trust this folder?" in a new
 worktree — is left asking: nothing is answered for you. `imkr spawn` says where it waits and
