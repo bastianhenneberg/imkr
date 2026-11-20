@@ -970,6 +970,15 @@ Projekt-Slug: `imkr`
   Fußzeile; Auflage des Keepers); hat die Biene im selben Zug (`turn_from` = letzter Prompt) selbst
   an `by` geschrieben (`mail_log`, `sent`), nur eine Zeile ohne Bildschirm; blocked/failed immer
   ganz. Weg: `send_to_keeper` = eigenes Binary `msg --stdin --from` im Thread (lokal, ssh, outbox).
+  Nachzug (erste echte Meldung, 20.11.): im schmalen Pane brach Claudes Abschlusszeile `✻ Crunched
+  for 1m 32s · done … · 1 shell, 1 monitor still running` um, die Folgezeile galt nicht als Spinner
+  und ging als „gesagt“ raus. Jetzt `pane::above_and_below` (Absätze aus **logischen** Zeilen,
+  Umbruch per `Cell::wraps` = WRAPLINE, nicht „Zeile voll“), `status_row`/`status_rest` (Glyphe,
+  ein Wort, dann `…` oder ` for `, jedes Verb) überspringt den ganzen Status-Absatz samt `⎿ Tip`.
+  `background_jobs` (Status-Absatz, sonst Fußzeile) → Wort `waiting` statt done („is not done yet,
+  it waits for its background jobs: …“). `shows_working` (Spinner mit `…` über der Box): kein Stopp,
+  auch wenn der gemeldete Zustand idle ist — ein Zug, den der Agent nach einem beendeten Job selbst
+  aufnimmt, feuert erst beim Werkzeug einen Hook; sonst ging done mit alter Zeile raus (E2E (e)).
   Einstellung `tell_keeper` (Standard an). E2E: `cargo build && python3 tests/keeper_report.py`
   (zwei Sessions ohne `IMKR_SOCKET`, Fake-Claude mit Box, Fußzeile und Hooks; `IMKR_HOSTNAME`
   schlägt Config-`name` für `machine_name`).

@@ -794,7 +794,8 @@ struct KeeperTold {
 }
 
 /// The word a keeper is told for an agent's state (#1538): `done`,
-/// `blocked`, `failed`; `None` while it works.
+/// `blocked`, `failed`; `None` while it works. `tell_keeper` makes a
+/// `done` with background jobs still running `waiting`.
 fn stop_word(state: AgentState) -> Option<&'static str> {
     match state {
         AgentState::Idle | AgentState::Done => Some("done"),
@@ -829,6 +830,9 @@ fn keeper_note(session: &str, from: &str, word: &str, said: Option<&str>, wrote:
         ("done", _) if wrote => format!("{who} is done; it wrote to you this turn"),
         ("blocked", Some(said)) => format!("{who} is blocked and asks: {said}"),
         ("failed", Some(said)) => format!("{who} failed: {said}"),
+        ("waiting", Some(jobs)) => {
+            format!("{who} is not done yet, it waits for its background jobs: {jobs}")
+        }
         (word, Some(said)) => format!("{who} is {word}: {said}"),
         (word, None) => format!("{who} is {word}"),
     }
@@ -5692,8 +5696,24 @@ impl App {
             let Some(word) = stop_word(state) else {
                 continue;
             };
-            let settled = now.duration_since(since) >= STOP_SETTLES;
-            if !tells_keeper(told, word, settled, prompts) {
+            if now.duration_since(since) < STOP_SETTLES {
+                continue;
+            }
+            let quiet = matches!(state, AgentState::Idle | AgentState::Done);
+            let screen = pane.screen();
+            // Its spinner says it works, whatever it reported: no stop.
+            if quiet && crate::pane::shows_working(&screen) {
+                continue;
+            }
+            // Stopped with a background job still running, it goes on by
+            // itself when the job ends: a stop of its own, not done.
+            let jobs = if quiet {
+                crate::pane::background_jobs(&screen)
+            } else {
+                None
+            };
+            let word = if jobs.is_some() { "waiting" } else { word };
+            if !tells_keeper(told, word, true, prompts) {
                 continue;
             }
             let turn_from = told.turn_from;
@@ -5714,9 +5734,11 @@ impl App {
                     && crate::cli::same_address(&note.peer, &by)
             });
             let said = match state {
+                _ if jobs.is_some() => jobs,
                 AgentState::Failed => Some(pane.failure_reason().to_owned()),
-                _ => crate::pane::last_said(&pane.screen()),
+                _ => crate::pane::last_said(&screen),
             };
+            drop(screen);
             let text = keeper_note(&session, &from, word, said.as_deref(), wrote);
             self.note_mail(id, &by, true, &text);
             send_to_keeper(&by, &from, &text);
@@ -18307,6 +18329,17 @@ while True:
                 .ends_with("failed: rate limit")
         );
         assert!(note("crm-umzug", from, "done", None, false).ends_with("is done"));
+        // Stopped with a job still running: not done, whatever it wrote.
+        assert!(
+            note(
+                "crm-umzug",
+                from,
+                "waiting",
+                Some("1 shell, 1 monitor"),
+                true
+            )
+            .ends_with("is not done yet, it waits for its background jobs: 1 shell, 1 monitor")
+        );
     }
 
     /// A pane whose agent fetched its mail by hook stops counting as one

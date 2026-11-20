@@ -509,6 +509,12 @@ impl Cell<'_> {
         self.0.flags.contains(Flags::DIM)
     }
 
+    /// Whether the row goes on in the next one: the program wrote past
+    /// the last column (only ever true for a row's last cell).
+    pub fn wraps(&self) -> bool {
+        self.0.flags.contains(Flags::WRAPLINE)
+    }
+
     pub fn italic(&self) -> bool {
         self.0.flags.contains(Flags::ITALIC)
     }

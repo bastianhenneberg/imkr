@@ -34,7 +34,7 @@ root.mkdir(exist_ok=True)
 imkr = os.environ['KEEPER_TEST_IMKR']
 tty.setraw(0)
 buf = ''; transcript = ['Fake Claude ready']; accepted = []; hooked = []
-working_until = None; working_on = ''; spinner = False; turns = []
+working_until = None; working_on = ''; spinner = False; turns = []; jobs = False
 def save():
     (root/'observed.json').write_text(json.dumps(
         {'accepted': accepted, 'hooked': hooked, 'input': buf, 'working': working_until is not None}))
@@ -46,26 +46,36 @@ def hook(state, event, **more):
 def draw():
     h, w = os.get_terminal_size(0).lines, os.get_terminal_size(0).columns
     out = '\x1b[2J\x1b[H'
-    # A blank row between prompt and answer, as Claude Code draws them.
-    for line in transcript[-(h - 8) // 2:]:
-        out += line[:w] + '\r\n\r\n'
     if working_until is not None or spinner:
-        out += '\r\n✽ Working… (3s · esc to interrupt)\r\n'
+        status = '✽ Working… (3s · esc to interrupt)'
+    elif jobs:
+        # Claude Code's done row with jobs left, long enough to wrap.
+        status = '✻ Crunched for 1m 32s · done 2:59 PM · 1 shell, 1 monitor, 1 background agent still running'
     else:
-        out += '\r\n✻ Cooked for 3s\r\n'
+        status = '✻ Cooked for 3s'
+    rows = -(-len(status) // w)
+    # A blank row between prompt and answer, as Claude Code draws them.
+    for line in transcript[-max(1, (h - 6 - rows) // 2):]:
+        out += line[:w] + '\r\n\r\n'
+    out += f'\x1b[{h - 4 - rows};1H' + status
     rule = '─' * min(40, w)
     shown = buf if buf else '\x1b[2mTry "write a test"\x1b[0m'
     out += f'\x1b[{h-4};1H\x1b[38;5;244m{rule}\x1b[39m'
     out += f'\x1b[{h-3};1H❯ {shown}'
     out += f'\x1b[{h-2};1H\x1b[38;5;244m{rule}\x1b[39m'
-    out += f'\x1b[{h-1};1H  ⏵⏵ bypass permissions on'
+    footer = '  ⏵⏵ bypass permissions on' + (' · 1 shell, 1 monitor, 1 background agent' if jobs else '')
+    out += f'\x1b[{h-1};1H' + footer[:w - 1]
     out += f'\x1b[{h-3};{3 + len(buf)}H'
     sys.stdout.write(out); sys.stdout.flush()
-def begin(text):
-    global working_until, working_on
+def begin(text, whole=''):
+    global working_until, working_on, jobs
     working_on = text
+    if 'JOBS' in whole:
+        jobs = True
     working_until = time.monotonic() + 3
     transcript.append('> ' + text[:70])
+    if 'JOBS' in text:
+        jobs = True
     if 'TELL:' in text:
         to = text.split('TELL:')[1].split()[0]
         subprocess.run([imkr, 'msg', to, 'FERTIG, selbst gemeldet von ' + name],
@@ -76,7 +86,7 @@ def submit(text):
     got = hook('working', 'UserPromptSubmit', prompt=text)
     if got:
         hooked.append(got.get('hookSpecificOutput', {}).get('additionalContext', ''))
-    begin(text)
+    begin(text, text + ' '.join(hooked[-1:]) if got else text)
 def finish():
     global working_until
     working_until = None
@@ -86,7 +96,7 @@ def finish():
     got = hook('idle', 'Stop')
     if got and got.get('decision') == 'block':
         hooked.append(got.get('reason', ''))
-        begin('(hook) ' + got.get('reason', '')[-40:])
+        begin('(hook) ' + got.get('reason', '')[-40:], got.get('reason', ''))
 draw(); save()
 while True:
     order = root / 'do'
@@ -96,6 +106,17 @@ while True:
             spinner = True; draw(); hook('working', 'PreToolUse')
             time.sleep(3)
             spinner = False; draw(); hook('idle', 'Stop')
+        if what == 'jobs-end':
+            # The job ends, the agent takes up its turn and finishes it.
+            # As Claude Code: the spinner first, its hook only later (here
+            # after 12 s, longer than a stop takes to settle; a turn of text
+            # alone sends none at all).
+            jobs = False; spinner = True; draw()
+            time.sleep(12)
+            hook('working', 'PreToolUse')
+            time.sleep(3)
+            spinner = False; turns.append('jobs'); transcript.append('● JOBS-ERLEDIGT')
+            draw(); hook('idle', 'Stop')
     if working_until is not None and time.monotonic() >= working_until:
         finish()
     if select.select([0], [], [], 0.05)[0]:
@@ -259,6 +280,33 @@ def run(binary):
             check('(c2) its own message came through as well',
                   until(lambda: any('selbst gemeldet' in t for t in got('keeper')), 30),
                   f'keeper got {got("keeper")}')
+
+            # (e) The first real report, 20.11.2026: a bee stopped with
+            # background jobs left, in a pane its status row wraps in. It is
+            # not done, and its status row is nothing it said.
+            # Notes may come in another order than they were sent (by hook
+            # while the keeper works): wait for the one asked about.
+            def note_with(text, wait=60):
+                until(lambda: any(text in t for t in bee_notes()), wait)
+                return next((t for t in bee_notes() if text in t), '')
+            cli('msg', bee, 'AUFTRAG-3 JOBS')
+            last = note_with('waits for its background jobs')
+            told = bool(last)
+            print(f'INFO keeper read: {last[last.find("[imkr] bee"):]}')
+            check('(e) a bee with jobs left is told waiting, not done',
+                  told and 'waits for its background jobs: 1 shell, 1 monitor, 1 background agent' in last and 'is done' not in last,
+                  f'keeper got {got("keeper")[-2:]}; bee took {observed("bee")}; '
+                  f'bee shows:\n{cli("read", bee).stdout}')
+            do('bee', 'jobs-end')
+            last = note_with('JOBS-ERLEDIGT')
+            told = bool(last)
+            # And nothing in between: no done with the old line.
+            early = [t for t in bee_notes() if 'is done: ERGEBNIS-3' in t]
+            print(f'INFO keeper read: {last[last.find("[imkr] bee"):]}')
+            check('(e) when its jobs are over and it stops, it is done with what it said',
+                  told and last.endswith('is done: JOBS-ERLEDIGT') and not early,
+                  f'keeper got {got("keeper")[-2:]}; bee took {observed("bee")}; '
+                  f'bee shows:\n{cli("read", bee).stdout}')
 
             # (a2) Two messages for the parked keeper, no key at all: a
             # parked agent fires no hook, so they have to be typed.

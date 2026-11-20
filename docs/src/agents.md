@@ -667,12 +667,16 @@ failed and has stayed so for ten seconds:
 [imkr] bee api-fix (claude@server:api-fix/0) is blocked and asks: Push to main?
 [imkr] bee api-fix (claude@server:api-fix/0) failed: rate limit
 [imkr] bee api-fix (claude@server:api-fix/0) is done; it wrote to you this turn
+[imkr] bee api-fix (claude@server:api-fix/0) is not done yet, it waits for its background jobs: 1 shell
 ```
 
 Once per stop: the same state is told again only after the bee took a new prompt (or worked for
 half a minute on end, for an agent that does not report its prompts), so a flicker between idle
 and working says nothing. What it said last comes from above its input line, not Claude Code's
-footer. A bee that already wrote to its keeper in that turn gets the short last line, so the
+footer, and not its status row (`✻ Crunched for 1m 32s · done …`), however narrow the pane
+wraps it. A bee that stopped with background jobs still running (a shell, a monitor) is not
+done: it goes on by itself when they end, so its keeper hears that it waits, and *done* comes
+when it really stops. While its spinner shows it at work, it is not told stopped at all. A bee that already wrote to its keeper in that turn gets the short last line, so the
 keeper does not read its words twice; blocked and failed always come whole. It travels like
 `imkr msg`, to keepers on other machines too. The setting *Tell the keeper when a bee stops*
 turns it off.

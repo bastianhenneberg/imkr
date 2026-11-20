@@ -109,7 +109,7 @@ const INPUT_FRAME: &[char] = &['│', '┃'];
 /// (vim, a question dialog, an agent we do not know) is left to whoever
 /// asks. The bottom-most box wins, the one being written in.
 pub fn input_box(screen: &crate::term::Parser) -> Option<String> {
-    input_box_in(&screen_rows(screen, true)).map(|(_, written)| written)
+    input_box_in(&screen_rows(screen, true)).map(|(_, _, written)| written)
 }
 
 /// Each row of `screen` as written, dim cells as blanks when `dim_blank`.
@@ -135,7 +135,7 @@ fn screen_rows(screen: &crate::term::Parser, dim_blank: bool) -> Vec<String> {
 
 /// The bottom-most framed input line in `text` (`input_box`): the row of
 /// its upper rule and what stands in it.
-fn input_box_in(text: &[String]) -> Option<(usize, String)> {
+fn input_box_in(text: &[String]) -> Option<(usize, usize, String)> {
     let rule = |row: &str| {
         let row = row.trim();
         row.chars().filter(|&c| c == '─').count() >= 10
@@ -158,7 +158,7 @@ fn input_box_in(text: &[String]) -> Option<(usize, String)> {
         let written = first.strip_prefix(INPUT_PROMPTS)?;
         let mut lines = vec![written.trim().to_owned()];
         lines.extend(inside[1..].iter().cloned());
-        Some((top, lines.join("\n").trim().to_owned()))
+        Some((top, bottom, lines.join("\n").trim().to_owned()))
     })
 }
 
@@ -173,37 +173,17 @@ const LAST_SAID_ROWS: usize = 4;
 ///
 /// Above the input line, not the bottom of the screen: under Claude Code's
 /// box stand only its footer rows (`⏵⏵ bypass permissions on`), which say
-/// nothing about the work. The timer row Claude Code leaves above the box
-/// (`✻ Cooked for 2m 3s`) is skipped the same way. Where there is no box,
-/// the bottom of the screen it is.
+/// nothing about the work. The status paragraph Claude Code leaves above
+/// the box (`✻ Crunched for 1m 32s · done 2:59 PM · 1 shell still
+/// running`, with `⎿ Tip:` rows under it) is skipped whole: in a narrow
+/// pane it wraps, and skipping its rows one by one let the wrapped end
+/// through as if the agent had said it (found on the first real report).
+/// Where there is no box, the bottom of the screen it is.
 pub fn last_said(screen: &crate::term::Parser) -> Option<String> {
-    let rows = screen_rows(screen, false);
-    let end = input_box_in(&screen_rows(screen, true)).map_or(rows.len(), |(top, _)| top);
-    let frame: &[char] = &['│', '╭', '╮', '╰', '╯', '─', '┃'];
-    let bare = |row: &str| row.trim().trim_matches(frame).trim().to_owned();
-    // A timer or spinner row: a glyph, then words that end in a time.
-    let spinner = |row: &str| {
-        row.starts_with(['✻', '✽', '✢', '✳', '✶', '✺', '·', '*'])
-            && (row.contains(" for ") || row.contains('…') || row.contains('('))
-    };
-    let mut block: Vec<String> = Vec::new();
-    for row in rows[..end].iter().rev().map(|r| bare(r)) {
-        if row.is_empty() || row.chars().all(|c| frame.contains(&c)) {
-            if block.is_empty() {
-                continue;
-            }
-            break;
-        }
-        if block.is_empty() && spinner(&row) {
-            continue;
-        }
-        block.push(row);
-        if block.len() == LAST_SAID_ROWS {
-            break;
-        }
-    }
-    block.reverse();
-    let line = block.join(" ");
+    let (paragraphs, _) = above_and_below(screen);
+    let said = paragraphs.into_iter().find(|p| !status_row(&p[0]))?;
+    let tail = &said[said.len().saturating_sub(LAST_SAID_ROWS)..];
+    let line = tail.join(" ");
     let line = line
         .trim_start_matches(['●', '⏺'])
         .split_whitespace()
@@ -217,6 +197,125 @@ pub fn last_said(screen: &crate::term::Parser) -> Option<String> {
         cut.push('…');
     }
     Some(cut)
+}
+
+/// The background jobs an agent on `screen` still has running (#1538),
+/// as it names them: `1 shell, 1 monitor`. Claude Code says so in its
+/// status paragraph (`· 1 shell, 1 monitor still running`) and in its
+/// footer (`· 1 shell, 1 monito`, cut to the width). An agent with one
+/// waits for it and goes on by itself; it is not done.
+pub fn background_jobs(screen: &crate::term::Parser) -> Option<String> {
+    let (paragraphs, footer) = above_and_below(screen);
+    let status = paragraphs
+        .first()
+        .filter(|p| status_row(&p[0]))
+        .map(|p| p.join(" "));
+    status
+        .into_iter()
+        .chain(footer)
+        .find_map(|text| jobs_in(&text))
+}
+
+/// Whether `screen` shows the agent at work (#1538): Claude Code's
+/// spinner row, a word and `…` (`✢ Finagling… (10s)`), right above its
+/// input line. A turn it takes up by itself — a background job ended —
+/// fires no hook until it calls a tool, so its reported state still says
+/// idle while it works; its keeper was told "done" with an old line.
+pub fn shows_working(screen: &crate::term::Parser) -> bool {
+    let (paragraphs, _) = above_and_below(screen);
+    paragraphs
+        .first()
+        .and_then(|p| status_rest(&p[0]))
+        .is_some_and(|rest| rest.starts_with('…') || rest.starts_with("..."))
+}
+
+/// The paragraphs above the input box, the nearest first, each as its
+/// rows without frame; and the rows under the box (its footer).
+fn above_and_below(screen: &crate::term::Parser) -> (Vec<Vec<String>>, Vec<String>) {
+    let rows = screen_rows(screen, false);
+    let boxed = input_box_in(&screen_rows(screen, true));
+    let (end, footer) = boxed.map_or((rows.len(), Vec::new()), |(top, bottom, _)| {
+        (top, rows[bottom + 1..].to_vec())
+    });
+    let frame: &[char] = &['│', '╭', '╮', '╰', '╯', '─', '┃'];
+    let bare = |row: &str| row.trim().trim_matches(frame).trim().to_owned();
+    // A row the terminal wrapped goes on in the next: one line, joined
+    // without a space (`backgrou` `nd agent`). A row only as wide as the
+    // pane does not.
+    let last = screen.size().1.saturating_sub(1);
+    let mut lines: Vec<String> = Vec::new();
+    let mut goes_on = false;
+    for (i, row) in rows[..end].iter().enumerate() {
+        match lines.last_mut() {
+            Some(line) if goes_on => line.push_str(row),
+            _ => lines.push(row.clone()),
+        }
+        goes_on = screen.cell(i as u16, last).is_some_and(|c| c.wraps());
+    }
+    let mut paragraphs = Vec::new();
+    let mut block: Vec<String> = Vec::new();
+    for row in lines.iter().rev().map(|r| bare(r)) {
+        if row.is_empty() || row.chars().all(|c| frame.contains(&c)) {
+            if !block.is_empty() {
+                block.reverse();
+                paragraphs.push(std::mem::take(&mut block));
+            }
+            continue;
+        }
+        block.push(row);
+    }
+    if !block.is_empty() {
+        block.reverse();
+        paragraphs.push(block);
+    }
+    (paragraphs, footer)
+}
+
+/// Whether `row` begins Claude Code's status paragraph: a spinner glyph,
+/// one word, then `…` while it works or ` for <time>` when it is done
+/// (`✢ Finagling… (10s)`, `✻ Crunched for 1m 32s`) — any verb, it picks
+/// a new one each turn.
+fn status_row(row: &str) -> bool {
+    status_rest(row).is_some_and(|rest| {
+        rest.starts_with('…') || rest.starts_with("...") || rest.starts_with(" for ")
+    })
+}
+
+/// What follows the glyph and the verb of a row that may be Claude
+/// Code's status row: `… (10s)` or ` for 1m 32s`.
+fn status_rest(row: &str) -> Option<&str> {
+    let mut chars = row.chars();
+    if !chars
+        .next()
+        .is_some_and(|c| ['✻', '✽', '✢', '✳', '✶', '✺', '·', '*'].contains(&c))
+    {
+        return None;
+    }
+    let rest = chars.as_str().trim_start();
+    let word = rest
+        .find(|c: char| !c.is_alphabetic())
+        .unwrap_or(rest.len());
+    (word > 0).then(|| &rest[word..])
+}
+
+/// The jobs named in one of Claude Code's `·`-separated status texts:
+/// the part that begins with a count and names a shell, monitor, task,
+/// agent or job.
+fn jobs_in(text: &str) -> Option<String> {
+    text.split('·').find_map(|part| {
+        let part = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        // `still running` may be split by the wrap: `st` `ill running`.
+        let end = part
+            .char_indices()
+            .find(|&(i, _)| part[i..].replace(' ', "").starts_with("stillrunning"))
+            .map_or(part.len(), |(i, _)| i);
+        let part = part[..end].trim();
+        let counted = part.starts_with(|c: char| c.is_ascii_digit());
+        let named = ["shell", "monitor", "task", "agent", "job"]
+            .iter()
+            .any(|w| part.contains(w));
+        (counted && named).then(|| part.to_owned())
+    })
 }
 
 pub struct Pane {
@@ -1602,6 +1701,70 @@ mod tests {
         ))
         .unwrap();
         assert!(said.chars().count() <= LAST_SAID + 1, "{said}");
+    }
+
+    /// The first real report (#1538) passed on Claude Code's own status
+    /// row: in a pane 50 columns wide `✻ Crunched for 1m 32s · done …
+    /// still running` wraps, and its second row read as said. The whole
+    /// status paragraph is skipped, whatever the verb, tip rows and all —
+    /// and the jobs it names are what the agent waits for.
+    #[test]
+    fn a_wrapped_status_row_is_not_what_an_agent_said() {
+        let rule = "─".repeat(50);
+        let screen = format!(
+            "● Ich warte auf die CI-Meldung.\r\n\r\n\
+             ✻ Crunched for 1m 32s · done 2:59 PM · 1 shell, 1 monitor still running\r\n\r\n\
+             {rule}\r\n❯\u{a0}\r\n{rule}\r\n  ⏵⏵ bypass permissions on · 1 shell, 1 monito"
+        );
+        let screen = shown(&screen, 50);
+        assert_eq!(
+            last_said(&screen).as_deref(),
+            Some("Ich warte auf die CI-Meldung.")
+        );
+        assert_eq!(
+            background_jobs(&screen).as_deref(),
+            Some("1 shell, 1 monitor")
+        );
+        // Wrapped inside a word, as at 80 columns with three jobs.
+        let split = format!(
+            "● Fertig.\r\n\r\n✻ Crunched for 1m 32s · done 2:59 PM · 1 shell, 1 monitor, \
+             1 background agent still running\r\n{rule}\r\n❯\u{a0}\r\n{rule}"
+        );
+        assert_eq!(
+            background_jobs(&shown(&split, 80)).as_deref(),
+            Some("1 shell, 1 monitor, 1 background agent")
+        );
+        // A row exactly as wide as the pane is no wrap.
+        let full = format!("{}\r\nnext\r\n{rule}\r\n❯\u{a0}\r\n{rule}", "x".repeat(50));
+        assert_eq!(
+            last_said(&shown(&full, 50)).map(|s| s.ends_with("x next")),
+            Some(true)
+        );
+        // While it works: another verb, a tip under it.
+        let working = format!(
+            "● Ich lese den Code.\r\n\r\n✢ Finagling… (10s · thought for 5s)\r\n  \
+             ⎿  Tip: Share Claude Code and earn usage credits\r\n\r\n\
+             {rule}\r\n❯\u{a0}\r\n{rule}\r\n  ⏵⏵ bypass permissions on"
+        );
+        let working = shown(&working, 50);
+        assert_eq!(last_said(&working).as_deref(), Some("Ich lese den Code."));
+        assert_eq!(background_jobs(&working), None);
+        assert!(shows_working(&working));
+        assert!(!shows_working(&screen));
+        // Only the footer still names a job, cut to the width.
+        let footer = format!(
+            "● Fertig.\r\n\r\n{rule}\r\n❯\u{a0}\r\n{rule}\r\n  ⏵⏵ bypass permissions on · 2 shells"
+        );
+        assert_eq!(
+            background_jobs(&shown(&footer, 50)).as_deref(),
+            Some("2 shells")
+        );
+        // A sentence that only begins like one is said, not status.
+        let star = format!("* Note (draft): read it\r\n\r\n{rule}\r\n❯\u{a0}\r\n{rule}");
+        assert_eq!(
+            last_said(&shown(&star, 50)).as_deref(),
+            Some("* Note (draft): read it")
+        );
     }
 
     /// Where no agent draws an input line, imkr cannot tell — and says
