@@ -146,6 +146,11 @@ pub struct SessionInfo {
     /// A keeper's session (#9133). False from versions before.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub keeper: bool,
+    /// Its open questions to the user (`imkr question`, #10254): a keeper
+    /// that waits for an answer shows it in every list. 0 from versions
+    /// before.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub questions: usize,
     /// The name and id of the machine, and its register of the user's
     /// machines: only on the first entry of `imkr ls --json` asked with
     /// `machines::HOSTS_ENV` (#9648). Empty from versions before.
@@ -155,6 +160,10 @@ pub struct SessionInfo {
     pub machine_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub machines: Vec<crate::machines::Entry>,
+}
+
+fn is_zero_usize(n: &usize) -> bool {
+    *n == 0
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -479,7 +488,14 @@ pub enum Request {
     /// into its input line (#9379). They are gone from the mailbox after,
     /// so `deliver_mail` never types them in too, and the pane counts as
     /// one that fetches its mail itself from now on.
-    TakeMail { pane: PaneId },
+    TakeMail {
+        pane: PaneId,
+        /// Also the one line about bees that stopped and went to the
+        /// board instead of the conversation (`App::pings`): asked for by
+        /// `UserPromptSubmit`, where it rides along with the user's prompt.
+        #[serde(default)]
+        digest: bool,
+    },
     /// Tells the session of a message's **sender** that it has not arrived
     /// (#1307): `pane` is the sender's pane here, `to` the address it was
     /// sent to, `why` what is known. Not a message — a message would queue
@@ -635,6 +651,12 @@ pub enum Request {
         /// `None` halves it, as a split does.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ratio: Option<f32>,
+        /// The new pane goes on top of the one it splits instead of beside
+        /// it, `ratio` being its own share then: the question board above
+        /// the keeper's message pane (#10254). Older servers do not know
+        /// it and put it beside.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        above: bool,
     },
     /// Shows pane `pane` on this connection from now on: after the reply,
     /// its history and screen and then its output come as
@@ -987,6 +1009,28 @@ pub enum MailWhat {
     /// The input line was emptied with `imkr send --clear`, nothing sent:
     /// `why` is what stood there.
     Cleared,
+    /// A bee said it stopped (`tell_keeper`): done, or waiting for its
+    /// background jobs. Noted for the message pane, not put into the
+    /// keeper's conversation — there the pings buried the questions the
+    /// user still had to answer (25.11.2026).
+    Status,
+}
+
+/// A bee's stop that went to its keeper's board instead of into its
+/// conversation (`MailWhat::Status`), until the keeper is told of it in one
+/// line with the others (`App::digest_pings`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Ping {
+    /// The keeper's pane here.
+    pub pane: PaneId,
+    /// The bee's address, as it signed.
+    pub from: String,
+    /// The bee's session, which is what the keeper calls it.
+    pub bee: String,
+    /// `done` or `waiting`.
+    pub word: String,
+    /// Seconds since 1970.
+    pub at: u64,
 }
 
 /// A message an agent here sent or got (`imkr msg`), kept for the
@@ -1118,6 +1162,7 @@ mod tests {
                 fresh: false,
                 by: Some("laptop:imker/0".into()),
                 ratio: None,
+                above: false,
             }),
             ClientMsg::Request(Request::Tap {
                 pane: 4,

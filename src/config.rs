@@ -302,6 +302,15 @@ pub struct Config {
     /// (#1538). A keeper learns that a bee is finished without anybody
     /// nudging it.
     pub tell_keeper: bool,
+    /// A bee's done or waiting goes into its keeper's conversation as a
+    /// message, as before. Off (the default), it stands only in the
+    /// keeper's message pane, and the keeper gets one line with the bees
+    /// that stopped: with the user's next prompt, or after
+    /// `keeper_digest_after` of rest. Blocked and failed always go in.
+    pub keeper_pings_in_chat: bool,
+    /// How long, in seconds, a bee may stand done on its resting keeper's
+    /// board before the keeper gets the one line about it (#10254).
+    pub keeper_digest_after: u64,
     /// `imkr` opens the session list when it starts, to pick where to go.
     /// Without it, it goes straight to the session used last.
     pub sessions_on_start: bool,
@@ -707,6 +716,8 @@ impl Default for Config {
             revive_at_boot: false,
             checkpoints: false,
             tell_keeper: true,
+            keeper_pings_in_chat: false,
+            keeper_digest_after: 600,
             sessions_on_start: false,
             session_banner: true,
             session_banner_at: BannerAt::Middle,
@@ -939,6 +950,11 @@ pub const SETTINGS: &[Setting] = &[
         name: "Tell the keeper when a bee stops",
         value: |c| if c.tell_keeper { "on" } else { "off" }.to_owned(),
         step: |c, _| c.tell_keeper = !c.tell_keeper,
+    },
+    Setting {
+        name: "Bee done/waiting into the keeper's chat",
+        value: |c| if c.keeper_pings_in_chat { "on" } else { "off" }.to_owned(),
+        step: |c, _| c.keeper_pings_in_chat = !c.keeper_pings_in_chat,
     },
     Setting {
         name: "tmux for agent teams (new panes)",

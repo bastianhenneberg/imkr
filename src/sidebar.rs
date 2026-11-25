@@ -73,6 +73,8 @@ pub struct SessionRow {
     pub elsewhere: Option<String>,
     /// A keeper's session (#9133): ⚑ in front of its name.
     pub keeper: bool,
+    /// Its open questions to the user (#10254): `?N` before its name.
+    pub questions: usize,
 }
 
 pub struct AgentRow {
@@ -349,11 +351,14 @@ pub fn lines(data: &Data, width: u16) -> Vec<(Line<'static>, Option<Target>)> {
             let parts = agent_dots(&session.dots);
             let right: String = parts.iter().map(|(_, part)| part.as_str()).collect();
             let lead = format!("{indent}{under}{marker}");
-            let mark = if session.keeper {
+            let mut mark = if session.keeper {
                 format!("{} ", crate::keeper::MARK)
             } else {
                 String::new()
             };
+            if session.questions > 0 {
+                mark.push_str(&format!("?{} ", session.questions));
+            }
             // A worker from another machine names it after its own name,
             // the name first when the width runs out (#9621).
             let room = width.saturating_sub(
@@ -1061,6 +1066,7 @@ mod tests {
             depth: 0,
             elsewhere: None,
             keeper: false,
+            questions: 0,
         };
         let mut data = data();
         data.sessions = vec![
@@ -1124,6 +1130,7 @@ mod tests {
                 depth: 0,
                 elsewhere: None,
                 keeper: true,
+                questions: 2,
             },
             SessionRow {
                 host: None,
@@ -1138,6 +1145,7 @@ mod tests {
                 depth: 1,
                 elsewhere: None,
                 keeper: false,
+                questions: 0,
             },
             SessionRow {
                 host: None,
@@ -1152,6 +1160,7 @@ mod tests {
                 depth: 0,
                 elsewhere: None,
                 keeper: false,
+                questions: 0,
             },
         ];
         let rows: Vec<(String, Option<Target>)> = lines(&data, 32)
@@ -1161,7 +1170,8 @@ mod tests {
         let find = |text: &str| rows.iter().find(|(line, _)| line.contains(text)).cloned();
         assert!(find("↳ worker").is_some(), "{rows:#?}");
         // A keeper's session carries its mark (#9133).
-        assert!(find("▸ ⚑ imker").is_some(), "{rows:#?}");
+        // And its open questions to the user (#10254).
+        assert!(find("▸ ⚑ ?2 imker").is_some(), "{rows:#?}");
         assert_eq!(find("↳ worker").unwrap().1, Some(Target::Session(1)));
         // No arrow for the one whose orchestrator is not above it.
         assert!(find("  lonely").is_some());
@@ -1187,6 +1197,7 @@ mod tests {
             depth,
             elsewhere: elsewhere.map(str::to_owned),
             keeper: depth == 0,
+            questions: 0,
         };
         data.sessions = vec![
             row(None, "imker", 0, None),

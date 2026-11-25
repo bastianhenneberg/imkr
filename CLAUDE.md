@@ -982,6 +982,29 @@ Projekt-Slug: `imkr`
   Einstellung `tell_keeper` (Standard an). E2E: `cargo build && python3 tests/keeper_report.py`
   (zwei Sessions ohne `IMKR_SOCKET`, Fake-Claude mit Box, Fußzeile und Hooks; `IMKR_HOSTNAME`
   schlägt Config-`name` für `machine_name`).
+- **Status-Pings aufs Board, nicht ins Gespräch** (Brain-Task #10254, 25.11.2026, Bastian: die
+  Fragen gingen zwischen den Pings unter). Entschieden wird beim **Keeper** in `Request::Message`
+  (`App::board_message`): freie Funktion `board_ping` liest den Text von `keeper_note`
+  (`[imkr] bee S (ADR) is done…`/`is not done yet`) — so gilt es auch für Bienen mit altem imkr
+  und auf anderen Rechnern, ohne Flag. done/waiting → `MailWhat::Status` im `mail_log` (mail-Pane
+  `●`, `exchanged` für Ctrl+B O) und `protocol::Ping` in `App::pings` (Handover), Antwort
+  `board: true`; „wrote to you“ nur Vermerk. blocked/failed und alles andere wie bisher; jede
+  andere Nachricht derselben Adresse räumt deren Ping. Sammelzeile `digest_line` (nur Name +
+  Zustand, Auflage des Keepers): `TakeMail { digest }` setzt nur `UserPromptSubmit`
+  (`mail_for_hook`), `digest_pings` (vor `deliver_mail`) postet sie an einen nicht arbeitenden
+  Keeper, sobald der älteste Ping `keeper_digest_after` (600 s) alt ist, einmal, Absender
+  `DIGEST_FROM`. Einstellung `keeper_pings_in_chat` = alter Weg (`tests/keeper_report.py` setzt
+  sie, weil er den Wortlaut im Gespräch liest). E2E: `cargo build && python3 tests/keeper_board.py`
+  (18 Fälle, ~3 min; v0.21.116 fällt bei (1)).
+- Fragen-Board (#10254): `src/question.rs`, Datei `<state>/questions/<session>.json` unter flock
+  (`change`, `.lock` daneben, kaputte Datei wird nicht überschrieben), `Board::next` vergibt F-Nummern
+  nie doppelt. CLI `imkr question|frage add|answer|drop|ls|pane` (`-s` = Session), Pane
+  `ls --follow` (zeichnet bei Änderung/Größe neu, nur offene). `imkr keeper` legt es per
+  `question::board_pane` **über** das mail-Pane: `Request::New.above` = Column-Split + `layout.swap`
+  (neues Pane oben, `ratio` ist dann seine Größe; alte Server ignorieren das Feld). Zahl offener
+  Fragen: `question::open_count` in `client::local_sessions` → `SessionInfo::questions` →
+  `SessionRow::questions` (`?N` vor dem Namen), `ls --json`. Antworten im Pane selbst: später
+  (Keeper-Entscheid 25.11.).
 - Getippter Rückfall erst bei echter Ruhe (#9379, v0.21.93): `QUIET_BEFORE_TYPING` (5 s ohne
   Ausgabe) zusätzlich zu `HOOK_WITHIN`. Gemeldetes idle allein genügt nicht — zwischen zwei
   Zügen meldet ein Agent kurz idle, während er mitten in der Arbeit ist, und genau dann traf

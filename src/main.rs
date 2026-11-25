@@ -31,6 +31,7 @@ mod persist;
 mod plugin;
 mod protocol;
 mod push;
+mod question;
 mod release;
 mod render;
 mod review;
@@ -266,6 +267,14 @@ For scripts and agents:
                                         by its own hook). --follow keeps showing
                                         it; ADDRESS narrows it to one pane, on
                                         another machine too
+  question add|answer|drop|ls|pane      the questions a keeper still has to ask
+                                        the user, F1, F2 … per session (alias
+                                        frage): add [--from WHERE] [--recommend
+                                        TEXT] [--ref F3] TEXT, answer F3 ANSWER
+                                        (word for word), drop F3 [--by F5], ls
+                                        [--all] [--json] [--follow]; pane puts
+                                        the open ones above the keeper's
+                                        message pane
   msg [--wait] [--confirm] <to> <text>  message an agent: <to> is a pane number,
                                         name or program, `session/<to>` or
                                         `machine:session/<to>`. Typed in once it
@@ -458,6 +467,7 @@ fn main() -> Result<()> {
         ["send", ..] => cli::send(&args[1..]),
         ["msg", ..] => cli::msg(&args[1..]),
         ["mail", ..] => cli::mail(&args[1..]),
+        ["question" | "frage", ..] => question::cli(&args[1..]),
         ["overdue", ..] => cli::overdue(&args[1..]),
         ["note", ..] => cli::note(&args[1..]),
         ["connect", ..] => cli::connect(&args[1..]),

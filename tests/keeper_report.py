@@ -106,6 +106,11 @@ while True:
             spinner = True; draw(); hook('working', 'PreToolUse')
             time.sleep(3)
             spinner = False; draw(); hook('idle', 'Stop')
+        if what == 'block':
+            # A question of its own on the screen, reported as Claude Code's
+            # Notification hook does.
+            transcript.append('● Darf ich den Zweig pushen?')
+            draw(); hook('blocked', 'Notification')
         if what == 'jobs-end':
             # The job ends, the agent takes up its turn and finishes it.
             # As Claude Code: the spinner first, its hook only later (here
@@ -151,7 +156,10 @@ def run(binary):
         fake.write_text(FAKE)
         fake.chmod(0o755)
         config = root / 'config.toml'
-        config.write_text(f'notifications = "off"\nname = "{MACHINE}"\n')
+        # The notes' wording is what this test reads: in the conversation,
+        # as before #10254 (tests/keeper_board.py covers the board).
+        config.write_text(f'notifications = "off"\nname = "{MACHINE}"\n'
+                          'keeper_pings_in_chat = true\n')
         notify_log = root / 'intercepted-notifications.log'
         notify = root / 'bin' / 'notify-send'
         notify.write_text('#!/bin/sh\nprintf "%s\\n" intercepted >> "$KEEPER_TEST_NOTIFY_LOG"\n')

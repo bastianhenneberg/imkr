@@ -65,6 +65,9 @@ pub struct Handover {
     /// Who messaged whom, for the orchestration view.
     #[serde(default)]
     pub mail_log: Vec<crate::protocol::MailNote>,
+    /// Bees' stops the keeper here has not been told of yet (`App::pings`).
+    #[serde(default)]
+    pub pings: Vec<crate::protocol::Ping>,
     /// Agents brought back at boot as their shell only, waiting for the
     /// first client to be picked up again (#1357): agent and line by pane.
     #[serde(default)]

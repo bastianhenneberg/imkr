@@ -402,6 +402,7 @@ fn start(
                 fresh: true,
                 by: by.clone(),
                 ratio: None,
+                above: false,
             },
         )
     }
@@ -612,6 +613,7 @@ fn mail_pane(socket: &Path, agent: PaneId) {
             fresh: false,
             by: None,
             ratio: Some(MAIL_SHARE),
+            above: false,
         },
     );
     let reply = match reply {
@@ -629,6 +631,11 @@ fn mail_pane(socket: &Path, agent: PaneId) {
                 name: Some("mail".to_owned()),
             },
         );
+        // The questions the keeper still has to ask the user, above it
+        // (#10254): always in sight, not up in the conversation.
+        if let Err(e) = crate::question::board_pane(socket, Some(pane as PaneId)) {
+            eprintln!("no question pane: {e:#}");
+        }
     }
     // Back to the agent: the keeper types there, not in the message pane.
     let _ = client::request_at(socket, Request::Reveal { pane: agent });

@@ -408,6 +408,14 @@ For scripts and agents:
                                         by its own hook). --follow keeps showing
                                         it; ADDRESS narrows it to one pane, on
                                         another machine too
+  question add|answer|drop|ls|pane      the questions a keeper still has to ask
+                                        the user, F1, F2 … per session (alias
+                                        frage): add [--from WHERE] [--recommend
+                                        TEXT] [--ref F3] TEXT, answer F3 ANSWER
+                                        (word for word), drop F3 [--by F5], ls
+                                        [--all] [--json] [--follow]; pane puts
+                                        the open ones above the keeper's
+                                        message pane
   msg [--wait] [--confirm] &lt;to&gt; &lt;text&gt;  message an agent: &lt;to&gt; is a pane number,
                                         name or program, `session/&lt;to&gt;` or
                                         `machine:session/&lt;to&gt;`. Typed in once it

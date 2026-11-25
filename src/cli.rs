@@ -105,7 +105,10 @@ fn mail_for_hook(hook: &serde_json::Value, pane: PaneId) -> Option<String> {
         return None;
     }
     // A hook must never break the agent: no server, no mail, no output.
-    let reply = client::request(Request::TakeMail { pane }).ok()?;
+    // The line about bees that stopped rides along with the user's prompt,
+    // never with `Stop`: there it would come back as a turn of its own.
+    let digest = event == "UserPromptSubmit";
+    let reply = client::request(Request::TakeMail { pane, digest }).ok()?;
     let messages: Vec<String> = reply["messages"]
         .as_array()?
         .iter()
@@ -792,6 +795,12 @@ pub fn msg(args: &[String]) -> Result<()> {
     // Never say "delivered" for something that has only been written: a
     // receipt that promised a delivery which never happened is what made
     // two of the user's decisions vanish on 03.11.2026 (#1307).
+    if reply["board"].as_bool() == Some(true) {
+        // A bee's done: the keeper's message pane shows it, its
+        // conversation gets one line for all of them later (#10254).
+        println!("noted on the board of pane {pane}, not put into its conversation");
+        return Ok(());
+    }
     if reply["queued"].as_bool() == Some(true) {
         let why = reply["why"]
             .as_str()
@@ -1328,6 +1337,11 @@ pub(crate) fn mail_line(note: &serde_json::Value) -> String {
         "typed" => format!("{at}  ⤸ pane {pane}: typed in, not confirmed yet"),
         "taken" => format!("{at}  ✓ pane {pane} got it through its own hook"),
         "confirmed" => format!("{at}  ✓ pane {pane} took it, by its own word"),
+        // A bee's done or waiting: on the board, not in the conversation.
+        "status" => format!(
+            "{at}  ● {}",
+            short(without_header(note["text"].as_str().unwrap_or("")), 90)
+        ),
         // Two sides of the same notice: the receiving session knows which
         // of its panes did not get it, the sending one which address it
         // tried to reach.
@@ -2237,6 +2251,7 @@ pub fn new(args: &[String]) -> Result<()> {
         fresh,
         by,
         ratio: None,
+        above: false,
     })?;
     if let (Some(name), Some(window)) = (name, value["workspace"].as_u64()) {
         client::request(Request::Rename {
@@ -2314,6 +2329,7 @@ pub fn new_hosted(here: &std::path::Path, remote: &client::Remote, args: &[Strin
             fresh: false,
             by: None,
             ratio: None,
+            above: false,
         },
     )?;
     let window = value["workspace"].as_u64().unwrap_or_default() as u8;

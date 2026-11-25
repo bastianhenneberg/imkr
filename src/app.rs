@@ -838,6 +838,47 @@ fn keeper_note(session: &str, from: &str, word: &str, said: Option<&str>, wrote:
     }
 }
 
+/// The sender of the one line about the bees on a keeper's board.
+const DIGEST_FROM: &str = "imkr";
+
+/// What a note `keeper_note` wrote says, when it belongs on the keeper's
+/// board and not into its conversation (#10254): the bee's session and
+/// `done`, `waiting` or `wrote` (done, and it wrote to the keeper this
+/// turn itself). `None` for blocked, failed and every other message: those
+/// the keeper has to act on.
+///
+/// Read from the text, not from a flag: the note comes from the bee's
+/// imkr, which may be an older one and on another machine.
+fn board_ping(text: &str) -> Option<(String, &'static str)> {
+    let rest = text.trim_start().strip_prefix("[imkr] bee ")?;
+    let (bee, rest) = rest.split_once(" (")?;
+    let (_, said) = rest.split_once(") ")?;
+    let word = if said.starts_with("is done; it wrote to you") {
+        "wrote"
+    } else if said.starts_with("is done") {
+        "done"
+    } else if said.starts_with("is not done yet") {
+        "waiting"
+    } else {
+        return None;
+    };
+    (!bee.is_empty() && !bee.contains(char::is_whitespace)).then(|| (bee.to_owned(), word))
+}
+
+/// The one line a keeper gets about the bees on its board (#10254): name
+/// and state, never what the bee said last — that stands in the message
+/// pane, and it is what flooded the conversation.
+fn digest_line(pings: &[&protocol::Ping]) -> String {
+    let bees: Vec<String> = pings
+        .iter()
+        .map(|ping| format!("{} {}", ping.bee, ping.word))
+        .collect();
+    format!(
+        "[imkr] bees that stopped and have not written to you: {} (what they said: imkr mail)",
+        bees.join(", ")
+    )
+}
+
 /// Sends `text` to the keeper at `to` as pane `from`, the way `imkr msg`
 /// does: into its session here, over ssh to another machine, or into the
 /// outbox when that is out of reach (#1538). In the background, by this
@@ -1410,7 +1451,10 @@ fn send_into(
 /// orchestration view is about: not what became of one (#9379), and not one
 /// a person sent from a plain terminal, which cannot be answered.
 fn exchanged(note: &protocol::MailNote) -> bool {
-    note.what == protocol::MailWhat::Message && note.peer.contains(':')
+    matches!(
+        note.what,
+        protocol::MailWhat::Message | protocol::MailWhat::Status
+    ) && note.peer.contains(':')
 }
 
 /// How long a message for an agent that fetches its own mail waits before
@@ -1858,6 +1902,9 @@ pub struct App {
     keeper_told: HashMap<PaneId, KeeperTold>,
     /// Who messaged whom, newest last, for the orchestration view.
     mail_log: Vec<protocol::MailNote>,
+    /// Bees' stops that went to the board instead of into their keeper's
+    /// conversation and that it has not been told of yet (#10254).
+    pings: Vec<protocol::Ping>,
     /// Counts the notes in `mail_log` up, so that `imkr mail --follow`
     /// knows what it has shown (#9379).
     mail_seq: u64,
@@ -2036,6 +2083,7 @@ impl App {
             mail_held: HashSet::new(),
             mail_told: HashSet::new(),
             mail_log: Vec::new(),
+            pings: Vec::new(),
             prompt: None,
             dir_lists: Arc::default(),
             accounts: BTreeMap::new(),
@@ -2373,6 +2421,7 @@ impl App {
         self.resume_later.extend(handover.resume_later.clone());
         self.resume_note = handover.resume_note.clone();
         self.mail_log.extend(handover.mail_log.iter().cloned());
+        self.pings.extend(handover.pings.iter().cloned());
         self.mailbox.extend(handover.mail.iter().cloned());
         self.mail_seq = self
             .mail_log
@@ -2531,6 +2580,7 @@ impl App {
                 .collect(),
             mail: self.mailbox.clone(),
             mail_log: self.mail_log.clone(),
+            pings: self.pings.clone(),
             saved: self.saved(),
             panes,
         };
@@ -3623,6 +3673,20 @@ impl App {
             Request::Message { to, text, from } => {
                 let pane = self.addressee(&to)?;
                 let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                if let Some(seq) = self.board_message(pane, &from, &text) {
+                    return Ok(serde_json::json!({
+                        "pane": pane,
+                        "queued": false,
+                        "why": null,
+                        "seq": seq,
+                        "agent": self.agent_now(pane).is_some(),
+                        "board": true,
+                    }));
+                }
+                // Anything else from a bee is news of its own: what it said
+                // before is no longer what it waits with.
+                self.pings
+                    .retain(|p| !crate::cli::same_address(&p.from, &from));
                 // An address can be answered; the user in a terminal is no pane.
                 let header = if from.contains(':') {
                     format!("[imkr message from {from}, answer with: imkr msg {from} <text>]")
@@ -3654,7 +3718,7 @@ impl App {
                 self.note_mail(pane, &to, true, &text);
                 Ok(serde_json::json!({}))
             }
-            Request::TakeMail { pane } => self.take_mail(pane),
+            Request::TakeMail { pane, digest } => self.take_mail(pane, digest),
             Request::Overdue {
                 pane,
                 to,
@@ -3708,11 +3772,13 @@ impl App {
                 fresh,
                 by,
                 ratio,
+                above,
             } => {
                 // Who asked for the session, not for the pane: given, it
                 // marks this session from now on (#9087).
                 self.take_by(by);
-                self.new_pane(&command, float, workspace, cwd, fresh, ratio)
+                let axis = if above { Axis::Column } else { Axis::Row };
+                self.new_pane(&command, float, workspace, cwd, fresh, (axis, ratio))
             }
             Request::Worktree {
                 name,
@@ -4300,7 +4366,7 @@ impl App {
     /// itself, so nothing is typed into its input line. They are gone from
     /// the mailbox after, which is what makes it exactly once, and the pane
     /// counts as one that fetches its mail from now on.
-    fn take_mail(&mut self, pane: PaneId) -> Reply {
+    fn take_mail(&mut self, pane: PaneId, digest: bool) -> Reply {
         if !self.panes.contains_key(&pane) {
             return Err(format!("no pane {pane}"));
         }
@@ -4337,10 +4403,90 @@ impl App {
                 taken.len()
             ));
         }
+        let mut messages: Vec<String> = taken.iter().map(|m| m.text.clone()).collect();
+        if digest && let Some(line) = self.take_digest(pane, Duration::ZERO) {
+            messages.push(line);
+        }
         Ok(serde_json::json!({
             "pane": pane,
-            "messages": taken.iter().map(|m| m.text.clone()).collect::<Vec<_>>(),
+            "messages": messages,
         }))
+    }
+
+    /// Puts a bee's done or waiting on its keeper's board instead of into
+    /// its conversation (#10254): a note in the message pane and a ping
+    /// the keeper is told of in one line later. `None` for a message that
+    /// goes in as before — blocked, failed, anything a bee writes itself,
+    /// or every one with `keeper_pings_in_chat`.
+    fn board_message(&mut self, pane: PaneId, from: &str, text: &str) -> Option<u64> {
+        if self.config.keeper_pings_in_chat {
+            return None;
+        }
+        let (bee, word) = board_ping(text)?;
+        let seq = self.note_what(pane, from, false, text, protocol::MailWhat::Status, None);
+        self.pings
+            .retain(|p| !crate::cli::same_address(&p.from, from));
+        // Done and wrote to the keeper itself: the keeper has its word.
+        if word != "wrote" {
+            self.pings.push(protocol::Ping {
+                pane,
+                from: from.to_owned(),
+                bee,
+                word: word.to_owned(),
+                at: crate::persist::now(),
+            });
+        }
+        Some(seq)
+    }
+
+    /// The one line about the bees on pane `pane`'s board that have stood
+    /// there at least `after`, taking them off; `None` when there are none.
+    fn take_digest(&mut self, pane: PaneId, after: Duration) -> Option<String> {
+        let now = crate::persist::now();
+        let due =
+            |p: &protocol::Ping| p.pane == pane && now.saturating_sub(p.at) >= after.as_secs();
+        let mut ready: Vec<&protocol::Ping> = self.pings.iter().filter(|p| due(p)).collect();
+        if ready.is_empty() {
+            return None;
+        }
+        ready.sort_by_key(|p| p.at);
+        let line = digest_line(&ready);
+        self.pings.retain(|p| p.pane != pane);
+        Some(line)
+    }
+
+    /// Tells a resting keeper of the bees that stand done on its board
+    /// (#10254), once `keeper_digest_after` has passed for the oldest: one
+    /// message for all of them, delivered like any other. A keeper at work
+    /// hears of them with its next prompt (`take_mail` with `digest`) or
+    /// when it rests.
+    fn digest_pings(&mut self) {
+        let mut panes: Vec<PaneId> = self.pings.iter().map(|p| p.pane).collect();
+        panes.sort_unstable();
+        panes.dedup();
+        for pane in panes {
+            if !self.panes.contains_key(&pane) {
+                self.pings.retain(|p| p.pane != pane);
+                continue;
+            }
+            if self.agent_now(pane) == Some(AgentState::Working) {
+                continue;
+            }
+            let now = crate::persist::now();
+            let oldest = self
+                .pings
+                .iter()
+                .filter(|p| p.pane == pane)
+                .map(|p| p.at)
+                .min()
+                .unwrap_or(now);
+            if now.saturating_sub(oldest) < self.config.keeper_digest_after.max(1) {
+                continue;
+            }
+            if let Some(line) = self.take_digest(pane, Duration::ZERO) {
+                self.post_mail(pane, DIGEST_FROM, &line, line.clone());
+            }
+        }
     }
 
     /// Puts mail handed to pane `id` back in the mailbox, because whatever
@@ -4769,7 +4915,14 @@ impl App {
         let (shape, even) = crate::shapes::named(name, n).ok_or(format!("no layout {name}"))?;
         let focus = self.ws.focus;
         for _ in n..shape.panes() {
-            self.new_pane(&[], false, Some(self.workspace), None, false, None)?;
+            self.new_pane(
+                &[],
+                false,
+                Some(self.workspace),
+                None,
+                false,
+                (Axis::Row, None),
+            )?;
         }
         let panes = self.ws.layout.panes();
         let layout = shape.build(&panes, even).ok_or("no panes to lay out")?;
@@ -5227,7 +5380,7 @@ impl App {
             Some(target),
             Some(dir.clone()),
             started_for,
-            None,
+            (Axis::Row, None),
         )?;
         let n = reply["workspace"].as_u64().map_or(n, |w| w as u8);
         if let (Some((tool, name)), Some(pane)) = (account, reply["pane"].as_u64())
@@ -5312,7 +5465,7 @@ impl App {
         workspace: Option<u8>,
         cwd: Option<PathBuf>,
         fresh: bool,
-        ratio: Option<f32>,
+        (axis, ratio): (Axis, Option<f32>),
     ) -> Reply {
         // `imkr new --start --window 0` started this server for this very
         // program: it belongs in the first window, not in a second one
@@ -5351,8 +5504,15 @@ impl App {
             ws.add_float(id, body);
         } else if ws.is_empty() {
             *ws = Workspace::new(id);
-        } else if ws.is_floating(ws.focus) || !ws.split_at(Axis::Row, id, ratio.unwrap_or(0.5)) {
-            ws.add_float(id, body);
+        } else {
+            let split = ws.focus;
+            if ws.is_floating(split) || !ws.split_at(axis, id, ratio.unwrap_or(0.5)) {
+                ws.add_float(id, body);
+            } else if axis == Axis::Column {
+                // Split along a column only for `above` (`Request::New`):
+                // the new pane takes the upper place, with the share given.
+                ws.layout.swap(split, id);
+            }
         }
         let rect = ws
             .rects(body)
@@ -5631,6 +5791,7 @@ impl App {
         self.unseen.retain(|id| seen.contains_key(id));
         self.tell_taps(&seen);
         self.check_entered();
+        self.digest_pings();
         self.deliver_mail();
         self.tell_keeper(&seen);
         if !self.clients.is_empty() {
@@ -6283,6 +6444,7 @@ impl App {
             offline: false,
             dormant: info.dormant.is_some(),
             keeper: info.keeper,
+            questions: info.questions,
         };
         let mut rows: Vec<sidebar::SessionRow> = here.iter().map(|info| row(None, info)).collect();
         if let Some(origin) = self.origin.clone() {
@@ -6309,6 +6471,7 @@ impl App {
                         depth: 0,
                         elsewhere: None,
                         keeper: false,
+                        questions: 0,
                     });
                 }
                 Ok(sessions) => {
@@ -6334,6 +6497,7 @@ impl App {
                         depth: 0,
                         elsewhere: None,
                         keeper: false,
+                        questions: 0,
                     });
                     // What ran there when it last answered, greyed out.
                     let seen = places.last_seen.get(host).cloned().unwrap_or_default();
@@ -6351,6 +6515,7 @@ impl App {
                             depth: 0,
                             elsewhere: None,
                             keeper: false,
+                            questions: 0,
                         });
                     }
                 }
@@ -18290,6 +18455,68 @@ while True:
         // Working itself is never told.
         assert_eq!(super::stop_word(AgentState::Working), None);
         assert_eq!(super::stop_word(AgentState::Idle), Some("done"));
+    }
+
+    /// Done and waiting go to the keeper's board, blocked, failed and what
+    /// a bee writes itself into its conversation (#10254) — read from what
+    /// `keeper_note` writes, through the folding `Request::Message` does.
+    #[test]
+    fn only_done_and_waiting_go_to_the_board() {
+        let from = "claude@codingmachine:crm-umzug/0";
+        let fold = |t: String| t.split_whitespace().collect::<Vec<_>>().join(" ");
+        let ping = |word, said: Option<&str>, wrote| {
+            super::board_ping(&fold(super::keeper_note(
+                "crm-umzug",
+                from,
+                word,
+                said,
+                wrote,
+            )))
+        };
+        let bee = || "crm-umzug".to_owned();
+        assert_eq!(
+            ping("done", Some("FERTIG.\nCommit"), false),
+            Some((bee(), "done"))
+        );
+        assert_eq!(ping("done", None, false), Some((bee(), "done")));
+        assert_eq!(ping("done", Some("x"), true), Some((bee(), "wrote")));
+        assert_eq!(
+            ping("waiting", Some("1 shell"), false),
+            Some((bee(), "waiting"))
+        );
+        assert_eq!(ping("blocked", Some("Darf ich pushen?"), false), None);
+        assert_eq!(ping("failed", Some("rate limit"), false), None);
+        // A bee that writes like one is still a bee writing: no header of
+        // tell_keeper's, no board.
+        assert_eq!(
+            super::board_ping("[imkr message from x:y/0] [imkr] bee a (b) is done"),
+            None
+        );
+        assert_eq!(super::board_ping("FERTIG, bee a is done"), None);
+    }
+
+    /// The one line a keeper gets: names and states, never what a bee
+    /// said last (#10254, the keeper's own words: "nur Name + Zustand").
+    #[test]
+    fn the_digest_names_bees_and_states_only() {
+        let ping = |bee: &str, word: &str| protocol::Ping {
+            pane: 0,
+            from: format!("claude@m:{bee}/0"),
+            bee: bee.to_owned(),
+            word: word.to_owned(),
+            at: 1,
+        };
+        let (a, b) = (ping("crm-umzug", "done"), ping("fragen", "waiting"));
+        let line = super::digest_line(&[&a, &b]);
+        assert_eq!(
+            line,
+            "[imkr] bees that stopped and have not written to you: crm-umzug done, fragen waiting \
+             (what they said: imkr mail)"
+        );
+        assert!(
+            super::board_ping(&line).is_none(),
+            "the digest itself is no ping"
+        );
     }
 
     /// What the keeper reads (#1538): who, which stop, what it said last

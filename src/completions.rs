@@ -404,6 +404,27 @@ const COMMANDS: &[Command] = &[
         &["--follow", "--json"],
         Addresses,
     ),
+    with_subs(
+        "question",
+        "the questions a keeper still has to ask",
+        &[
+            "--from",
+            "--recommend",
+            "--ref",
+            "--stdin",
+            "--by",
+            "--all",
+            "--json",
+            "--follow",
+        ],
+        &[
+            sub("add", Nothing),
+            sub("answer", Nothing),
+            sub("drop", Nothing),
+            sub("ls", Nothing),
+            sub("pane", Nothing),
+        ],
+    ),
     cmd("push", "send a test push to the phone", &["test"], Nothing),
     cmd(
         "skill",

@@ -50,6 +50,14 @@ has begun and not sent. Every message starts with
 reached its agent; `imkr mail --follow` keeps showing it, which is what a keeper's second pane
 runs.
 
+A bee's *done* or *waiting* reaches its keeper's message pane, not its conversation; the
+keeper gets one line naming the bees that stopped (with the user's next prompt, or after ten
+minutes of rest). *Blocked* and *failed* still come in whole. A keeper notes what it still has
+to ask the user on the question board, where the user sees it beside the conversation:
+`imkr question add --from "bee api-fix" --recommend "keep it" "Delete the old branch?"` prints
+`F1`; `imkr question answer F1 "<the user's answer, word for word>"`, `imkr question drop F1
+[--by F2]`, `imkr question ls`. Ask the user by number (F1), so answers find their question.
+
 If the other machine cannot be reached from yours (a server answering a laptop), `imkr msg`
 answers `queued for …`: that is a success, even with an ssh error in brackets. It is delivered
 when that machine next asks yours, within a minute. Do not send it again or try other addresses.

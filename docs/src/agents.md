@@ -681,6 +681,50 @@ keeper does not read its words twice; blocked and failed always come whole. It t
 `imkr msg`, to keepers on other machines too. The setting *Tell the keeper when a bee stops*
 turns it off.
 
+*Done* and *waiting* do not go into the keeper's conversation: there they pushed the questions
+you still had to answer up and out of sight. They stand in its message pane (`● bee api-fix …
+is done: …`), and the keeper gets one line for all bees that stopped — names and states, not
+what they said:
+
+```
+[imkr] bees that stopped and have not written to you: api-fix done, docs waiting (what they said: imkr mail)
+```
+
+It rides along with your next prompt to the keeper, unseen in the conversation, or, when the
+keeper rests, comes by itself after ten minutes (`keeper_digest_after`, in seconds), once. A bee
+that wrote to its keeper in that turn is not in it: the keeper has its word. *Blocked* and
+*failed* come in whole as before — the keeper has to act on them. This happens at the keeper's
+end, so bees with an older imkr and on other machines are covered too. The setting *Bee
+done/waiting into the keeper's chat* (`keeper_pings_in_chat`) brings back the old way.
+
+What reaches the conversation and how differs by agent: Claude Code and Codex (with its hooks
+trusted) get blocked, failed and the line through their hooks, nothing typed; an agent without
+hooks (pi, one started on Ollama without them) gets them typed in when it rests.
+
+### The question board
+
+What a keeper still has to ask you gets a number and a place of its own, so it does not go
+under in the conversation:
+
+```bash
+imkr question add --from "bee api-fix" --recommend "keep it" "Delete the old branch?"   # F1
+imkr question add --ref F1 --stdin < question.txt                                       # F2
+imkr question answer F1 "Keep it, delete after the release."     # your answer, word for word
+imkr question drop F2 --by F1                                     # taken over, or not needed
+imkr question ls [--all] [--json]
+imkr question pane                # the board above the message pane, for a running keeper
+```
+
+`imkr keeper` opens the board above the message pane: the open questions with where they come
+from, the recommendation and which questions they refer to, live. Answered and dropped ones leave
+it (`ls --all` keeps them, with the answer and its time). Numbers count on per session and are
+never given twice. The sidebar shows `?2` before a session with two open questions, `imkr ls
+--json` as `questions`. `frage` works as well as `question`, `-s` names another session.
+
+The board is a file per session, `~/.local/state/imkr/questions/SESSION.json`, written under a
+lock: it does not care which agent the keeper runs — Claude, Codex or one on Ollama write it with
+the same command.
+
 An agent that asks something before it starts — Claude Code's "trust this folder?" in a new
 worktree — is left asking: nothing is answered for you. `imkr spawn` says where it waits and
 what to send once you answered, and ends with an error.

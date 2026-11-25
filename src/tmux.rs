@@ -287,6 +287,7 @@ fn run_one(command: &[String]) -> Result<()> {
                 fresh: false,
                 by: None,
                 ratio: None,
+                above: false,
             })?;
             print_new(&o, reply, at.window)
         }
@@ -304,6 +305,7 @@ fn run_one(command: &[String]) -> Result<()> {
                 fresh: false,
                 by: None,
                 ratio: None,
+                above: false,
             })?;
             if let Some(name) = o.value('n') {
                 client::request(Request::Rename {

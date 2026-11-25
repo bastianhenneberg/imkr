@@ -588,6 +588,7 @@ pub fn local_sessions() -> Vec<SessionInfo> {
                     .unwrap_or_default()
                     .to_owned();
                 info.keeper = panes.first().and_then(|p| p["keeper"].as_bool()) == Some(true);
+                info.questions = crate::question::open_count(&info.name);
                 for pane in &panes {
                     let state = pane["state"].as_str();
                     if let Some(state) = state {
