@@ -7988,7 +7988,7 @@ impl App {
                 self.mode = Mode::Sessions(0);
             }
             Command::Usage => {
-                let command = ["sh", "-c", "imkr account usage --wait"].map(str::to_owned);
+                let command = usage_popup(&imkr_path());
                 let title = Some("Accounts: usage and limits".to_owned());
                 if let Err(e) = self.toggle_popup("usage", title, &command, None) {
                     self.flash = Some(format!("no usage: {e:#}"));
@@ -17282,6 +17282,16 @@ fn set_account(accounts: &mut BTreeMap<String, String>, tool: &str, name: &str) 
     }
 }
 
+/// The program of the usage popup (Ctrl+B s u): this very binary, never
+/// `imkr` looked up in the PATH. A server started from a login without
+/// `~/.cargo/bin` found no `imkr`, the popup ended at once with 127 and
+/// was gone before it could be read (#1624).
+fn usage_popup(imkr: &str) -> Vec<String> {
+    [imkr, "account", "usage", "--wait"]
+        .map(str::to_owned)
+        .to_vec()
+}
+
 /// This imkr, for commands typed into panes; `imkr` when it cannot say.
 fn imkr_path() -> String {
     std::env::current_exe()
@@ -17561,6 +17571,22 @@ fn with_title(label: String, title: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_usage_popup_runs_this_binary_not_the_one_in_the_path() {
+        // #1624: `sh -c "imkr …"` in a server without ~/.cargo/bin in its
+        // PATH ended with 127 and the popup was gone at once.
+        let argv = usage_popup("/opt/imkr-test/imkr");
+        assert_eq!(argv, ["/opt/imkr-test/imkr", "account", "usage", "--wait"]);
+        assert!(!argv.iter().any(|a| a == "sh" || a == "-c"));
+        // The binary is found without any PATH at all.
+        let exe = imkr_path();
+        let out = std::process::Command::new(&usage_popup(&exe)[0])
+            .arg("--version")
+            .env_clear()
+            .output();
+        assert!(out.is_ok(), "{exe} did not start without a PATH: {out:?}");
+    }
 
     #[test]
     fn codex_without_tooltips_keeps_cursor_draft_and_history_guards() {

@@ -3484,7 +3484,20 @@ pub fn account(args: &[String]) -> Result<()> {
         if wait {
             println!("asking the accounts …");
         }
-        let report = crate::usage::report()?;
+        let report = match crate::usage::report() {
+            Ok(report) => report,
+            // In the popup the error has to stay readable: without the
+            // wait it was gone before anyone saw it (#1624).
+            Err(e) if wait => {
+                print!("\x1b[1A\x1b[2K");
+                println!("imkr account usage: {e:#}");
+                print!("\nEnter closes. ");
+                std::io::Write::flush(&mut std::io::stdout())?;
+                let _ = std::io::stdin().read_line(&mut String::new());
+                std::process::exit(1);
+            }
+            Err(e) => return Err(e),
+        };
         if json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
